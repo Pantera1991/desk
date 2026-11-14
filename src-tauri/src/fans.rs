@@ -628,7 +628,7 @@ mod tests {
         let (manual, log, fail) = (f.manual.clone(), f.log.clone(), f.fail.clone());
         let read = Box::new(move || {
             let mode = if manual.load(Ordering::SeqCst) { fan_control::MANUAL } else { fan_control::AUTO };
-            Ok(vec![Fan { mode, rpm: 2300.0, max_rpm: 6800.0 }; 2])
+            Ok(vec![Fan { mode, rpm: 2300.0, max_rpm: 6800.0, min_rpm: Some(2317.0) }; 2])
         });
         let (manual, marker, half) = (f.manual.clone(), dir.join(MARKER), f.half.clone());
         let helper = Box::new(move |cmd: &str| {
