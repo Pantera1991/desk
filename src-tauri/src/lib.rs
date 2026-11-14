@@ -32,6 +32,8 @@ pub mod preview;
 pub mod pricing;
 pub mod project;
 pub mod prompt_ai;
+pub mod prompt_screen;
+pub mod prompt_status;
 pub mod pty;
 pub mod state_watch;
 pub mod thermal;
@@ -281,6 +283,13 @@ fn prompt_ai_vpn(app: State<App>) -> Option<String> {
 #[tauri::command]
 fn set_prompt_ai_vpn(app: State<App>, conf: String) -> Result<Option<String>, String> {
     prompt_ai::save_vpn(&app.layout_path, &conf)
+}
+
+/// The prompt pill's "Cofnij": the next Ctrl+G in that session puts back the
+/// draft from before the rewrite (prompt_status.rs).
+#[tauri::command]
+fn prompt_ai_undo(app: State<App>, slug: String) -> Result<(), String> {
+    prompt_status::request_undo(&app.hooks.state_dir, &slug)
 }
 
 #[tauri::command]
@@ -921,6 +930,7 @@ pub fn run() {
             bootstrap,
             prompt_ai_vpn,
             set_prompt_ai_vpn,
+            prompt_ai_undo,
             open_session,
             kill_session,
             pty_attach,

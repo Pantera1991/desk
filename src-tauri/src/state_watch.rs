@@ -1,5 +1,6 @@
 //! Watches `state/` (written by the hook script) and forwards session state
-//! changes to the webview as `session-state` events.
+//! changes to the webview as `session-state` events, and how a Ctrl+G prompt
+//! rewrite goes as `prompt-ai` events (prompt_status.rs).
 
 use crate::hooks::{SessionState, read_state};
 use notify::{RecursiveMode, Watcher};
@@ -23,6 +24,8 @@ pub fn watch(app: AppHandle, state_dir: &Path) -> notify::Result<notify::Recomme
         for path in event.paths {
             if let Some(state) = read_state(&path) {
                 let _ = app.emit("session-state", state);
+            } else if let Some(status) = crate::prompt_status::read_status(&path) {
+                let _ = app.emit("prompt-ai", status);
             }
         }
     })?;

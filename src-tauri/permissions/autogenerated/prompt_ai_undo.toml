@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-prompt-ai-undo"
+description = "Enables the prompt_ai_undo command without any pre-configured scope."
+commands.allow = ["prompt_ai_undo"]
+
+[[permission]]
+identifier = "deny-prompt-ai-undo"
+description = "Denies the prompt_ai_undo command without any pre-configured scope."
+commands.deny = ["prompt_ai_undo"]

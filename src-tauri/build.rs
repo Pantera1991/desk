@@ -5,6 +5,7 @@ const COMMANDS: &[&str] = &[
     "bootstrap",
     "prompt_ai_vpn",
     "set_prompt_ai_vpn",
+    "prompt_ai_undo",
     "open_session",
     "kill_session",
     "pty_attach",
