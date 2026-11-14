@@ -8,8 +8,12 @@
 //! it sends the file to the model and writes the answer back. When the feature
 //! is off in Options, the user's own editor opens as before. Any failure
 //! (server unreachable, timeout, bad reply) leaves the prompt unchanged.
+//! Meanwhile the tile keeps Claude's last frame with the prompt faded and a
+//! pill on it says how the rewrite goes (prompt_status.rs, prompt-pill.ts).
 
 use crate::layout::PromptAi;
+use crate::prompt_screen;
+use crate::prompt_status::{Phase, Reporter};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -173,10 +177,15 @@ fn wrapper_path(support_dir: &Path, home: &Path, temp: &Path) -> PathBuf {
 /// `desk --desk-prompt-editor <layout.json> <file>`: never fails loudly; the
 /// prompt file stays as it was on any error.
 pub fn run(layout_path: &str, file: &str) {
-    let cfg = crate::layout::load(Path::new(layout_path)).prompt_ai;
+    let layout_path = Path::new(layout_path);
+    let cfg = crate::layout::load(layout_path).prompt_ai;
     if !cfg.enabled {
         open_own_editor(file);
         return;
+    }
+    let progress = Progress { desk: Reporter::from_env() };
+    if progress.desk.as_ref().is_some_and(Reporter::undo_requested) {
+        return progress.restore(file);
     }
     let Ok(text) = std::fs::read_to_string(file) else {
         return;
@@ -185,29 +194,107 @@ pub fn run(layout_path: &str, file: &str) {
         return;
     }
     if cfg.url.trim().is_empty() || model(&cfg).is_empty() {
-        return fail("ustaw serwer i model w Opcjach desk (⌘O)");
+        return progress.fail("ustaw serwer i model w Opcjach desk (⌘O)");
     }
-    eprintln!("desk: poprawiam prompt ({})…", model(&cfg));
-    let route = match route(&cfg, Path::new(layout_path)) {
+    progress.start(model(&cfg));
+    let route = match route(&cfg, layout_path, |server| progress.tunnel(server)) {
         Ok(r) => r,
-        Err(e) => return fail(&e),
+        Err(e) => return progress.fail(&e),
     };
-    let log = Path::new(layout_path).with_file_name("prompt-ai-last.log");
+    let log = layout_path.with_file_name("prompt-ai-last.log");
     match improve(&cfg, &text, &log, route.as_deref()) {
+        // The same text back: say so, rather than "rewritten" with nothing to undo.
+        Ok(better) if unchanged(&text, &better) => progress.clean(),
         Ok(better) => {
             if std::fs::write(file, better).is_err() {
-                fail("nie mogę zapisać pliku z promptem");
+                return progress.fail("nie mogę zapisać pliku z promptem");
             }
+            progress.done(&text);
         }
-        Err(e) => fail(&e),
+        Err(e) => progress.fail(&e),
     }
+}
+
+/// What the user sees while `run` works. In a desk session the pill on the
+/// tile says it (prompt_status.rs) while the tile keeps Claude's last frame
+/// (prompt-pill.ts); elsewhere, or when the pill cannot be told, a line in
+/// the terminal does (prompt_screen.rs).
+struct Progress {
+    desk: Option<Reporter>,
+}
+
+impl Progress {
+    fn report(&self, phase: Phase, message: Option<&str>) -> bool {
+        self.desk.as_ref().is_some_and(|d| d.report(phase, message))
+    }
+
+    fn say(&self, text: &str) {
+        eprint!("{}", prompt_screen::note(text));
+    }
+
+    fn start(&self, model: &str) {
+        if !self.report(Phase::Checking, None) {
+            self.say(&format!("Poprawiam prompt ({model})…"));
+        }
+    }
+
+    fn tunnel(&self, server: &str) {
+        if !self.report(Phase::Vpn, Some(server)) {
+            self.say(&format!("Łączę przez WireGuard ({server})…"));
+        }
+    }
+
+    fn clean(&self) {
+        if !self.report(Phase::Clean, None) {
+            self.say("Nic do poprawy");
+        }
+    }
+
+    fn done(&self, draft: &str) {
+        if let Some(d) = &self.desk {
+            d.keep_draft(draft);
+        }
+        self.report(Phase::Applied, None);
+    }
+
+    /// The pill shows the reason once Claude's prompt is back; the terminal
+    /// line has to stay up a moment to be read.
+    fn fail(&self, e: &str) {
+        if !self.report(Phase::Error, Some(e)) {
+            self.say(&format!("Prompt bez zmian: {e}"));
+            std::thread::sleep(std::time::Duration::from_secs(2));
+        }
+    }
+
+    /// The pill's "Cofnij": the draft from before the last rewrite goes back
+    /// into Claude's prompt.
+    fn restore(&self, file: &str) {
+        let Some(d) = &self.desk else { return };
+        match d.draft() {
+            Some(draft) if std::fs::write(file, &draft).is_ok() => {
+                d.report(Phase::Restored, None);
+            }
+            _ => self.fail("nie mam poprzedniej wersji promptu"),
+        }
+    }
+}
+
+impl Drop for Progress {
+    fn drop(&mut self) {
+        eprint!("{}", prompt_screen::SHOW_CURSOR);
+    }
+}
+
+/// The model gave the draft back as it was (spaces at the ends aside).
+pub fn unchanged(draft: &str, rewrite: &str) -> bool {
+    draft.trim() == rewrite.trim()
 }
 
 /// How curl reaches the server: directly (None) when it answers, else through
 /// desk's own WireGuard tunnel from the `.conf` in Options (wg_tunnel.rs), as
 /// a curl `--connect-to` value. The tunnel is in this process only and ends
 /// with it; the system VPN is never touched.
-fn route(cfg: &PromptAi, layout_path: &Path) -> Result<Option<String>, String> {
+fn route(cfg: &PromptAi, layout_path: &Path, on_tunnel: impl FnOnce(&str)) -> Result<Option<String>, String> {
     let endpoint = url(cfg);
     let Ok(text) = std::fs::read_to_string(vpn_conf_path(layout_path)) else {
         return Ok(None); // no VPN pasted in Options
@@ -223,7 +310,7 @@ fn route(cfg: &PromptAi, layout_path: &Path) -> Result<Option<String>, String> {
         .ok()
         .and_then(|mut a| a.next())
         .ok_or_else(|| format!("nie znam adresu {host}"))?;
-    eprintln!("desk: łączę przez WireGuard ({})…", conf.endpoint);
+    on_tunnel(&conf.endpoint);
     let local = crate::wg_tunnel::start(&conf, target)?;
     Ok(Some(format!("{host}:{port}:{}:{}", local.ip(), local.port())))
 }
@@ -250,11 +337,6 @@ fn host_port(endpoint: &str) -> Option<(String, u16)> {
         _ => (authority, default),
     };
     Some((host.trim_matches(['[', ']']).to_string(), port))
-}
-
-fn fail(e: &str) {
-    eprintln!("desk: prompt bez zmian: {e}");
-    std::thread::sleep(std::time::Duration::from_secs(2));
 }
 
 /// The editor the user had before desk took `$VISUAL` (kept by the launch
@@ -465,6 +547,13 @@ mod tests {
         assert_ne!(mac, dev);
         let spaced_home = wrapper_path(Path::new("/Users/a b/x y"), Path::new("/Users/a b"), tmp);
         assert!(spaced_home.to_string_lossy().starts_with("/tmp/desk-prompt-editor-"), "{spaced_home:?}");
+    }
+
+    #[test]
+    fn the_same_text_back_is_no_rewrite() {
+        assert!(unchanged("Test prompta poprawianie", "Test prompta poprawianie"));
+        assert!(unchanged("Test\n", "  Test  "));
+        assert!(!unchanged("test", "Test."));
     }
 
     #[test]

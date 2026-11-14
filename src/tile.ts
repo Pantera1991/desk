@@ -20,6 +20,7 @@ import { PLATFORM } from "./platform";
 import { actionFor } from "./keys";
 import { linkTarget, rowLinks, webLink, type Row } from "./links";
 import { agentLabel, keyOf, type Spec } from "./sessions";
+import { PromptPill, ScreenHold, hasDraft, pillSpot, promptAiOn, readPrompt, type PromptAiStatus } from "./prompt-pill";
 
 /** Rows looked at above and below a hovered one for a wrapped path. */
 const LINK_ROWS = 4;
@@ -127,6 +128,16 @@ export class Tile {
   private peekQueued = false;
   private webgl: WebglAddon | null = null;
   private disposed = false;
+  private active = false;
+  /** Ctrl+G prompt rewriting on a Claude tile (prompt-pill.ts). */
+  private pill: PromptPill;
+  private pillQueued = false;
+  /** The last frame kept while the rewrite runs, the prompt faded over it. */
+  private hold = new ScreenHold(
+    (data) => this.term.write(data),
+    (held, news) => this.onHold(held, news),
+  );
+  private fade: HTMLElement;
 
   constructor(
     spec: Spec,
@@ -165,6 +176,11 @@ export class Tile {
     this.title = this.el.querySelector(".title")!;
     this.body = this.el.querySelector(".term")!;
     this.peek = this.el.querySelector(".peek")!;
+    this.pill = new PromptPill({ rewrite: () => this.rewritePrompt(), undo: () => this.undoRewrite() });
+    this.fade = document.createElement("div");
+    this.fade.className = "prompt-fade";
+    this.fade.hidden = true;
+    this.body.append(this.pill.el, this.fade);
     this.setTitles();
 
     const header = this.el.querySelector("header")!;
@@ -275,7 +291,12 @@ export class Tile {
       },
     });
     this.term.attachCustomKeyEventHandler((e) => {
-      if (e.type === "keydown" && e.isTrusted) this.lastInput = Date.now();
+      if (e.type === "keydown" && e.isTrusted) {
+        this.lastInput = Date.now();
+        if (typesText(e)) this.pill.typed();
+        // Ctrl+G typed as it is (⌘G on macOS goes through rewritePrompt).
+        if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && e.code === "KeyG") this.beginRewrite();
+      }
       if (actionFor(e)) return false; // app shortcut, handled by the window listener
       // Copy and paste: ⌘C / ⌘V, or Ctrl+Shift+C / V off macOS (plain Ctrl+C goes to the program).
       const clip =
@@ -296,7 +317,7 @@ export class Tile {
       if (PLATFORM === "mac" && clip && e.code === "KeyG") {
         // ⌘G = Ctrl+G (Claude Code's prompt editor, rewritten by the LLM in prompt_ai.rs):
         // macOS never sends ⌘ keys to the program, so send the Ctrl+G byte.
-        if (e.type === "keydown" && this.ptyId !== null) void api.ptyWrite(this.ptyId, "\x07");
+        if (e.type === "keydown") this.rewritePrompt();
         return false;
       }
       if (e.type === "keydown" && e.key === "Enter" && e.shiftKey && !e.metaKey && !e.ctrlKey) {
@@ -325,6 +346,7 @@ export class Tile {
     this.term.textarea?.addEventListener("focus", () => this.onAction(this, "focus"));
     this.term.onWriteParsed(() => {
       if (this.minimized) this.queuePeek();
+      this.queuePill();
     });
     if (webglBudget > 0) {
       try {
@@ -352,7 +374,7 @@ export class Tile {
 
   async attach(): Promise<void> {
     const ch = new Channel<ArrayBuffer>();
-    ch.onmessage = (buf) => this.term.write(new Uint8Array(buf));
+    ch.onmessage = (buf) => this.hold.data(new Uint8Array(buf));
     this.ptyId = null;
     const { cols, rows } = this.term;
     try {
@@ -436,7 +458,123 @@ export class Tile {
   }
 
   setActive(active: boolean): void {
+    this.active = active;
     this.el.classList.toggle("active", active);
+    this.queuePill();
+  }
+
+  /** How the Ctrl+G rewrite in this session goes (the `prompt-ai` event). */
+  promptStatus(s: PromptAiStatus): void {
+    this.pill.status(s);
+    this.hold.status(s.phase);
+    this.queuePill();
+  }
+
+  /** Options turned prompt rewriting on or off. */
+  refreshPill(): void {
+    this.queuePill();
+  }
+
+  /** Ctrl+G in Claude Code: the company model rewrites the prompt (prompt_ai.rs). */
+  private rewritePrompt(): void {
+    if (this.ptyId === null) return;
+    this.beginRewrite();
+    void api.ptyWrite(this.ptyId, "\x07");
+    this.focus();
+  }
+
+  /**
+   * Ctrl+G is on its way to Claude with something typed: keep the frame
+   * (Claude clears its screen for the editor) and say so at once, before the
+   * wrapper's first news.
+   */
+  private beginRewrite(): void {
+    if (this.agent !== "claude" || !promptAiOn() || this.hold.held) return;
+    const { box, draft } = readPrompt(this.term.buffer.active, this.term.rows);
+    if (!box || !draft.trim()) return;
+    this.hold.start();
+    this.placeFade(box.top + 1, box.bottom);
+    if (!this.pill.busy) this.pill.status({ phase: "checking", message: null, ts: 0 });
+  }
+
+  private onHold(held: boolean, news: boolean): void {
+    if (held) return;
+    this.fade.hidden = true;
+    // Ctrl+G started nothing: take back the "Poprawiam" said in advance.
+    if (!news) this.pill.clear();
+    this.queuePill();
+  }
+
+  /** Fades rows [from, to) of the frozen frame: the prompt being rewritten. */
+  private placeFade(from: number, to: number): void {
+    const screen = this.body.querySelector<HTMLElement>(".xterm-screen");
+    if (!screen) return;
+    const s = screen.getBoundingClientRect();
+    const o = this.body.getBoundingClientRect();
+    const rowH = s.height / this.term.rows;
+    Object.assign(this.fade.style, {
+      left: `${s.left - o.left}px`,
+      top: `${s.top - o.top + from * rowH}px`,
+      width: `${s.width}px`,
+      height: `${(to - from) * rowH}px`,
+    });
+    this.fade.hidden = false;
+  }
+
+  /** The pill's "Cofnij": the next Ctrl+G puts the draft back instead of asking the model. */
+  private undoRewrite(): void {
+    const pty = this.ptyId;
+    if (pty === null) return;
+    api
+      .promptAiUndo(this.slug)
+      .then(() => {
+        this.beginRewrite();
+        return api.ptyWrite(pty, "\x07");
+      })
+      .catch((err) => toast(String(err)));
+    this.focus();
+  }
+
+  private queuePill(): void {
+    if (this.pillQueued || this.agent !== "claude") return;
+    this.pillQueued = true;
+    requestAnimationFrame(() => {
+      this.pillQueued = false;
+      if (!this.disposed) this.placePill();
+    });
+  }
+
+  /**
+   * Puts the pill on the top rule of Claude's prompt box, at the prompt's
+   * text, and offers a rewrite while three letters or more are typed there
+   * (in the tile you type in). While a rewrite runs the screen shows the box
+   * faded (prompt_screen.rs), so the pill stays where it was.
+   */
+  private placePill(): void {
+    const screen = this.body.querySelector<HTMLElement>(".xterm-screen");
+    if (!screen || this.minimized || (!this.active && !this.pill.busy) || !promptAiOn()) {
+      this.pill.setOffer(false);
+      return;
+    }
+    const { rows, box, draft } = readPrompt(this.term.buffer.active, this.term.rows);
+    const offer = this.active && hasDraft(draft);
+    this.pill.setOffer(offer);
+    // Measured only when the pill shows: no layout read on every write otherwise.
+    if (!offer && !this.pill.busy) return;
+    const s = screen.getBoundingClientRect();
+    const o = this.body.getBoundingClientRect();
+    const rowH = s.height / this.term.rows;
+    const colW = s.width / this.term.cols;
+    if (box) {
+      const spot = pillSpot(rows, box, Math.ceil(this.pill.el.offsetWidth / colW) + 1);
+      // On the rule its bottom edge goes just under the rule's middle (it sits
+      // on the box's frame); on a row of the box it is centered on that row.
+      const below = spot.centered ? this.pill.el.offsetHeight / 2 : 4;
+      this.pill.place(s.left - o.left + spot.col * colW, s.top - o.top + (spot.row + 0.5) * rowH + below);
+      this.pill.placed = true;
+    } else if (!this.pill.placed) {
+      this.pill.place(s.left - o.left + 2 * colW, s.top - o.top + s.height - 3 * rowH);
+    }
   }
 
   update(patch: { branch?: string | null; state?: TileState; index?: number; grouped?: boolean }): void {
@@ -469,6 +607,7 @@ export class Tile {
     const btn = this.el.querySelector<HTMLElement>('[data-a="minimize"]')!;
     btn.textContent = on ? "▢" : "–";
     this.setTitles();
+    this.queuePill();
     if (on) this.queuePeek();
     else {
       this.peek.textContent = "";
@@ -510,6 +649,7 @@ export class Tile {
     if (this.ptyId !== null && (cols !== this.term.cols || rows !== this.term.rows)) {
       void api.ptyResize(this.ptyId, this.term.cols, this.term.rows);
     }
+    this.queuePill(); // the cells moved
   }
 
   /** Header tooltips and state in the current language (Options changed it). */
@@ -596,6 +736,8 @@ export class Tile {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.hold.cancel();
+    this.pill.dispose();
     this.resizeObs.disconnect();
     window.removeEventListener("mouseup", this.released, true);
     if (this.ptyId !== null) void api.ptyClose(this.ptyId);
@@ -613,6 +755,12 @@ let fitsHeld = false;
  */
 export function holdFits(on: boolean): void {
   fitsHeld = on;
+}
+
+/** A key that changes what is typed (not a modifier, arrow or shortcut). */
+function typesText(e: KeyboardEvent): boolean {
+  if (e.metaKey || (e.ctrlKey && e.key.length === 1)) return false;
+  return e.key.length === 1 || e.key === "Backspace" || e.key === "Delete" || e.key === "Enter";
 }
 
 export function escapeHtml(s: string): string {

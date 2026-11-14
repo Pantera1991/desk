@@ -46,6 +46,7 @@ import {
 } from "./tile";
 import { backgroundBox, choiceBox, confirmBox, newProjectBox, pickBox, toast, type BackgroundRow } from "./ui";
 import { conversationBox } from "./conversationbox";
+import { setPromptAiOn, type PromptAiStatus } from "./prompt-pill";
 import { setSaved, syncTile } from "./saved";
 import { usageHtml } from "./usage";
 import { UsagePopover } from "./usage-popover";
@@ -256,6 +257,8 @@ export class App {
       },
       setPromptAi: (change) => {
         this.layout.promptAi = { ...this.layout.promptAi, ...change };
+        setPromptAiOn(this.layout.promptAi.enabled);
+        for (const tile of this.tiles.values()) tile.refreshPill();
         this.save();
       },
       setTmuxMenu: (on) => {
@@ -327,6 +330,10 @@ export class App {
   async start(): Promise<void> {
     // Listen before reading the snapshot so no state change falls in between.
     await listen<SessionState>("session-state", (e) => this.onHookState(e.payload));
+    // How a Ctrl+G prompt rewrite goes, for the tile's pill (prompt_status.rs).
+    await listen<PromptAiStatus>("prompt-ai", (e) => {
+      [...this.tiles.values()].find((t) => t.slug === e.payload.slug)?.promptStatus(e.payload);
+    });
     await listen<PtyExit>("pty-exit", (e) => void this.onPtyExit(e.payload));
     await listen<CoffeeStatus>("coffee", (e) => this.onCoffeeStopped(e.payload));
     // macOS: desk catches ⌘Q / ⌘⇧Q itself, before its menu (Quit) and the Apple menu (Log Out).
@@ -429,6 +436,7 @@ export class App {
     // Another app (iTerm's hotkey window...) may hold ⌘` already.
     if (this.layout.dropdown) void api.dropdownApply().catch((err) => toast(`Dropdown: ${err}`, 10000));
     setTerminalFontSize(this.layout.fontSize);
+    setPromptAiOn(this.layout.promptAi?.enabled ?? false);
     // Every 5 s from Rust while the temperature or the slowing changes.
     await listen<ThermalStatus>("thermal", (e) => this.onThermal(e.payload));
     this.thermal = await api.thermalStatus().catch(() => null);
