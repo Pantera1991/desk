@@ -185,10 +185,18 @@ function shareCell(fraction: number | null, model: boolean): string {
   return `<span class="${model ? "up-mini model" : "up-mini"}"><i style="width:${(fraction * 100).toFixed(1)}%"></i></span>${pct(fraction * 100)}`;
 }
 
+/** Whether a model ("Fable 5.2", "claude-fable-5-2") counts to a model limit ("Fable"). */
+function ofLimit(model: string, limit: string): boolean {
+  const words = (x: string) => ` ${x.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()} `;
+  return words(model).includes(words(limit));
+}
+
 /**
  * The account's desk sessions, by share of the 5-hour window and then cost,
  * a row for the share of sessions not among them, and the largest cold
- * cache. `models` names the account's model limits (shown in their color).
+ * cache. `models` names the account's model limits, shown in their color: a
+ * session running such a model has it in that color, and one that used it
+ * before or in a subagent gets "+ Fable" after the model it runs now.
  */
 export function renderSessions(
   rows: SessionView[],
@@ -202,13 +210,25 @@ export function renderSessions(
   const sorted = [...rows].sort((a, b) => (fraction(b.slug) ?? 0) - (fraction(a.slug) ?? 0) || b.status.cost - a.status.cost);
   const open = new Set(rows.map((r) => r.slug));
   const rest = got ? got.rows.filter((r) => r.slug === null || !open.has(r.slug)) : [];
-  const isModel = (s: SessionStatus) => models.some((m) => s.model.toLowerCase().startsWith(m.toLowerCase()));
+  const runs = (s: SessionStatus, m: string) => ofLimit(s.model, m) || ofLimit(s.modelId, m);
+  const isModel = (s: SessionStatus) => models.some((m) => runs(s, m));
+  // A limited model the session used but does not run now: "+ Fable", its cost in the title.
+  const used = (s: SessionStatus) =>
+    models
+      .filter((m) => !runs(s, m))
+      .map((m) => ({ m, on: s.models.filter((x) => ofLimit(x.model, m)) }))
+      .filter((x) => x.on.length)
+      .map(({ m, on }) => {
+        const cost = `$${on.reduce((a, x) => a + x.cost, 0).toFixed(2)}`;
+        return ` <span class="up-model" title="${escapeHtml(t("usage.usedModel", { name: m, cost }))}">+ ${escapeHtml(m)}</span>`;
+      })
+      .join("");
   const shareHead = `${t("usage.colShare")} <span class="up-dim">${t("usage.estimate")}${got?.incomplete ? ` · ${t("usage.incomplete")}` : ""}</span>`;
   const head = `<tr><th>${t("usage.colSession")}</th><th>${t("usage.colModel")}</th><th>${shareHead}</th><th>${t("usage.colCost")}</th><th>${t("usage.colCache")}</th>${wide ? `<th>${t("usage.colContext")}</th>` : ""}</tr>`;
   const body = sorted
     .map((r) => {
       const s = r.status;
-      const model = `${escapeHtml(s.model)}${s.effort ? ` · ${escapeHtml(s.effort)}` : ""}${s.fast ? " ⚡" : ""}`;
+      const model = `${escapeHtml(s.model)}${s.effort ? ` · ${escapeHtml(s.effort)}` : ""}${s.fast ? " ⚡" : ""}${used(s)}`;
       const context = wide ? `<td>${s.contextPercent === null ? "—" : pct(s.contextPercent)}</td>` : "";
       const name = escapeHtml(r.name);
       return `<tr class="up-srow" data-key="${escapeHtml(r.key)}"><td class="up-name" title="${name}"><i class="up-st ${r.state}"></i>${name}<span class="up-go">${t("usage.toTile")}</span></td><td${isModel(s) ? ' class="up-model"' : ""}>${model}</td><td>${shareCell(fraction(r.slug), isModel(s))}</td><td>$${s.cost.toFixed(2)}</td><td>${cacheCell(s, nowMs)}</td>${context}</tr>`;

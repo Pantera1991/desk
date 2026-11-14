@@ -179,6 +179,7 @@ mod tests {
             cache_warm: None,
             cache_expires_at: None,
             recache_tokens: None,
+            models: Vec::new(),
         }
     }
 

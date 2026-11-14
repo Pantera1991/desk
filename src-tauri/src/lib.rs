@@ -449,6 +449,8 @@ async fn usage_details(
     let accounts = layout::load(&app.layout_path).claude_accounts;
     let history = app.history.clone();
     let scanner = app.scanner.clone();
+    // The tiles' sessions: only theirs show in the popover.
+    let live: std::collections::HashSet<String> = app.sessions.list().into_iter().map(|s| s.slug).collect();
     let d = tauri::async_runtime::spawn_blocking(move || -> Result<UsageDetails, String> {
         let home = env::home();
         let (limits, costs) = history.lock().map_err(|e| e.to_string())?.load(0);
@@ -459,8 +461,10 @@ async fn usage_details(
         let Some(owner) = owner else {
             return Ok(UsageDetails { history: limits, recording_since, sessions: Vec::new(), share: None });
         };
-        let sessions: Vec<_> =
+        let mut sessions: Vec<_> =
             usage_sessions::read(&state, &accounts, &home).into_iter().filter(|s| s.account == owner.id).collect();
+        // Which models each open session used (Fable from a subagent, or before a switch to Opus).
+        scanner.lock().map_err(|e| e.to_string())?.fill(&mut sessions, &live);
         let start = usage_share::window_start(&limits, now);
         let share = match (share.as_deref(), start) {
             (None, _) | (_, None) => None,

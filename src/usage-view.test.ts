@@ -35,8 +35,14 @@ function status(slug: string, cost: number, more: Partial<SessionStatus> = {}): 
     cacheWarm: true,
     cacheExpiresAt: s + 240,
     recacheTokens: 1000,
+    models: [],
     ...more,
   };
+}
+
+/** One row of the sessions table, by its session's slug. */
+function row(html: string, slug: string): string {
+  return html.split("<tr").find((r) => r.includes(`data-key="p/${slug}"`)) ?? "";
 }
 
 function view(slug: string, cost: number, more: Partial<SessionStatus> = {}): SessionView {
@@ -137,6 +143,22 @@ describe("the Sessions view", () => {
   it("keeps a session's whole name in its title, for when the column cuts it short", () => {
     const html = renderSessions([{ ...view("a", 2), name: "desk-dropdown · usage <details>" }], null, false, now);
     expect(html).toContain('title="desk-dropdown · usage &#60;details&#62;"');
+  });
+
+  it("marks a session that used a model with its own limit, though it runs another now", () => {
+    // 14.11.2026: a desk-dropdown session on Opus 5.5 whose subagent ran on Fable 5.2.
+    const opus = { model: "claude-opus-5-5", cost: 70.3, tokens: 90_000_000 };
+    const used = view("a", 72.7, { models: [opus, { model: "claude-fable-5-2", cost: 2.4, tokens: 3_000_000 }] });
+    const html = renderSessions([used, view("b", 1, { models: [opus] })], null, false, now, ["Fable"]);
+    expect(row(html, "a")).toMatch(/Opus 5\.5 · high <span class="up-model" title="[^"]*\$2\.40[^"]*">\+ Fable<\/span>/);
+    expect(row(html, "b")).not.toContain("Fable");
+  });
+
+  it("colors a session on the limited model itself, without a second mark", () => {
+    const on = view("a", 3, { model: "Fable 5.2", modelId: "claude-fable-5-2", models: [{ model: "claude-fable-5-2", cost: 3, tokens: 1 }] });
+    const html = row(renderSessions([on], null, false, now, ["Fable"]), "a");
+    expect(html).toContain('<td class="up-model">Fable 5.2 · high</td>');
+    expect(html).not.toContain("+ Fable");
   });
 
   it("says when the share is still being counted", () => {

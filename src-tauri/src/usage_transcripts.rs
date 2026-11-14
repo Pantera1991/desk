@@ -4,9 +4,10 @@
 //! each file is read on from where the last scan stopped.
 
 use crate::pricing::{self, Tokens};
+use crate::usage_sessions::SessionStatus;
 use serde::Serialize;
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
@@ -85,14 +86,55 @@ impl Scanner {
                 sum.1 += m.tokens;
             }
         }
-        let mut out: Vec<ModelCost> = sums
-            .into_iter()
-            .filter(|(_, (_, tokens))| *tokens > 0)
-            .map(|(model, (cost, tokens))| ModelCost { model, cost, tokens })
-            .collect();
-        out.sort_by(|a, b| b.cost.total_cmp(&a.cost).then_with(|| a.model.cmp(&b.model)));
-        out
+        by_cost(sums)
     }
+
+    /// Cost and tokens per model over one session: its transcript and its
+    /// subagents' (`<session>/subagents/*.jsonl`), dearest first. The status
+    /// line names only the model the session runs now; this is every model
+    /// it used.
+    pub fn session(&mut self, transcript: &Path) -> Vec<ModelCost> {
+        if !transcript.is_file() {
+            return Vec::new();
+        }
+        let subagents = std::fs::read_dir(transcript.with_extension("").join("subagents"))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "jsonl"));
+        let mut sums: HashMap<String, (f64, u64)> = HashMap::new();
+        for file in std::iter::once(transcript.to_path_buf()).chain(subagents) {
+            let state = self.files.entry(file.clone()).or_default();
+            read_on(&file, state);
+            for m in &state.messages {
+                let sum = sums.entry(m.model.clone()).or_default();
+                sum.0 += m.cost;
+                sum.1 += m.tokens;
+            }
+        }
+        by_cost(sums)
+    }
+
+    /// Fills in `models` (see `session`) for the sessions whose tile is open
+    /// (`live` slugs). Closed tiles leave their status files behind for good:
+    /// reading all their transcripts would hold the popover for seconds.
+    pub fn fill(&mut self, sessions: &mut [SessionStatus], live: &HashSet<String>) {
+        for s in sessions.iter_mut().filter(|s| live.contains(&s.slug)) {
+            s.models = self.session(Path::new(&s.transcript));
+        }
+    }
+}
+
+/// Per-model sums as rows, dearest first; models without tokens are left out.
+fn by_cost(sums: HashMap<String, (f64, u64)>) -> Vec<ModelCost> {
+    let mut out: Vec<ModelCost> = sums
+        .into_iter()
+        .filter(|(_, (_, tokens))| *tokens > 0)
+        .map(|(model, (cost, tokens))| ModelCost { model, cost, tokens })
+        .collect();
+    out.sort_by(|a, b| b.cost.total_cmp(&a.cost).then_with(|| a.model.cmp(&b.model)));
+    out
 }
 
 /// When the file last changed, in seconds since 1970.
@@ -348,5 +390,52 @@ mod tests {
         write(&tmp.path().join("-p/s1.jsonl"), &said("claude-opus-5-5", "m1", "2026-11-13T03:00:00Z", input(700)));
         let r = Scanner::default().models(tmp.path(), at("2026-11-13T02:00:00Z"), at("2026-11-13T07:00:00Z"));
         assert_eq!(r.iter().map(|x| x.tokens).collect::<Vec<_>>(), [700]);
+    }
+
+    #[test]
+    fn a_session_counts_its_subagents_models() {
+        // 14.11.2026: the session itself on Opus, its subagent on Fable; another session left out.
+        let tmp = tempfile::tempdir().unwrap();
+        let session = tmp.path().join("-p/s1.jsonl");
+        write(&session, &said("claude-opus-5-5", "m1", "2026-11-14T00:00:00Z", input(1_000)));
+        write(&tmp.path().join("-p/s1/subagents/agent-a.jsonl"), &said("claude-fable-5-2", "m2", "2026-11-14T00:10:00Z", input(3_000)));
+        write(&tmp.path().join("-p/s2.jsonl"), &said("claude-haiku-5-5", "m3", "2026-11-14T00:20:00Z", input(5_000)));
+        let r = Scanner::default().session(&session);
+        let tokens = |m: &str| r.iter().find(|x| x.model == m).map(|x| x.tokens);
+        assert_eq!(r.len(), 2, "{r:?}");
+        assert_eq!((tokens("claude-opus-5-5"), tokens("claude-fable-5-2")), (Some(1_000), Some(3_000)));
+        assert!(r.iter().all(|x| x.cost > 0.0));
+        assert!(Scanner::default().session(&tmp.path().join("-p/none.jsonl")).is_empty());
+    }
+
+    #[test]
+    fn fills_in_only_the_open_tiles_sessions() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut sessions: Vec<SessionStatus> = ["open", "closed"]
+            .iter()
+            .map(|slug| {
+                let transcript = tmp.path().join(format!("-p/{slug}.jsonl"));
+                write(&transcript, &said("claude-fable-5-2", slug, "2026-11-14T00:00:00Z", input(1_000)));
+                SessionStatus {
+                    slug: slug.to_string(),
+                    session_id: slug.to_string(),
+                    transcript: transcript.display().to_string(),
+                    account: "main".into(),
+                    model: "Opus 5.5".into(),
+                    model_id: "claude-opus-5-5".into(),
+                    effort: None,
+                    fast: false,
+                    cost: 0.0,
+                    context_percent: None,
+                    cache_warm: None,
+                    cache_expires_at: None,
+                    recache_tokens: None,
+                    models: Vec::new(),
+                }
+            })
+            .collect();
+        Scanner::default().fill(&mut sessions, &HashSet::from(["open".to_string()]));
+        assert_eq!(sessions[0].models.iter().map(|m| m.model.as_str()).collect::<Vec<_>>(), ["claude-fable-5-2"]);
+        assert!(sessions[1].models.is_empty());
     }
 }

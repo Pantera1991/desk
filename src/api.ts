@@ -348,6 +348,8 @@ export interface SessionStatus {
   /** Unix seconds. */
   cacheExpiresAt: number | null;
   recacheTokens: number | null;
+  /** Every model the session used, its subagents too (`model` is only today's), dearest first. */
+  models: ModelCost[];
 }
 
 export interface ShareRow {

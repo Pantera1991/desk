@@ -189,6 +189,7 @@ export const en: Messages = {
   "usage.rest": "the rest",
   "usage.restClosed": "closed sessions",
   "usage.toTile": "→ tile",
+  "usage.usedModel": "{name} in this session (subagents included): {cost}",
   "usage.coldWarning": "the next message in {name} sends ~{tokens} tokens again",
   "usage.shareLoading": "counting the share from transcripts…",
   "usage.sessionsTotal": "total {cost} · API prices, not a bill",
