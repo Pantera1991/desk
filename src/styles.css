@@ -1618,6 +1618,14 @@ html.dragging-card .tile .term {
   stroke-width: 2;
 }
 
+.fan-chart .down {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
+  opacity: 0.75;
+}
+
 .fan-chart line.slow {
   stroke: var(--model);
   stroke-dasharray: 2 3;

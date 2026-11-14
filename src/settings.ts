@@ -123,6 +123,11 @@ function words(el: HTMLElement): string {
 /** A folder for an account: in the home folder (~/...) or a full path. */
 const ACCOUNT_DIR = /^(~[\\/]|\/|[a-z]:[\\/]|\\\\)/i;
 
+/** A fan step's wait as Options shows it: "30 s", "2 min". */
+function waitLabel(seconds: number): string {
+  return seconds < 60 ? t("settings.fanWaitSeconds", { n: seconds }) : t("settings.fanWaitMinutes", { n: seconds / 60 });
+}
+
 export class Settings {
   /** Pasted WireGuard config for prompt rewriting: saved by Rust to an
    *  owner-only file; the field is emptied after saving, only the server shows. */
@@ -227,12 +232,11 @@ export class Settings {
       })
       .join("");
     const presets = FAN_PRESETS.map((p, i) => `<button data-preset="${i}">${t(p.key)}</button>`).join("");
-    const waits = FAN_WAITS.map((w) => {
-      const label = w < 60 ? t("settings.fanWaitSeconds", { n: w }) : t("settings.fanWaitMinutes", { n: w / 60 });
-      return `<option value="${w}"${w === layout.fanWait ? " selected" : ""}>${label}</option>`;
-    }).join("");
+    const waits = FAN_WAITS.map(
+      (w) => `<option value="${w}"${w === layout.fanWait ? " selected" : ""}>${waitLabel(w)}</option>`,
+    ).join("");
     const down = `<div class="line wrap">${t("settings.fanDown")} <input type="number" min="${MIN_FAN_MARGIN}" max="${MAX_FAN_MARGIN}" step="1" value="${layout.fanMargin}" data-k="fan-margin" aria-label="${escapeHtml(t("settings.fanMargin"))}"/> ${t("settings.fanDownMargin")} <select data-k="fan-wait" aria-label="${escapeHtml(t("settings.fanWait"))}">${waits}</select></div>`;
-    const chart = this.fanChartSvg(steps, slows(layout.thermalMode) ? layout.thermalLimit : 0, thermal?.celsius ?? null);
+    const chart = this.fanChartSvg(steps, slows(layout.thermalMode) ? layout.thermalLimit : 0, thermal?.celsius ?? null, layout);
     return `<div class="fan-steps" data-row>
       <span>${t("settings.fanSteps")}</span>
       <div class="fan-step-rows">${rows}</div>
@@ -244,17 +248,14 @@ export class Settings {
   }
 
   /** The steps over 50–100°C (thermal.ts fanChart): auto before the first, slowing and now as lines. */
-  private fanChartSvg(steps: FanStep[], slowLimit: number, celsius: number | null): string {
-    const c = fanChart(steps, slowLimit, celsius);
+  private fanChartSvg(steps: FanStep[], slowLimit: number, celsius: number | null, layout: Layout): string {
+    const c = fanChart(steps, slowLimit, celsius, layout.fanMargin);
     const x = (d: number) => Math.round((40 + (d - 50) * 10.16) * 10) / 10;
     const ticks = [50, 60, 70, 80, 90, 100].map((d) => `<text class="tick" x="${x(d)}" y="124" text-anchor="middle">${d}°</text>`).join("");
-    const pct = [
-      [100, 21],
-      [50, 66],
-      [0, 111],
-    ]
-      .map(([p, y]) => `<text class="tick" x="34" y="${y}" text-anchor="end">${p}%</text>`)
-      .join("");
+    const pct = c.ticks.map((g) => `<text class="tick" x="34" y="${g.y + 3}" text-anchor="end">${g.percent}%</text>`).join("");
+    const grid = c.ticks.map((g) => `<line class="grid" x1="40" y1="${g.y}" x2="548" y2="${g.y}"/>`).join("");
+    const legend = `<line class="steps" x1="40" y1="139" x2="60" y2="139"/><text class="tick" x="66" y="142">${t("settings.fanChartUp")}</text>
+      <line class="down" x1="140" y1="139" x2="160" y2="139"/><text class="tick" x="166" y="142">${t("settings.fanChartDown", { m: layout.fanMargin, wait: waitLabel(layout.fanWait) })}</text>`;
     const slow =
       c.slowX === null
         ? ""
@@ -264,10 +265,11 @@ export class Settings {
         ? ""
         : `<line class="now" x1="${c.nowX}" y1="12" x2="${c.nowX}" y2="108"/><text class="now" x="${Math.min(520, Math.max(70, c.nowX))}" y="9" text-anchor="middle">${t("settings.fanChartNow", { c: celsius ?? "" })}</text>`;
     const auto = c.autoWidth > 80 ? `<text class="tick" x="${40 + c.autoWidth / 2}" y="67" text-anchor="middle">${t("settings.fanChartAuto")}</text>` : "";
-    return `<svg class="fan-chart" viewBox="0 0 560 132" role="img" aria-label="${escapeHtml(t("settings.fanSteps"))}">
+    return `<svg class="fan-chart" viewBox="0 0 560 148" role="img" aria-label="${escapeHtml(t("settings.fanSteps"))}">
       <rect class="auto" x="40" y="18" width="${c.autoWidth}" height="90"/>${auto}
-      <line class="grid" x1="40" y1="18" x2="548" y2="18"/><line class="grid" x1="40" y1="63" x2="548" y2="63"/><line class="axis" x1="40" y1="108" x2="548" y2="108"/>
-      ${pct}<path class="area" d="${c.area}"/><path class="steps" d="${c.line}"/>${slow}${now}${ticks}
+      ${grid}<line class="axis" x1="40" y1="108" x2="548" y2="108"/>
+      ${pct}<path class="area" d="${c.area}"/><path class="down" d="${c.down}"/><path class="steps" d="${c.line}"/>${slow}${now}${ticks}
+      ${legend}
     </svg>`;
   }
 
@@ -320,9 +322,13 @@ export class Settings {
       const c = clampFanMargin(margin.value === "" ? Number.NaN : Number(margin.value));
       margin.value = String(c);
       this.ctx.setThermal({ fanMargin: c });
+      this.render();
     });
     const wait = box.querySelector<HTMLSelectElement>('[data-k="fan-wait"]');
-    wait?.addEventListener("change", () => this.ctx.setThermal({ fanWait: Number(wait.value) }));
+    wait?.addEventListener("change", () => {
+      this.ctx.setThermal({ fanWait: Number(wait.value) });
+      this.render();
+    });
     box.querySelectorAll<HTMLButtonElement>("[data-preset]").forEach((b) =>
       b.addEventListener("click", () => save(FAN_PRESETS[Number(b.dataset.preset)].steps.map((s) => ({ ...s })))),
     );

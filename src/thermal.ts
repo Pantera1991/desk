@@ -100,25 +100,45 @@ export function stepRpm(percent: number, maxRpm: number | null): number | null {
 }
 
 const tenth = (n: number) => Math.round(n * 10) / 10;
-/** The chart's axes: 50–100°C across x 40–548, 0–100% up y 108–18 (viewBox 560×132). */
+/** The chart's floor: the fans never go below 40%, so the y axis starts just under it. */
+const CHART_FLOOR = 35;
+/** The chart's axes: 50–100°C across x 40–548, 35–100% up y 108–18 (viewBox 560×132). */
 const chartX = (celsius: number) => tenth(40 + (Math.min(MAX_LIMIT, Math.max(MIN_LIMIT, celsius)) - MIN_LIMIT) * 10.16);
-const chartY = (percent: number) => tenth(108 - percent * 0.9);
+const chartY = (percent: number) => tenth(108 - ((Math.max(CHART_FLOOR, percent) - CHART_FLOOR) * 90) / (100 - CHART_FLOOR));
 
-/** The steps as SVG geometry: the stair line, the area under it, the auto band before the first
- * step, and where slowing (0: none) and the current reading (null: none) sit. */
+/** The steps as SVG geometry: the stair line going up, the way down (each step `margin` lower,
+ * never below the first limit, where macOS takes over), the area under the way up, the
+ * percent grid, the auto band before the first step, and where slowing (0: none) and the
+ * current reading (null: none) sit. */
 export function fanChart(
   steps: FanStep[],
   slowLimit: number,
   celsius: number | null,
-): { line: string; area: string; autoWidth: number; slowX: number | null; nowX: number | null } {
+  margin: number,
+): {
+  line: string;
+  down: string;
+  area: string;
+  ticks: { percent: number; y: number }[];
+  autoWidth: number;
+  slowX: number | null;
+  nowX: number | null;
+} {
   const rows = steps.length ? steps : DEFAULT_STEPS;
-  let line = `M ${chartX(rows[0].celsius)} ${chartY(0)}`;
-  rows.forEach((s, i) => {
-    line += ` V ${chartY(s.percent)} H ${chartX(i + 1 < rows.length ? rows[i + 1].celsius : MAX_LIMIT)}`;
-  });
+  const first = rows[0].celsius;
+  const stairs = (from: (c: number) => number) => {
+    let d = `M ${chartX(first)} ${chartY(0)}`;
+    rows.forEach((s, i) => {
+      d += ` V ${chartY(s.percent)} H ${chartX(i + 1 < rows.length ? from(rows[i + 1].celsius) : MAX_LIMIT)}`;
+    });
+    return d;
+  };
+  const line = stairs((c) => c);
   return {
     line,
+    down: stairs((c) => Math.max(first, c - margin)),
     area: `${line} V ${chartY(0)} Z`,
+    ticks: [100, 70, 40].map((percent) => ({ percent, y: chartY(percent) })),
     autoWidth: tenth(chartX(rows[0].celsius) - 40),
     slowX: slowLimit > 0 ? chartX(slowLimit) : null,
     nowX: celsius === null ? null : chartX(celsius),

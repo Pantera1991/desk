@@ -472,6 +472,8 @@ export const pl = {
   "settings.fanChartAuto": "auto (macOS)",
   "settings.fanChartSlow": "zwalnianie",
   "settings.fanChartNow": "teraz {c}°",
+  "settings.fanChartUp": "w górę",
+  "settings.fanChartDown": "w dół: {m}°C pod progiem, najwyżej co {wait}",
   "settings.fanDown": "W dół:",
   "settings.fanDownMargin": "°C pod progiem stopnia, nie częściej niż co",
   "settings.fanMargin": "Zapas przed zejściem niżej, °C",

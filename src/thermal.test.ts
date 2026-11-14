@@ -173,12 +173,24 @@ describe("fan steps", () => {
   });
 
   it("draws the steps", () => {
-    const c = fanChart(S3, 85, 74);
-    expect(c.line).toBe("M 192.4 108 V 63 H 263.5 V 45 H 344.8 V 18 H 548");
+    const c = fanChart(S3, 85, 74, 7);
+    // 35% at the bottom (y 108), 100% at the top (y 18).
+    expect(c.line).toBe("M 192.4 108 V 87.2 H 263.5 V 59.5 H 344.8 V 18 H 548");
+    expect(c.ticks).toEqual([
+      { percent: 100, y: 18 },
+      { percent: 70, y: 59.5 },
+      { percent: 40, y: 101.1 },
+    ]);
     expect(c.autoWidth).toBe(152.4);
     expect(c.slowX).toBe(395.6);
     expect(c.nowX).toBe(283.8);
-    expect(fanChart(S3, 0, null)).toMatchObject({ slowX: null, nowX: null });
+    expect(fanChart(S3, 0, null, 7)).toMatchObject({ slowX: null, nowX: null });
+  });
+
+  it("draws the way down: each step the margin lower, never below the first limit", () => {
+    // 72 − 7 meets the first limit (65): from step 2 straight to auto.
+    expect(fanChart(S3, 0, null, 7).down).toBe("M 192.4 108 V 87.2 H 192.4 V 59.5 H 273.7 V 18 H 548");
+    expect(fanChart(S3, 0, null, 3).down).toBe("M 192.4 108 V 87.2 H 233 V 59.5 H 314.3 V 18 H 548");
   });
 });
 

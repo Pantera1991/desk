@@ -473,6 +473,8 @@ export const en: Messages = {
   "settings.fanChartAuto": "auto (macOS)",
   "settings.fanChartSlow": "slowing",
   "settings.fanChartNow": "now {c}°",
+  "settings.fanChartUp": "up",
+  "settings.fanChartDown": "down: {m}°C below the limit, at most every {wait}",
   "settings.fanDown": "Down:",
   "settings.fanDownMargin": "°C below the step's limit, at most once every",
   "settings.fanMargin": "Margin before stepping down, °C",
