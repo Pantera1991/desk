@@ -150,6 +150,7 @@ export class App {
           return [{ slug: status.slug, key: tile.key, name: s.label ? `${s.name} · ${s.label}` : s.name, state, status }];
         }),
       details: (agent, account, share) => api.usageDetails(agent, account, share),
+      models: (agent, account, from, to) => api.usageModels(agent, account, from, to),
       focus: (key) => this.setActive(key, true),
       title: (u) => {
         const a = u.account ? this.layout.claudeAccounts.find((x) => x.id === u.account) : undefined;

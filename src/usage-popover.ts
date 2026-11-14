@@ -1,9 +1,9 @@
 // The usage chip's popover: opens under the chip, keeps its tab and scroll
 // across refreshes, closes on Esc, a click elsewhere, the window losing focus
 // or its chip going away. Content: usage-view.ts.
-import type { Layout, SessionStatus, Usage, UsageDetails, UsageShare } from "./api";
+import type { Layout, ModelCost, SessionStatus, Usage, UsageDetails, UsageShare } from "./api";
 import { chipId } from "./usage";
-import { renderPopover, type SessionView } from "./usage-view";
+import { renderPopover, type HistoryPick, type SessionView } from "./usage-view";
 
 export type Tab = "now" | "sessions" | "history";
 
@@ -13,6 +13,8 @@ export interface PopoverContext {
   /** The desk sessions behind these status lines (by slug); ones without a tile are left out. */
   sessions(statuses: SessionStatus[]): SessionView[];
   details(agent: string, account: string | null, share: UsageShare | null): Promise<UsageDetails>;
+  /** Cost and tokens per model from `from` to `to`, seconds (the chart's breakdown). */
+  models(agent: string, account: string | null, from: number, to: number): Promise<ModelCost[]>;
   /** Focus a session's tile. */
   focus(key: string): void;
   /** HTML: "Limity planu · claude", with the account's name and color. */
@@ -37,6 +39,11 @@ export function leftBy(target: { closest(selector: string): unknown } | null, in
   return target !== null && !inPopover && !target.closest("[data-usage]");
 }
 
+/** The breakdown's range in whole seconds (Rust takes u64), its end never past now. */
+export function modelsRange(start: number, to: number, nowMs: number): [number, number] {
+  return [Math.floor(start), Math.floor(Math.min(to, nowMs / 1000))];
+}
+
 /** "All at once" needs this much room before it goes to one column. */
 const ALL_WIDTH = 960 + 32;
 /** The same details asked again after this long (Rust keeps them 30 s). */
@@ -51,6 +58,8 @@ export class UsagePopover {
   /** What `details` answers: chip and share asked for. */
   private detailsFor: { id: string; share: UsageShare | null; at: number } | null = null;
   private pending = false;
+  /** The 24-hour chart's picked bar on the open chip; cleared when it closes or another opens. */
+  private pick: (HistoryPick & { id: string }) | null = null;
   /** When the last request failed: asked again only after a while. */
   private failedAt = 0;
   private el: HTMLElement;
@@ -74,12 +83,19 @@ export class UsagePopover {
         this.refresh();
         return;
       }
+      const bar = target.closest<HTMLElement>("[data-bar]");
+      if (bar) return this.pickBar(bar);
       const key = target.closest<HTMLElement>("[data-key]")?.dataset.key;
       if (key) {
         this.close();
         this.ctx.focus(key);
       }
     });
+    // The line over the chart says what the bar under the cursor (or focus) holds.
+    const tip = (e: Event) => this.showTip(e.target instanceof Element ? e.target.closest<HTMLElement>("[data-bar]") : null);
+    this.el.addEventListener("mouseover", tip);
+    this.el.addEventListener("focusin", tip);
+    this.el.addEventListener("mouseleave", () => this.showTip(null));
     // A click elsewhere, or the focus moving elsewhere: Options, the palette
     // or a picker opened from the keyboard take it.
     const leave = (e: Event) => {
@@ -94,7 +110,11 @@ export class UsagePopover {
         if (this.open && e.key === "Escape") {
           e.preventDefault();
           e.stopImmediatePropagation();
-          this.close();
+          // The breakdown first, the popover on the next press.
+          if (this.pick) {
+            this.pick = null;
+            this.refresh();
+          } else this.close();
         }
       },
       true,
@@ -112,12 +132,14 @@ export class UsagePopover {
     this.open = id;
     this.details = null;
     this.detailsFor = null;
+    this.pick = null;
     this.refresh();
   }
 
   close(): void {
     if (!this.open) return;
     this.open = null;
+    this.pick = null;
     this.el.hidden = true;
     this.el.innerHTML = this.html = "";
     this.chips().forEach((c) => c.removeAttribute("aria-expanded"));
@@ -144,6 +166,7 @@ export class UsagePopover {
       narrow: window.innerWidth < ALL_WIDTH,
       nowMs: Date.now(),
       title: this.ctx.title(u),
+      pick: this.pick?.id === id ? this.pick : null,
     });
     // The bar redraws often: rebuild only when something shows differently
     // (a click between mousedown and mouseup would otherwise be lost).
@@ -182,6 +205,44 @@ export class UsagePopover {
         this.pending = false;
         if (this.open) this.refresh();
       });
+  }
+
+  /**
+   * A bar clicked: its window's models, asked once (Claude only; an empty
+   * bar has no window to ask about). The same bar again puts it away.
+   */
+  private pickBar(bar: HTMLElement): void {
+    const id = this.open;
+    const u = this.ctx.usage().find((x) => chipId(x) === id);
+    if (!id || !u || u.agent !== "claude") return;
+    const index = Number(bar.dataset.bar);
+    if (this.pick?.id === id && this.pick.index === index) {
+      this.pick = null;
+      return this.refresh();
+    }
+    const start = bar.dataset.start ? Number(bar.dataset.start) : null;
+    const to = Number(bar.dataset.to);
+    const pick = { id, index, start, to, models: start === null ? null : ("loading" as const) };
+    this.pick = pick;
+    this.refresh();
+    if (start === null) return;
+    this.ctx
+      .models(u.agent, u.account, ...modelsRange(start, to, Date.now()))
+      .then((rows) => {
+        if (this.pick === pick) this.pick = { ...pick, models: rows };
+      })
+      .catch(() => {
+        if (this.pick === pick) this.pick = { ...pick, models: "failed" };
+      })
+      .finally(() => {
+        if (this.open) this.refresh();
+      });
+  }
+
+  /** The bar's description over the chart, or the usual line back. */
+  private showTip(bar: HTMLElement | null): void {
+    const line = this.el.querySelector<HTMLElement>('[data-k="bar-tip"]');
+    if (line) line.textContent = bar?.getAttribute("aria-label") ?? line.dataset.idle ?? "";
   }
 
   /** Under the chip, its right edge on the chip's, inside the window; the nib points at the chip. */

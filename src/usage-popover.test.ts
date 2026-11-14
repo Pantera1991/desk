@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Layout, Usage } from "./api";
-import { leftBy, shareRequest, stillOpen } from "./usage-popover";
+import { leftBy, modelsRange, shareRequest, stillOpen } from "./usage-popover";
 
 function usage(account: string | null): Usage {
   return {
@@ -41,5 +41,13 @@ describe("the usage popover", () => {
     // The chip toggles it itself.
     expect(leftBy(at(true), false)).toBe(false);
     expect(leftBy(null, false)).toBe(false);
+  });
+});
+
+describe("the chart's breakdown", () => {
+  it("asks for whole seconds, never past now", () => {
+    const nowMs = 1_794_617_700_400;
+    expect(modelsRange(1_794_600_000, 1_794_610_000.7, nowMs)).toEqual([1_794_600_000, 1_794_610_000]);
+    expect(modelsRange(1_794_600_000, 1_794_619_000.2, nowMs)).toEqual([1_794_600_000, 1_794_617_700]);
   });
 });
