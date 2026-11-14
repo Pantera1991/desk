@@ -407,6 +407,9 @@ mod tests {
         assert_eq!((l.fan_margin, l.fan_wait), (7, 60));
         let l = loaded(r#"{"thermalMode":"fans","fanMargin":4,"fanWait":30}"#);
         assert_eq!((l.fan_margin, l.fan_wait), (4, 30));
+        // 0 is a margin of its own ("none"), not a missing one.
+        let l = loaded(r#"{"thermalMode":"fans","fanMargin":0}"#);
+        assert_eq!(l.fan_margin, 0);
     }
 
     #[test]

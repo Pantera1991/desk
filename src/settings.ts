@@ -235,8 +235,12 @@ export class Settings {
     const waits = FAN_WAITS.map(
       (w) => `<option value="${w}"${w === layout.fanWait ? " selected" : ""}>${waitLabel(w)}</option>`,
     ).join("");
-    const down = `<div class="line wrap">${t("settings.fanDown")} <input type="number" min="${MIN_FAN_MARGIN}" max="${MAX_FAN_MARGIN}" step="1" value="${layout.fanMargin}" data-k="fan-margin" aria-label="${escapeHtml(t("settings.fanMargin"))}"/> ${t("settings.fanDownMargin")} <select data-k="fan-wait" aria-label="${escapeHtml(t("settings.fanWait"))}">${waits}</select></div>`;
-    const chart = this.fanChartSvg(steps, slows(layout.thermalMode) ? layout.thermalLimit : 0, thermal?.celsius ?? null, layout);
+    const down = `<div class="line wrap">${t("settings.fanDown")} <input type="number" min="${MIN_FAN_MARGIN}" max="${MAX_FAN_MARGIN}" step="1" value="${layout.fanMargin}" data-k="fan-margin" aria-label="${escapeHtml(t("settings.fanMargin"))}" title="${escapeHtml(t("settings.fanMarginHint"))}"/> ${t("settings.fanDownMargin")} <select data-k="fan-wait" aria-label="${escapeHtml(t("settings.fanWait"))}">${waits}</select></div>`;
+    // The lines across the chart, each with its label; fanChart keeps the labels apart.
+    const chart = this.fanChartSvg(steps, layout, {
+      now: thermal?.celsius ?? null,
+      slow: slows(layout.thermalMode) ? layout.thermalLimit : 0,
+    });
     return `<div class="fan-steps" data-row>
       <span>${t("settings.fanSteps")}</span>
       <div class="fan-step-rows">${rows}</div>
@@ -247,27 +251,44 @@ export class Settings {
     </div>`;
   }
 
-  /** The steps over 50–100°C (thermal.ts fanChart): auto before the first, slowing and now as lines. */
-  private fanChartSvg(steps: FanStep[], slowLimit: number, celsius: number | null, layout: Layout): string {
-    const c = fanChart(steps, slowLimit, celsius, layout.fanMargin);
-    const ticks = c.degrees.map((d) => `<text class="tick" x="${d.x}" y="124" text-anchor="middle">${d.celsius}°</text>`).join("");
+  /** The steps over 35–100°C (thermal.ts fanChart): auto before the first, the way up and down,
+   * and the lines across it with their labels in rows above, never on top of each other. */
+  private fanChartSvg(steps: FanStep[], layout: Layout, lines: Parameters<typeof fanChart>[2]): string {
+    const c = fanChart(steps, layout.fanMargin, lines);
+    const { top, bottom } = c;
+    const ticks = c.degrees
+      .map((d) => `<text class="tick" x="${d.x}" y="${bottom + 16}" text-anchor="middle">${d.celsius}°</text>`)
+      .join("");
     const pct = c.ticks.map((g) => `<text class="tick" x="34" y="${g.y + 3}" text-anchor="end">${g.percent}%</text>`).join("");
     const grid = c.ticks.map((g) => `<line class="grid" x1="40" y1="${g.y}" x2="548" y2="${g.y}"/>`).join("");
-    const legend = `<line class="steps" x1="40" y1="139" x2="60" y2="139"/><text class="tick" x="66" y="142">${t("settings.fanChartUp")}</text>
-      <line class="down" x1="140" y1="139" x2="160" y2="139"/><text class="tick" x="166" y="142">${t("settings.fanChartDown", { m: layout.fanMargin, wait: waitLabel(layout.fanWait) })}</text>`;
-    const slow =
-      c.slowX === null
-        ? ""
-        : `<line class="slow" x1="${c.slowX}" y1="18" x2="${c.slowX}" y2="108"/><text class="slow" x="${c.slowX - 4}" y="30" text-anchor="end">${t("settings.fanChartSlow")}</text>`;
-    const now =
-      c.nowX === null
-        ? ""
-        : `<line class="now" x1="${c.nowX}" y1="12" x2="${c.nowX}" y2="108"/><text class="now" x="${Math.min(520, Math.max(70, c.nowX))}" y="9" text-anchor="middle">${t("settings.fanChartNow", { c: celsius ?? "" })}</text>`;
-    const auto = c.autoWidth > 80 ? `<text class="tick" x="${40 + c.autoWidth / 2}" y="44" text-anchor="middle">${t("settings.fanChartAuto")}</text>` : "";
-    return `<svg class="fan-chart" viewBox="0 0 560 148" role="img" aria-label="${escapeHtml(t("settings.fanSteps"))}">
-      <rect class="auto" x="40" y="18" width="${c.autoWidth}" height="90"/>${auto}
-      ${grid}<line class="axis" x1="40" y1="108" x2="548" y2="108"/>
-      ${pct}<path class="area" d="${c.area}"/><path class="down" d="${c.down}"/><path class="steps" d="${c.line}"/>${slow}${now}${ticks}
+    const wait = waitLabel(layout.fanWait);
+    const ly = bottom + 31;
+    // No margin: the way down is the way up, one line for both.
+    const legend =
+      layout.fanMargin > 0
+        ? `<line class="steps" x1="40" y1="${ly}" x2="60" y2="${ly}"/><text class="tick" x="66" y="${ly + 3}">${t("settings.fanChartUp")}</text>
+      <line class="down" x1="140" y1="${ly}" x2="160" y2="${ly}"/><text class="tick" x="166" y="${ly + 3}">${t("settings.fanChartDown", { m: layout.fanMargin, wait })}</text>`
+        : `<line class="steps" x1="40" y1="${ly}" x2="60" y2="${ly}"/><text class="tick" x="66" y="${ly + 3}">${t("settings.fanChartBoth", { wait })}</text>`;
+    const down = layout.fanMargin > 0 ? `<path class="down" d="${c.down}"/>` : "";
+    // Each line runs from just under its label to the axis; the labels go last, each on a patch of
+    // the panel's colour, so a line from a label higher up never runs through one lower down.
+    const marks = c.marks
+      .map((m) => `<line class="mark ${m.kind}" x1="${m.x}" y1="${m.labelY + 3}" x2="${m.x}" y2="${bottom}"/>`)
+      .join("");
+    const labels = c.marks
+      .map(
+        (m) =>
+          `<rect class="mark-bg" x="${m.labelX - m.labelWidth / 2 - 2}" y="${m.labelY - 9}" width="${m.labelWidth + 4}" height="12"/><text class="mark ${m.kind}" x="${m.labelX}" y="${m.labelY}" text-anchor="middle">${escapeHtml(m.text)}</text>`,
+      )
+      .join("");
+    const auto =
+      c.autoWidth > 80
+        ? `<text class="tick" x="${40 + c.autoWidth / 2}" y="${top + 26}" text-anchor="middle">${t("settings.fanChartAuto")}</text>`
+        : "";
+    return `<svg class="fan-chart" viewBox="0 0 560 ${c.height}" role="img" aria-label="${escapeHtml(t("settings.fanSteps"))}">
+      <rect class="auto" x="40" y="${top}" width="${c.autoWidth}" height="${bottom - top}"/>${auto}
+      ${grid}<line class="axis" x1="40" y1="${bottom}" x2="548" y2="${bottom}"/>
+      ${pct}<path class="area" d="${c.area}"/>${down}<path class="steps" d="${c.line}"/>${marks}${ticks}${labels}
       ${legend}
     </svg>`;
   }

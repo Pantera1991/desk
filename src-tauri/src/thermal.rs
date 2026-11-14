@@ -64,7 +64,8 @@ pub struct StepDown {
 
 pub const DEFAULT_FAN_MARGIN: u32 = 7;
 pub const DEFAULT_FAN_WAIT: u32 = 60;
-const FAN_MARGINS: std::ops::RangeInclusive<u32> = 2..=15;
+/// 0: a step comes down as soon as the average is under its own threshold.
+const FAN_MARGINS: std::ops::RangeInclusive<u32> = 0..=15;
 const FAN_WAITS: std::ops::RangeInclusive<u32> = 15..=300;
 
 impl StepDown {
@@ -236,7 +237,7 @@ pub fn normalize_steps(steps: Vec<Step>) -> Vec<Step> {
 }
 
 /// Which step the fans should be at: up at once (several steps if need be),
-/// down only `StepDown::margin` below a step's threshold and `StepDown::wait`
+/// down only under `StepDown::margin` below a step's threshold and `StepDown::wait`
 /// after the last change, straight to the step the average still holds;
 /// below the first threshold, auto. No reading: nothing holds the fans, so
 /// they go back to auto after the wait.
@@ -290,10 +291,12 @@ impl StepPolicy {
             self.since = Some(now);
             up
         } else if held.is_some() && !pressure && settled {
-            // Below the first limit the fans are macOS's: the 7°C margin holds only between steps.
+            // Below the first limit the fans are macOS's: the margin holds only between steps.
+            // A step holds while the average is at least its threshold minus the margin, so with
+            // no margin it holds exactly as long as it would be stepped up to (no flapping).
             let down = avg
                 .filter(|&a| a >= steps[0].celsius as f32)
-                .and_then(|a| steps.iter().rposition(|s| a > s.celsius as f32 - margin));
+                .and_then(|a| steps.iter().rposition(|s| a >= s.celsius as f32 - margin));
             if down < held {
                 self.since = Some(now);
                 down
@@ -1539,12 +1542,28 @@ mod tests {
         p.set_down(StepDown::new(3, 15));
         assert_eq!(hold(&mut p, 74.0, &steps, t), Some(1));
         assert_eq!(hold(&mut p, 68.0, &steps, t + s(10)), Some(1)); // low enough, not 15 s yet
-        assert_eq!(hold(&mut p, 68.0, &steps, t + s(16)), Some(0)); // 68 ≤ 72 − 3
+        assert_eq!(hold(&mut p, 68.0, &steps, t + s(16)), Some(0)); // 68 < 72 − 3
+    }
+
+    #[test]
+    fn no_margin_comes_down_right_under_the_step() {
+        // 0°C: down once the average is under the step's own limit, after the wait; an average
+        // sitting right on the limit holds the step instead of flapping every 15 s.
+        let t = Instant::now();
+        let s = Duration::from_secs;
+        let steps = vec![st(60, 50), st(72, 70)];
+        let mut p = StepPolicy::default();
+        p.set_down(StepDown::new(0, 15));
+        assert_eq!(hold(&mut p, 74.0, &steps, t), Some(1));
+        assert_eq!(hold(&mut p, 72.0, &steps, t + s(20)), Some(1));
+        assert_eq!(hold(&mut p, 72.0, &steps, t + s(40)), Some(1));
+        assert_eq!(hold(&mut p, 71.0, &steps, t + s(60)), Some(0));
+        assert_eq!(hold(&mut p, 59.0, &steps, t + s(80)), None);
     }
 
     #[test]
     fn the_way_down_is_clamped_to_what_options_offer() {
-        assert_eq!(StepDown::new(0, 1), StepDown { margin: 2, wait: 15 });
+        assert_eq!(StepDown::new(0, 1), StepDown { margin: 0, wait: 15 });
         assert_eq!(StepDown::new(40, 9999), StepDown { margin: 15, wait: 300 });
         assert_eq!(StepDown::default(), StepDown { margin: 7, wait: 60 });
     }
