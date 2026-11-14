@@ -101,10 +101,19 @@ describe("temperature chip", () => {
 
   it("says the step, the speed, and when it changes", () => {
     const title = thermalTitle(at(74, { limit: 85, fanSteps: S3, fanStep: 1, fans: fan({ percent: 70, maxRpm: 6800 }) }));
-    for (const part of ["2", "3", "70%", "4760", "80°C", "100%", "65°C", "50%", "58°C"]) expect(title).toContain(part);
+    for (const part of ["2", "3", "70%", "4760", "80°C", "100%"]) expect(title).toContain(part);
+    // Row 2's margin (65°C) meets the first limit: straight back to macOS.
+    expect(title).toContain("W dół: auto poniżej 65°C.");
+    const wide = [
+      { celsius: 60, percent: 50 },
+      { celsius: 75, percent: 80 },
+    ];
+    expect(thermalTitle(at(76, { fanSteps: wide, fanStep: 1, fans: fan({ percent: 80 }) }))).toContain(
+      "W dół: przy 68°C → 50%, auto poniżej 60°C.",
+    );
     const top = thermalTitle(at(78, { fanSteps: ONE, fanStep: 0, fans: forced }));
     expect(top).toContain("6800");
-    expect(top).toContain("63°C");
+    expect(top).toContain("auto poniżej 70°C");
     expect(thermalTitle(at(74, { fanSteps: S3, fanStep: 1, fans: fan({ problem: "x-why" }) }))).toContain("x-why");
     const fansOnly = thermalTitle(at(60, { limit: 0, fanSteps: [{ celsius: 75, percent: 100 }], fans: fan() }));
     expect(fansOnly.startsWith("Procesor: 60°C.")).toBe(true);

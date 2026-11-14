@@ -252,7 +252,10 @@ impl StepPolicy {
             self.since = Some(now);
             up
         } else if held.is_some() && !pressure && settled {
-            let down = avg.and_then(|a| steps.iter().rposition(|s| a > s.celsius as f32 - COOL_MARGIN));
+            // Below the first limit the fans are macOS's: the 7°C margin holds only between steps.
+            let down = avg
+                .filter(|&a| a >= steps[0].celsius as f32)
+                .and_then(|a| steps.iter().rposition(|s| a > s.celsius as f32 - COOL_MARGIN));
             if down < held {
                 self.since = Some(now);
                 down
@@ -1465,22 +1468,40 @@ mod tests {
     fn steps_down_only_well_below_and_after_a_minute() {
         let t = Instant::now();
         let s = Duration::from_secs;
+        let steps = vec![st(60, 50), st(72, 70), st(80, 100)];
         let mut p = StepPolicy::default();
-        assert_eq!(hold(&mut p, 74.0, &s3(), t), Some(1));
-        assert_eq!(hold(&mut p, 68.0, &s3(), t + s(10)), Some(1)); // above 72 − 7
-        assert_eq!(hold(&mut p, 64.0, &s3(), t + s(20)), Some(1)); // low enough, but not a minute yet
-        assert_eq!(hold(&mut p, 64.0, &s3(), t + s(61)), Some(0));
-        assert_eq!(hold(&mut p, 57.0, &s3(), t + s(122)), None);
+        assert_eq!(hold(&mut p, 74.0, &steps, t), Some(1));
+        assert_eq!(hold(&mut p, 68.0, &steps, t + s(10)), Some(1)); // above 72 − 7
+        assert_eq!(hold(&mut p, 64.0, &steps, t + s(20)), Some(1)); // low enough, but not a minute yet
+        assert_eq!(hold(&mut p, 64.0, &steps, t + s(61)), Some(0));
+        assert_eq!(hold(&mut p, 57.0, &steps, t + s(122)), None); // below the first limit, though above 60 − 7
     }
 
     #[test]
     fn steps_down_straight_to_the_right_step() {
         let t = Instant::now();
         let mut p = StepPolicy::default();
-        assert_eq!(hold(&mut p, 85.0, &s3(), t), Some(2));
+        let steps = vec![st(60, 50), st(72, 70), st(80, 100)];
+        assert_eq!(hold(&mut p, 85.0, &steps, t), Some(2));
         // Cooled within the minute: nothing yet, then straight to the first step.
-        assert_eq!(hold(&mut p, 60.0, &s3(), t + Duration::from_secs(30)), Some(2));
-        assert_eq!(p.step(Some(60.0), false, &s3(), t + Duration::from_secs(61)), Some(0));
+        assert_eq!(hold(&mut p, 62.0, &steps, t + Duration::from_secs(30)), Some(2));
+        assert_eq!(p.step(Some(62.0), false, &steps, t + Duration::from_secs(61)), Some(0));
+    }
+
+    #[test]
+    fn below_the_first_limit_macos_has_the_fans() {
+        // Idle at 48°C with the first step at 50°C: back to auto, not at 43°C.
+        let t = Instant::now();
+        let steps = vec![st(50, 60), st(70, 80)];
+        let mut p = StepPolicy::default();
+        assert_eq!(hold(&mut p, 52.0, &steps, t), Some(0));
+        assert_eq!(hold(&mut p, 48.0, &steps, t + Duration::from_secs(30)), Some(0));
+        assert_eq!(hold(&mut p, 48.0, &steps, t + Duration::from_secs(61)), None);
+        // A step whose margin reaches below the first limit gives way there too.
+        let close = vec![st(50, 60), st(55, 80)];
+        let mut p = StepPolicy::default();
+        assert_eq!(hold(&mut p, 56.0, &close, t), Some(1));
+        assert_eq!(hold(&mut p, 49.0, &close, t + Duration::from_secs(61)), None);
     }
 
     #[test]

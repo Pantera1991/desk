@@ -166,10 +166,12 @@ function fanLines(s: ThermalStatus): string[] {
   const rpm = stepRpm(percent, s.fans?.maxRpm ?? null) ?? s.fans?.rpm ?? "?";
   const lines = [t("thermal.fansStep", { k: k + 1, n: steps.length, percent, rpm })];
   if (k + 1 < steps.length) lines.push(t("thermal.fansUp", { c: steps[k + 1].celsius, percent: steps[k + 1].percent }));
-  const auto = steps[0].celsius - COOL_MARGIN;
+  // Below the first limit macOS has the fans (thermal.rs StepPolicy); the margin holds between steps.
+  const auto = steps[0].celsius;
+  const at = steps[k].celsius - COOL_MARGIN;
   lines.push(
-    k > 0
-      ? t("thermal.fansDown", { c: steps[k].celsius - COOL_MARGIN, percent: steps[k - 1].percent, auto })
+    k > 0 && at > auto
+      ? t("thermal.fansDown", { c: at, percent: steps[k - 1].percent, auto })
       : t("thermal.fansDownAuto", { auto }),
   );
   return lines;
