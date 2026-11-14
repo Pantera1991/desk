@@ -196,6 +196,7 @@ export const pl = {
   "usage.loading": "wczytuję…",
   "usage.last24h": "Okno 5 h · ostatnie 24 h",
   "usage.barHint": "Najedź na słupek; kliknij, żeby zobaczyć modele.",
+  "usage.barHintHover": "Najedź na słupek, żeby zobaczyć, ile ma.",
   "usage.barTip": "{from}–{to} · {pct} okna 5 h",
   "usage.barTipWindow": "{from}–{to} · {pct} okna 5 h (okno od {start})",
   "usage.modelsHead": "Okno od {start} do {to}: {cost} · {tokens} tokenów",

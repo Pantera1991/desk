@@ -173,7 +173,8 @@ describe("the 24-hour chart", () => {
   const hm = (t: number) => new Date(t * 1000).toLocaleTimeString("pl", { hour: "2-digit", minute: "2-digit" });
   const busy: UsageDetails = {
     ...details,
-    history: [{ t: s - 3 * H, agent: "claude", account: null, label: "5h", pct: 62, resets: s + H }],
+    // A minute into its bar: a reading right on a bar's edge slides into the next one as time passes.
+    history: [{ t: s - 3 * H + 60, agent: "claude", account: null, label: "5h", pct: 62, resets: s + H }],
   };
   const rows = [
     { model: "claude-fable-5-2", cost: 41.2, tokens: 120_000_000 },
@@ -204,6 +205,18 @@ describe("the 24-hour chart", () => {
       "brak sesji Claude Code w tym czasie",
     );
     expect(renderHistory(busy, plain, now, { ...pick, models: "failed" })).toContain("nie udało się policzyć modeli");
+  });
+
+  it("draws the same HTML a moment later, so the popover is not rebuilt under the cursor", () => {
+    expect(renderHistory(busy, plain, now + 1)).toBe(renderHistory(busy, plain, now));
+    expect(renderHistory(busy, plain, now + 1, { ...pick, models: rows })).toBe(renderHistory(busy, plain, now, { ...pick, models: rows }));
+  });
+
+  it("offers no click where there are no models to show", () => {
+    const html = renderHistory(busy, { ...plain, agent: "codex" }, now);
+    expect(html).toContain("Najedź na słupek, żeby zobaczyć, ile ma.");
+    expect(html).not.toContain("kliknij");
+    expect(html).toContain('class="up-col still"');
   });
 
   it("the pick survives a redraw", () => {

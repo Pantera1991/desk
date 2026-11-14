@@ -197,6 +197,7 @@ export const en: Messages = {
   "usage.loading": "loading…",
   "usage.last24h": "5-hour window · last 24 hours",
   "usage.barHint": "Hover a bar; click it to see the models.",
+  "usage.barHintHover": "Hover a bar to see what it holds.",
   "usage.barTip": "{from}–{to} · {pct} of the 5 h window",
   "usage.barTipWindow": "{from}–{to} · {pct} of the 5 h window (window from {start})",
   "usage.modelsHead": "Window from {start} to {to}: {cost} · {tokens} tokens",

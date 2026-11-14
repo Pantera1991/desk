@@ -265,7 +265,10 @@ export function renderHistory(d: UsageDetails, u: Usage, nowMs: number, pick: Hi
   const now = nowMs / 1000;
   const collecting = d.recordingSince === null || d.recordingSince > now - DAY;
   // The line over the chart: what the bar under the cursor holds (usage-popover.ts), else this.
-  const idle = escapeHtml(collecting ? t("usage.collecting", { time: clock(d.recordingSince ?? now) }) : t("usage.barHint"));
+  // Only Claude's transcripts name the models: elsewhere a bar has nothing to click for.
+  const clickable = u.agent === "claude";
+  const hint = clickable ? t("usage.barHint") : t("usage.barHintHover");
+  const idle = escapeHtml(collecting ? t("usage.collecting", { time: clock(d.recordingSince ?? now) }) : hint);
   const note = `<p class="up-line up-dim up-tip" data-k="bar-tip" data-idle="${idle}">${idle}</p>`;
   const bars = bars24h(d.history, nowMs)
     .map((b, i) => {
@@ -273,8 +276,9 @@ export function renderHistory(d: UsageDetails, u: Usage, nowMs: number, pick: Hi
         b.start === null
           ? t("usage.barTip", { from: clock(b.from), to: clock(b.to), pct: pct(b.percent) })
           : t("usage.barTipWindow", { from: clock(b.from), to: clock(b.to), pct: pct(b.percent), start: clock(b.start) });
-      const picked = pick?.index === i ? " picked" : "";
-      return `<button class="up-col${picked}" data-bar="${i}" data-start="${b.start ?? ""}" data-to="${b.to}" aria-label="${escapeHtml(tip)}"><i class="${cls("up-b", b.level)}" style="height:${Math.min(100, b.percent).toFixed(1)}%"></i></button>`;
+      const picked = pick?.index === i ? " picked" : clickable ? "" : " still";
+      // No times in the markup: they change every millisecond and the popover redraws only on a change.
+      return `<button class="up-col${picked}" data-bar="${i}" aria-label="${escapeHtml(tip)}"><i class="${cls("up-b", b.level)}" style="height:${Math.min(100, b.percent).toFixed(1)}%"></i></button>`;
     })
     .join("");
   const marks = resetMarks(d.history, nowMs)

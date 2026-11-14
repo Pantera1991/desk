@@ -3,6 +3,7 @@
 // or its chip going away. Content: usage-view.ts.
 import type { Layout, ModelCost, SessionStatus, Usage, UsageDetails, UsageShare } from "./api";
 import { chipId } from "./usage";
+import { bars24h } from "./usage-stats";
 import { renderPopover, type HistoryPick, type SessionView } from "./usage-view";
 
 export type Tab = "now" | "sessions" | "history";
@@ -214,14 +215,17 @@ export class UsagePopover {
   private pickBar(bar: HTMLElement): void {
     const id = this.open;
     const u = this.ctx.usage().find((x) => chipId(x) === id);
-    if (!id || !u || u.agent !== "claude") return;
+    const details = this.detailsFor?.id === id ? this.details : null;
+    if (!id || !u || !details || u.agent !== "claude") return;
     const index = Number(bar.dataset.bar);
     if (this.pick?.id === id && this.pick.index === index) {
       this.pick = null;
       return this.refresh();
     }
-    const start = bar.dataset.start ? Number(bar.dataset.start) : null;
-    const to = Number(bar.dataset.to);
+    // The bar as drawn now (the same half hour the popover shows, give or take the last redraw).
+    const b = bars24h(details.history, Date.now())[index];
+    if (!b) return;
+    const { start, to } = b;
     const pick = { id, index, start, to, models: start === null ? null : ("loading" as const) };
     this.pick = pick;
     this.refresh();

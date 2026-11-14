@@ -2534,6 +2534,10 @@ p.up-model {
   background: var(--line);
 }
 
+.up-col.still {
+  cursor: default;
+}
+
 .up-b {
   flex: 1;
   min-height: 1px;
