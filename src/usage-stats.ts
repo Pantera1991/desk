@@ -77,8 +77,9 @@ export function around(at: number, nowMs: number): string {
 /**
  * The chip's color from the worst of every limit: its windows, its model
  * limits and the pace (100% before the reset is at least "warn"). The dot
- * shows when that comes from something the chip's text does not show (a
- * model limit or the pace); `reasons` name those things.
+ * shows when something the chip's text does not show (a model limit or the
+ * pace) is at least as bad as what it shows: Fable at 99% keeps its dot when
+ * the week turns red too. `reasons` name those things.
  */
 export function chipState(u: Usage, nowMs: number): { level: Level; dot: boolean; reasons: string[] } {
   let shown: Level = "";
@@ -104,7 +105,7 @@ export function chipState(u: Usage, nowMs: number): { level: Level; dot: boolean
     }
     pace(m.name, m.usedPercent, m.resetsAt, windowSeconds(m.name, true));
   }
-  return { level: worse(shown, hidden), dot: RANK[hidden] > RANK[shown], reasons };
+  return { level: worse(shown, hidden), dot: hidden !== "" && RANK[hidden] >= RANK[shown], reasons };
 }
 
 /** The 5h window's length, seconds. */
