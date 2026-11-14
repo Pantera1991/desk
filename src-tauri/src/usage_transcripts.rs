@@ -4,6 +4,7 @@
 //! each file is read on from where the last scan stopped.
 
 use crate::pricing::{self, Tokens};
+use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
@@ -16,10 +17,27 @@ struct FileState {
     /// `(message.id, requestId)` → its place in `messages`: Claude Code
     /// writes a message's usage on every block of it; the last one counts.
     seen: HashMap<(String, String), usize>,
-    /// `(timestamp, cost)` of each message.
-    messages: Vec<(u64, f64)>,
+    /// Each assistant message, in the order first seen.
+    messages: Vec<Message>,
     /// The project folder the session ran in, by name.
     cwd: String,
+}
+
+struct Message {
+    at: u64,
+    cost: f64,
+    model: String,
+    /// Input, cache writes and reads, and output.
+    tokens: u64,
+}
+
+/// What one model cost over a stretch of time (the usage chart's breakdown).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelCost {
+    pub model: String,
+    pub cost: f64,
+    pub tokens: u64,
 }
 
 #[derive(Default)]
@@ -33,17 +51,12 @@ impl Scanner {
     pub fn scan(&mut self, projects_dir: &Path, window_start: u64) -> HashMap<String, (f64, String)> {
         let mut out: HashMap<String, (f64, String)> = HashMap::new();
         for (file, session) in transcripts(projects_dir) {
-            let modified = std::fs::metadata(&file)
-                .and_then(|m| m.modified())
-                .ok()
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| d.as_secs());
-            if modified.is_none_or(|m| m < window_start) {
+            if modified(&file).is_none_or(|m| m < window_start) {
                 continue;
             }
             let state = self.files.entry(file.clone()).or_default();
             read_on(&file, state);
-            let cost: f64 = state.messages.iter().filter(|(t, _)| *t >= window_start).map(|(_, c)| c).sum();
+            let cost: f64 = state.messages.iter().filter(|m| m.at >= window_start).map(|m| m.cost).sum();
             if cost <= 0.0 {
                 continue;
             }
@@ -55,6 +68,40 @@ impl Scanner {
         }
         out
     }
+
+    /// Cost and tokens per model over messages at `from` or later and before
+    /// `to`, dearest first; models without tokens are left out.
+    pub fn models(&mut self, projects_dir: &Path, from: u64, to: u64) -> Vec<ModelCost> {
+        let mut sums: HashMap<String, (f64, u64)> = HashMap::new();
+        for (file, _) in transcripts(projects_dir) {
+            if modified(&file).is_none_or(|m| m < from) {
+                continue;
+            }
+            let state = self.files.entry(file.clone()).or_default();
+            read_on(&file, state);
+            for m in state.messages.iter().filter(|m| m.at >= from && m.at < to) {
+                let sum = sums.entry(m.model.clone()).or_default();
+                sum.0 += m.cost;
+                sum.1 += m.tokens;
+            }
+        }
+        let mut out: Vec<ModelCost> = sums
+            .into_iter()
+            .filter(|(_, (_, tokens))| *tokens > 0)
+            .map(|(model, (cost, tokens))| ModelCost { model, cost, tokens })
+            .collect();
+        out.sort_by(|a, b| b.cost.total_cmp(&a.cost).then_with(|| a.model.cmp(&b.model)));
+        out
+    }
+}
+
+/// When the file last changed, in seconds since 1970.
+fn modified(file: &Path) -> Option<u64> {
+    std::fs::metadata(file)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
 }
 
 /// Every transcript under `projects_dir` with the session transcript it
@@ -133,11 +180,13 @@ fn take(v: &Value, state: &mut FileState) {
     let model = text(message.and_then(|m| m.get("model"))).unwrap_or_default();
     let fast = usage.get("speed").and_then(Value::as_str) == Some("fast");
     let cost = pricing::cost(&model, &tokens, fast);
+    let count = tokens.input + tokens.write_5m + tokens.write_1h + tokens.read + tokens.output;
+    let m = Message { at, cost, model, tokens: count };
     match state.seen.get(&(id.clone(), request.clone())) {
-        Some(&i) => state.messages[i] = (at, cost),
+        Some(&i) => state.messages[i] = m,
         None => {
             state.seen.insert((id, request), state.messages.len());
-            state.messages.push((at, cost));
+            state.messages.push(m);
         }
     }
 }
@@ -159,6 +208,18 @@ mod tests {
                "message": {"id": id, "model": "claude-opus-5-5", "usage": usage}})
         .to_string()
             + "\n"
+    }
+
+    /// Like `entry`, with the model named.
+    fn said(model: &str, id: &str, at: &str, usage: serde_json::Value) -> String {
+        json!({"type": "assistant", "requestId": format!("req-{id}"), "timestamp": at,
+               "message": {"id": id, "model": model, "usage": usage}})
+        .to_string()
+            + "\n"
+    }
+
+    fn at(iso: &str) -> u64 {
+        crate::usage::iso_seconds(iso).unwrap()
     }
 
     fn input(n: u64) -> serde_json::Value {
@@ -241,5 +302,51 @@ mod tests {
         assert!((only(&s.scan(tmp.path(), start())) - 8.0).abs() < 1e-9);
         write(&path, &entry("m3", "2026-11-14T00:02:00Z", input(250_000)));
         assert!((only(&s.scan(tmp.path(), start())) - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn models_sum_cost_and_tokens_per_model_in_the_range() {
+        let tmp = tempfile::tempdir().unwrap();
+        let text = said("claude-opus-5-5", "m0", "2026-11-13T22:59:00Z", input(9_000))
+            + &said("claude-opus-5-5", "m1", "2026-11-13T23:01:00Z", input(1_000))
+            + &said("claude-fable-5-2", "m2", "2026-11-13T23:02:00Z", input(3_000))
+            + &said("claude-fable-5-2", "m3", "2026-11-14T01:00:00Z", input(2_000));
+        write(&tmp.path().join("-p/s1.jsonl"), &text);
+        let r = Scanner::default().models(tmp.path(), start(), start() + 3600);
+        assert_eq!(r.len(), 2, "{r:?}");
+        let tokens = |m: &str| r.iter().find(|x| x.model == m).map(|x| x.tokens);
+        assert_eq!((tokens("claude-opus-5-5"), tokens("claude-fable-5-2")), (Some(1_000), Some(3_000)));
+        assert!(r.iter().all(|x| x.cost > 0.0));
+        assert!(r.windows(2).all(|w| w[0].cost >= w[1].cost), "{r:?}");
+    }
+
+    #[test]
+    fn models_count_a_message_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let text = said("claude-opus-5-5", "m1", "2026-11-14T00:00:00Z", input(100))
+            + &said("claude-opus-5-5", "m1", "2026-11-14T00:00:00Z", input(500));
+        write(&tmp.path().join("-p/s1.jsonl"), &text);
+        let r = Scanner::default().models(tmp.path(), start(), start() + 7200);
+        assert_eq!(r.iter().map(|x| x.tokens).collect::<Vec<_>>(), [500]);
+    }
+
+    #[test]
+    fn models_leave_out_zero_token_rows() {
+        let tmp = tempfile::tempdir().unwrap();
+        let none = json!({"type": "assistant", "requestId": "req-x", "timestamp": "2026-11-14T00:01:00Z",
+                          "message": {"id": "x", "usage": input(0)}})
+        .to_string();
+        let text = said("<synthetic>", "m1", "2026-11-14T00:00:00Z", input(0)) + &none + "\n";
+        write(&tmp.path().join("-p/s1.jsonl"), &text);
+        assert_eq!(Scanner::default().models(tmp.path(), start(), start() + 7200), []);
+    }
+
+    #[test]
+    fn models_reach_back_to_the_window_start() {
+        // A window that began a day ago: its messages count, whenever the file was written.
+        let tmp = tempfile::tempdir().unwrap();
+        write(&tmp.path().join("-p/s1.jsonl"), &said("claude-opus-5-5", "m1", "2026-11-13T03:00:00Z", input(700)));
+        let r = Scanner::default().models(tmp.path(), at("2026-11-13T02:00:00Z"), at("2026-11-13T07:00:00Z"));
+        assert_eq!(r.iter().map(|x| x.tokens).collect::<Vec<_>>(), [700]);
     }
 }

@@ -1,7 +1,7 @@
 // The usage popover's content as HTML: "Now" (limits, pace, model limits,
 // resets), "Sessions" (each Claude session's share of the 5-hour window)
 // and "History" (the last 24 hours and the week). usage-popover.ts shows it.
-import type { ModelLimit, SessionStatus, Share, Usage, UsageDetails, UsageWindow } from "./api";
+import type { ModelCost, ModelLimit, SessionStatus, Share, Usage, UsageDetails, UsageWindow } from "./api";
 import { language, t } from "./i18n";
 import { resetsIn } from "./usage";
 import {
@@ -64,6 +64,15 @@ function pace(n: number): string {
 
 function tokens(n: number): string {
   return n >= 1000 ? `${Math.round(n / 1000)}k` : String(n);
+}
+
+/** A token count as the model breakdown shows it: 950, 7.1K, 2.4M, 120M, 1.4B. */
+export function bigTokens(n: number): string {
+  const short = (v: number, unit: string) => `${v < 10 ? v.toFixed(1) : Math.round(v)}${unit}`;
+  if (n >= 1e9) return short(n / 1e9, "B");
+  if (n >= 1e6) return short(n / 1e6, "M");
+  if (n >= 1e3) return short(n / 1e3, "K");
+  return String(n);
 }
 
 function warn(level: Level, text: string): string {
@@ -226,14 +235,51 @@ export function renderSessions(
 }
 
 /** The last 24 hours of the 5-hour window, and the week day by day. */
-export function renderHistory(d: UsageDetails, u: Usage, nowMs: number): string {
+/** The 24-hour chart's picked bar: its window, to the bar's end, and the models behind it. */
+export interface HistoryPick {
+  index: number;
+  start: number | null;
+  to: number;
+  models: ModelCost[] | "loading" | "failed" | null;
+}
+
+/** Under the chart: what filled the picked bar's window, dearest model first. */
+function modelsHtml(pick: HistoryPick): string {
+  const none = `<p class="up-line up-dim">${t("usage.modelsNone")}</p>`;
+  if (pick.models === "loading") return `<div class="up-models"><p class="up-line up-dim">${t("usage.loading")}</p></div>`;
+  if (pick.models === "failed") return `<div class="up-models"><p class="up-line up-dim">${t("usage.modelsFailed")}</p></div>`;
+  if (pick.start === null || !pick.models?.length) return `<div class="up-models">${none}</div>`;
+  const cost = pick.models.reduce((a, m) => a + m.cost, 0);
+  const tokens = pick.models.reduce((a, m) => a + m.tokens, 0);
+  const head = t("usage.modelsHead", { start: clock(pick.start), to: clock(pick.to), cost: `$${cost.toFixed(2)}`, tokens: bigTokens(tokens) });
+  const rows = pick.models
+    .map((m) => {
+      const share = cost > 0 ? (m.cost / cost) * 100 : 0;
+      return `<div class="up-mrow"><span>${escapeHtml(m.model)}</span><span>$${m.cost.toFixed(2)} · ${bigTokens(m.tokens)}</span><i style="width:${share.toFixed(1)}%"></i></div>`;
+    })
+    .join("");
+  return `<div class="up-models"><p class="up-line">${head}</p>${rows}</div>`;
+}
+
+export function renderHistory(d: UsageDetails, u: Usage, nowMs: number, pick: HistoryPick | null = null): string {
   const now = nowMs / 1000;
-  const note =
-    d.recordingSince === null || d.recordingSince > now - DAY
-      ? `<p class="up-line up-dim">${t("usage.collecting", { time: clock(d.recordingSince ?? now) })}</p>`
-      : "";
+  const collecting = d.recordingSince === null || d.recordingSince > now - DAY;
+  // The line over the chart: what the bar under the cursor holds (usage-popover.ts), else this.
+  // Only Claude's transcripts name the models: elsewhere a bar has nothing to click for.
+  const clickable = u.agent === "claude";
+  const hint = clickable ? t("usage.barHint") : t("usage.barHintHover");
+  const idle = escapeHtml(collecting ? t("usage.collecting", { time: clock(d.recordingSince ?? now) }) : hint);
+  const note = `<p class="up-line up-dim up-tip" data-k="bar-tip" data-idle="${idle}">${idle}</p>`;
   const bars = bars24h(d.history, nowMs)
-    .map((b) => `<i class="${cls("up-b", b.level)}" style="height:${Math.min(100, b.percent).toFixed(1)}%"></i>`)
+    .map((b, i) => {
+      const tip =
+        b.start === null
+          ? t("usage.barTip", { from: clock(b.from), to: clock(b.to), pct: pct(b.percent) })
+          : t("usage.barTipWindow", { from: clock(b.from), to: clock(b.to), pct: pct(b.percent), start: clock(b.start) });
+      const picked = pick?.index === i ? " picked" : clickable ? "" : " still";
+      // No times in the markup: they change every millisecond and the popover redraws only on a change.
+      return `<button class="up-col${picked}" data-bar="${i}" aria-label="${escapeHtml(tip)}"><i class="${cls("up-b", b.level)}" style="height:${Math.min(100, b.percent).toFixed(1)}%"></i></button>`;
+    })
     .join("");
   const marks = resetMarks(d.history, nowMs)
     .map((m) => `<s class="up-rs" style="left:${(m.x * 100).toFixed(1)}%"><span>${clock(m.at)}</span></s>`)
@@ -242,7 +288,7 @@ export function renderHistory(d: UsageDetails, u: Usage, nowMs: number): string 
     .filter((x) => x.to > now - DAY)
     .map((x) => warn("high", t("usage.fullSpan", { from: clock(x.from), to: clock(x.to) })))
     .join("");
-  let out = `<section class="up-sec"><h4>${t("usage.last24h")}</h4>${note}<div class="up-chart">${bars}${marks}</div><p class="up-axis"><span>${t("usage.axisDayAgo")}</span><span>${t("usage.axisNow")}</span></p>${full}</section>`;
+  let out = `<section class="up-sec"><h4>${t("usage.last24h")}</h4>${note}<div class="up-chart">${bars}${marks}</div><p class="up-axis"><span>${t("usage.axisDayAgo")}</span><span>${t("usage.axisNow")}</span></p>${pick ? modelsHtml(pick) : ""}${full}</section>`;
   const week = u.windows.find((w) => w.label === "7d");
   if (week) {
     const days = weekDays(d.history, "7d", week.resetsAt, d.recordingSince);
@@ -281,6 +327,8 @@ export interface PopoverOptions {
   nowMs: number;
   /** HTML: "Limity planu · claude", with the account's name and color. */
   title: string;
+  /** The 24-hour chart's picked bar, if any. */
+  pick: HistoryPick | null;
 }
 
 /** The whole popover: header, the tabs or all three views, footer. */
@@ -289,7 +337,7 @@ export function renderPopover(o: PopoverOptions): string {
   const loading = `<p class="up-line up-dim">${t("usage.loading")}</p>`;
   const models = o.u.models.map((m) => m.name);
   const sessions = () => (o.details ? renderSessions(o.rows, o.share, o.layout === "all", o.nowMs, models) : loading);
-  const history = () => (o.details ? renderHistory(o.details, o.u, o.nowMs) : loading);
+  const history = () => (o.details ? renderHistory(o.details, o.u, o.nowMs, o.pick) : loading);
   const head = `<header class="up-head"><span class="up-title">${o.title}</span><span class="up-dim">${t("usage.readAt", { time: clock(o.nowMs / 1000) })}</span></header>`;
   let nav = "";
   let body: string;

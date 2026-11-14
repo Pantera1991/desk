@@ -479,6 +479,31 @@ async fn usage_details(
     Ok(d)
 }
 
+/// Cost and tokens per model from `from` to `to` (seconds), from the
+/// account's Claude Code transcripts: the usage chart's breakdown of a bar.
+/// Other agents have no transcripts desk reads: an empty list.
+#[tauri::command(async)]
+async fn usage_models(
+    app: State<'_, App>,
+    agent: String,
+    account: Option<String>,
+    from: u64,
+    to: u64,
+) -> Result<Vec<usage_transcripts::ModelCost>, String> {
+    let accounts = layout::load(&app.layout_path).claude_accounts;
+    let scanner = app.scanner.clone();
+    tauri::async_runtime::spawn_blocking(move || -> Result<Vec<usage_transcripts::ModelCost>, String> {
+        let effective = accounts::effective(&accounts);
+        let Some(owner) = accounts::find(&effective, account.as_deref()).filter(|_| agent == "claude") else {
+            return Ok(Vec::new());
+        };
+        let projects = accounts::config_dir(&owner.dir, &env::home()).join("projects");
+        Ok(scanner.lock().map_err(|e| e.to_string())?.models(&projects, from, to))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Folder for plain conversations (⌘R) that belong to no project.
 #[tauri::command]
 fn chat_dir() -> Result<String, String> {
@@ -945,6 +970,7 @@ pub fn run() {
             recent_conversations,
             claude_accounts,
             usage_details,
+            usage_models,
             quit_desk,
         ])
         .on_window_event(|window, event| {
@@ -1100,6 +1126,20 @@ mod acl_tests {
             let denied = call_panel(url, "is_locked");
             assert!(denied.is_err(), "panel {url}: {denied:?}");
         }
+    }
+
+    /// The usage chart asks which models filled a stretch of time; a command
+    /// missing from build.rs and capabilities is refused and the panel waits forever.
+    /// The mock above registers only is_locked, so any other command reads as
+    /// "not found" before the ACL looks at it; this one registers the command.
+    #[test]
+    fn the_main_window_can_ask_for_models() {
+        let app = mock_builder().invoke_handler(tauri::generate_handler![super::usage_models]).build(super::context()).unwrap();
+        let url: url::Url = LOCAL.parse().unwrap();
+        let w = WebviewWindowBuilder::new(&app, "main", WebviewUrl::External(url.clone())).build().unwrap();
+        // Past the ACL it fails on the missing state or arguments, never "not allowed".
+        let r = invoke(&w, url, "usage_models");
+        assert!(!r.as_ref().is_err_and(|e| e.contains("not allowed")), "{r:?}");
     }
 
     /// dropdown_apply registers a global shortcut (a key taken from every

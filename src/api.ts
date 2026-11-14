@@ -366,6 +366,14 @@ export interface Share {
   incomplete: boolean;
 }
 
+/** What one model cost over a stretch of time (usage_transcripts.rs ModelCost). */
+export interface ModelCost {
+  model: string;
+  /** Dollars at API prices. */
+  cost: number;
+  tokens: number;
+}
+
 export interface UsageDetails {
   history: LimitSample[];
   /** Unix seconds of desk's oldest kept reading. */
@@ -472,6 +480,8 @@ export const api = {
   /** The usage popover's history, sessions and (unless null) share of the 5-hour window. */
   usageDetails: (agent: string, account: string | null, share: UsageShare | null) =>
     invoke<UsageDetails>("usage_details", { agent, account, share }),
+  usageModels: (agent: string, account: string | null, from: number, to: number) =>
+    invoke<ModelCost[]>("usage_models", { agent, account, from, to }),
   /** Each Claude account's folder and login (Options). */
   claudeAccounts: () => invoke<AccountInfo[]>("claude_accounts"),
 };

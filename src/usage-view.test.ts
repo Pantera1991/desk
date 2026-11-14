@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SessionStatus, Usage, UsageDetails } from "./api";
-import { renderHistory, renderNow, renderPopover, renderSessions, type SessionView } from "./usage-view";
+import { bigTokens, renderHistory, renderNow, renderPopover, renderSessions, type SessionView } from "./usage-view";
 
 const now = Date.UTC(2026, 10, 14, 0, 55);
 const s = now / 1000;
@@ -46,7 +46,7 @@ function view(slug: string, cost: number, more: Partial<SessionStatus> = {}): Se
 const details: UsageDetails = { history: [], recordingSince: s - 3 * 86400, sessions: [], share: null };
 
 function popover(u: Usage, layout: "tabs" | "all" = "tabs") {
-  return renderPopover({ u, details, share: null, rows: [], layout, tab: "now", narrow: false, nowMs: now, title: "Limity planu · claude" });
+  return renderPopover({ u, details, share: null, rows: [], layout, tab: "now", narrow: false, nowMs: now, title: "Limity planu · claude", pick: null });
 }
 
 describe("the Now view", () => {
@@ -166,5 +166,79 @@ describe("the History view", () => {
     expect(html.match(/class="up-b/g)).toHaveLength(48);
     expect(html).toContain("równo: 14% dziennie");
     expect(html).not.toContain("desk zbiera historię od");
+  });
+});
+
+describe("the 24-hour chart", () => {
+  const hm = (t: number) => new Date(t * 1000).toLocaleTimeString("pl", { hour: "2-digit", minute: "2-digit" });
+  const busy: UsageDetails = {
+    ...details,
+    // A minute into its bar: a reading right on a bar's edge slides into the next one as time passes.
+    history: [{ t: s - 3 * H + 60, agent: "claude", account: null, label: "5h", pct: 62, resets: s + H }],
+  };
+  const rows = [
+    { model: "claude-fable-5-2", cost: 41.2, tokens: 120_000_000 },
+    { model: "claude-opus-5-5", cost: 3.1, tokens: 9_000_000 },
+  ];
+  const pick = { index: 42, start: s - 4 * H, to: s - 2.5 * H };
+
+  it("makes each bar a button that says what it holds", () => {
+    const html = renderHistory(busy, plain, now);
+    expect(html.match(/<button class="up-col/g)).toHaveLength(48);
+    expect(html).toContain(`${hm(s - 3 * H)}–${hm(s - 2.5 * H)} · 62% okna 5 h (okno od ${hm(s - 4 * H)})`);
+    expect(html).toContain(`${hm(s - 24 * H)}–${hm(s - 23.5 * H)} · 0% okna 5 h"`);
+    expect(html).toMatch(/<p class="up-line up-dim up-tip" data-k="bar-tip"[^>]*>Najedź na słupek; kliknij, żeby zobaczyć modele\.<\/p>/);
+  });
+
+  it("shows the models behind the picked bar", () => {
+    const html = renderHistory(busy, plain, now, { ...pick, models: rows });
+    expect(html).toContain(`Okno od ${hm(s - 4 * H)} do ${hm(s - 2.5 * H)}: $44.30 · 129M tokenów`);
+    expect(html.indexOf("claude-fable-5-2")).toBeLessThan(html.indexOf("claude-opus-5-5"));
+    expect(html).toContain("$41.20 · 120M");
+    expect(html).toContain('class="up-col picked" data-bar="42"');
+  });
+
+  it("says when the models are on their way, missing or out of reach", () => {
+    expect(renderHistory(busy, plain, now, { ...pick, models: "loading" })).toContain("wczytuję…");
+    expect(renderHistory(busy, plain, now, { ...pick, models: [] })).toContain("brak sesji Claude Code w tym czasie");
+    expect(renderHistory(busy, plain, now, { index: 3, start: null, to: s - 22 * H, models: null })).toContain(
+      "brak sesji Claude Code w tym czasie",
+    );
+    expect(renderHistory(busy, plain, now, { ...pick, models: "failed" })).toContain("nie udało się policzyć modeli");
+  });
+
+  it("draws the same HTML a moment later, so the popover is not rebuilt under the cursor", () => {
+    expect(renderHistory(busy, plain, now + 1)).toBe(renderHistory(busy, plain, now));
+    expect(renderHistory(busy, plain, now + 1, { ...pick, models: rows })).toBe(renderHistory(busy, plain, now, { ...pick, models: rows }));
+  });
+
+  it("offers no click where there are no models to show", () => {
+    const html = renderHistory(busy, { ...plain, agent: "codex" }, now);
+    expect(html).toContain("Najedź na słupek, żeby zobaczyć, ile ma.");
+    expect(html).not.toContain("kliknij");
+    expect(html).toContain('class="up-col still"');
+  });
+
+  it("the pick survives a redraw", () => {
+    const o = {
+      u: plain,
+      details: busy,
+      share: null,
+      rows: [],
+      layout: "tabs" as const,
+      tab: "history" as const,
+      narrow: false,
+      nowMs: now,
+      title: "t",
+      pick: { ...pick, models: rows },
+    };
+    expect(renderPopover(o)).toBe(renderPopover(o));
+    expect(renderPopover(o)).toContain("$41.20 · 120M");
+  });
+});
+
+describe("token counts", () => {
+  it("shortens big numbers the way the breakdown shows them", () => {
+    expect([950, 7100, 2_400_000, 120_000_000, 1_400_000_000].map(bigTokens)).toEqual(["950", "7.1K", "2.4M", "120M", "1.4B"]);
   });
 });

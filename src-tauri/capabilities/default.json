@@ -67,6 +67,7 @@
     "allow-dropped-paths",
     "allow-recent-conversations",
     "allow-claude-accounts",
+    "allow-usage-models",
     "allow-quit-desk"
   ]
 }

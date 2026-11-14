@@ -134,6 +134,13 @@ describe("history charts", () => {
     expect(bars24h([sample(s - H, 100, s + H)], now)[47].level).toBe("high");
   });
 
+  it("gives each bar its half hour and the start of its 5h window", () => {
+    const bars = bars24h([sample(s - 3 * H, 40, s + H)], now);
+    expect(bars[42]).toMatchObject({ percent: 40, from: s - 3 * H, to: s - 2.5 * H, start: s - 4 * H });
+    expect(bars[47]).toMatchObject({ percent: 40, start: s - 4 * H });
+    expect(bars[41]).toMatchObject({ percent: 0, start: null });
+  });
+
   it("marks the resets of the last 24 hours", () => {
     const marks = resetMarks([sample(s - 14 * H, 30, s - 12 * H), sample(s - 30 * H, 30, s - 28 * H)], now);
     expect(marks).toHaveLength(1);
