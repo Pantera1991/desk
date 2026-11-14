@@ -1684,7 +1684,7 @@ export class App {
     }<span class="spacer"${drag}></span>${this.updateHtml()}${usageHtml(this.usage, Date.now(), (id) => {
       const a = this.layout.claudeAccounts.find((x) => x.id === id);
       return a ? { name: a.name, color: accountColor(this.layout, a.id) } : null;
-    })}<button class="top-btn" data-top="browser" title="${t("top.browserTitle", { keys: keysIn("⌘W") })}">${t("top.browser")}</button>${thermalHtml(this.thermal)}${this.coffeeHtml()}${this.quitHtml()}`;
+    })}${thermalHtml(this.thermal)}<button class="top-btn" data-top="browser" title="${t("top.browserTitle", { keys: keysIn("⌘W") })}">${t("top.browser")}</button>${this.coffeeHtml()}${this.quitHtml()}`;
     this.footer.innerHTML =
       `<span class="here" hidden></span><span class="hints">${hints()
         .map(([k, label]) => `<span><kbd>${k}</kbd> ${escapeHtml(label)}</span>`)
