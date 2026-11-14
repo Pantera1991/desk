@@ -134,6 +134,11 @@ describe("the Sessions view", () => {
     expect(html).toContain("Kontekst");
   });
 
+  it("keeps a session's whole name in its title, for when the column cuts it short", () => {
+    const html = renderSessions([{ ...view("a", 2), name: "desk-dropdown · usage <details>" }], null, false, now);
+    expect(html).toContain('title="desk-dropdown · usage &#60;details&#62;"');
+  });
+
   it("says when the share is still being counted", () => {
     expect(renderSessions([view("a", 2)], "loading", false, now)).toContain("liczę udział");
   });
@@ -159,6 +164,13 @@ describe("the History view", () => {
   it("marks the week's days before desk recorded as without data", () => {
     const html = renderHistory({ ...details, recordingSince: s - 10 * H }, plain, now);
     expect(html).toContain('class="up-day none"');
+  });
+
+  it("puts a reset's time left of its line near now, inside the chart", () => {
+    const reset = (at: number) => ({ t: at - H, agent: "claude", account: null, label: "5h", pct: 40, resets: at });
+    const html = renderHistory({ ...details, history: [reset(s - 12 * H), reset(s - H)] }, plain, now);
+    expect(html).toMatch(/<s class="up-rs" style="left:50\.0%">/);
+    expect(html).toMatch(/<s class="up-rs end" style="left:95\.8%">/);
   });
 
   it("draws 48 bars and the even share of the week", () => {

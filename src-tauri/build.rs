@@ -58,6 +58,7 @@ const COMMANDS: &[&str] = &[
     "recent_conversations",
     "claude_accounts",
     "usage_models",
+    "usage_details",
     "quit_desk",
 ];
 

@@ -210,7 +210,8 @@ export function renderSessions(
       const s = r.status;
       const model = `${escapeHtml(s.model)}${s.effort ? ` · ${escapeHtml(s.effort)}` : ""}${s.fast ? " ⚡" : ""}`;
       const context = wide ? `<td>${s.contextPercent === null ? "—" : pct(s.contextPercent)}</td>` : "";
-      return `<tr class="up-srow" data-key="${escapeHtml(r.key)}"><td><i class="up-st ${r.state}"></i>${escapeHtml(r.name)}<span class="up-go">${t("usage.toTile")}</span></td><td${isModel(s) ? ' class="up-model"' : ""}>${model}</td><td>${shareCell(fraction(r.slug), isModel(s))}</td><td>$${s.cost.toFixed(2)}</td><td>${cacheCell(s, nowMs)}</td>${context}</tr>`;
+      const name = escapeHtml(r.name);
+      return `<tr class="up-srow" data-key="${escapeHtml(r.key)}"><td class="up-name" title="${name}"><i class="up-st ${r.state}"></i>${name}<span class="up-go">${t("usage.toTile")}</span></td><td${isModel(s) ? ' class="up-model"' : ""}>${model}</td><td>${shareCell(fraction(r.slug), isModel(s))}</td><td>$${s.cost.toFixed(2)}</td><td>${cacheCell(s, nowMs)}</td>${context}</tr>`;
     })
     .join("");
   let restRow = "";
@@ -218,7 +219,7 @@ export function renderSessions(
     const names = got?.mode === "transcripts" ? rest.map((r) => r.label) : [t("usage.restClosed")];
     const label = `${t("usage.rest")} <span class="up-dim">(${escapeHtml(names.slice(0, 3).join(", "))}${names.length > 3 ? ", …" : ""})</span>`;
     const sum = rest.reduce((a, r) => a + r.fraction, 0);
-    restRow = `<tr class="up-rest"><td>${label}</td><td></td><td>${shareCell(sum, false)}</td><td></td><td></td>${wide ? "<td></td>" : ""}</tr>`;
+    restRow = `<tr class="up-rest"><td class="up-name">${label}</td><td></td><td>${shareCell(sum, false)}</td><td></td><td></td>${wide ? "<td></td>" : ""}</tr>`;
   }
   if (!sorted.length && !restRow) return `<p class="up-line up-dim">${t("usage.noSessions")}</p>`;
   const cold = rows
@@ -281,8 +282,10 @@ export function renderHistory(d: UsageDetails, u: Usage, nowMs: number, pick: Hi
       return `<button class="up-col${picked}" data-bar="${i}" aria-label="${escapeHtml(tip)}"><i class="${cls("up-b", b.level)}" style="height:${Math.min(100, b.percent).toFixed(1)}%"></i></button>`;
     })
     .join("");
+  // A reset near now has its time on the line's left: on the right it would
+  // stick out of the chart and the popover would scroll sideways.
   const marks = resetMarks(d.history, nowMs)
-    .map((m) => `<s class="up-rs" style="left:${(m.x * 100).toFixed(1)}%"><span>${clock(m.at)}</span></s>`)
+    .map((m) => `<s class="${m.x > 0.85 ? "up-rs end" : "up-rs"}" style="left:${(m.x * 100).toFixed(1)}%"><span>${clock(m.at)}</span></s>`)
     .join("");
   const full = fullSpans(d.history, nowMs)
     .filter((x) => x.to > now - DAY)
