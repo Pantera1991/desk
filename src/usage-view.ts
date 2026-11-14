@@ -66,6 +66,15 @@ function tokens(n: number): string {
   return n >= 1000 ? `${Math.round(n / 1000)}k` : String(n);
 }
 
+/** A token count as the model breakdown shows it: 950, 7.1K, 2.4M, 120M, 1.4B. */
+export function bigTokens(n: number): string {
+  const short = (v: number, unit: string) => `${v < 10 ? v.toFixed(1) : Math.round(v)}${unit}`;
+  if (n >= 1e9) return short(n / 1e9, "B");
+  if (n >= 1e6) return short(n / 1e6, "M");
+  if (n >= 1e3) return short(n / 1e3, "K");
+  return String(n);
+}
+
 function warn(level: Level, text: string): string {
   return `<p class="${cls("up-warn", level || "warn")}">${WARN_ICON}<span>${text}</span></p>`;
 }

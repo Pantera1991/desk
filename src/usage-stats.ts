@@ -107,6 +107,9 @@ export function chipState(u: Usage, nowMs: number): { level: Level; dot: boolean
   return { level: worse(shown, hidden), dot: RANK[hidden] > RANK[shown], reasons };
 }
 
+/** The 5h window's length, seconds. */
+const FIVE_HOURS = 18_000;
+
 function fiveHour(history: LimitSample[]): LimitSample[] {
   return history.filter((h) => h.label === "5h").sort((a, b) => a.t - b.t);
 }
@@ -121,18 +124,23 @@ export function barLevel(percent: number): Level {
 /**
  * The last 24 hours of the 5h window in 48 half-hour bars, oldest first:
  * the highest reading in each, the last one carried on until its window
- * resets, 0 after that.
+ * resets, 0 after that. `from`/`to`: the bar's half hour; `start`: when the
+ * window that reading belongs to began (null for an empty bar), seconds.
  */
-export function bars24h(history: LimitSample[], nowMs: number): { percent: number; level: Level }[] {
+export function bars24h(
+  history: LimitSample[],
+  nowMs: number,
+): { percent: number; level: Level; from: number; to: number; start: number | null }[] {
   const samples = fiveHour(history);
   const now = nowMs / 1000;
   return Array.from({ length: 48 }, (_, i) => {
     const from = now - (48 - i) * 1800;
     const to = from + 1800;
     const before = samples.filter((x) => x.t < from).pop();
-    let percent = before && before.resets > from ? before.pct : 0;
-    for (const x of samples) if (x.t >= from && x.t < to) percent = Math.max(percent, x.pct);
-    return { percent, level: barLevel(percent) };
+    let top = before && before.resets > from ? before : null;
+    for (const x of samples) if (x.t >= from && x.t < to && x.pct >= (top?.pct ?? 0)) top = x;
+    const percent = top?.pct ?? 0;
+    return { percent, level: barLevel(percent), from, to, start: top && percent > 0 ? top.resets - FIVE_HOURS : null };
   });
 }
 

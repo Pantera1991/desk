@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SessionStatus, Usage, UsageDetails } from "./api";
-import { renderHistory, renderNow, renderPopover, renderSessions, type SessionView } from "./usage-view";
+import { bigTokens, renderHistory, renderNow, renderPopover, renderSessions, type SessionView } from "./usage-view";
 
 const now = Date.UTC(2026, 10, 14, 0, 55);
 const s = now / 1000;
@@ -166,5 +166,11 @@ describe("the History view", () => {
     expect(html.match(/class="up-b/g)).toHaveLength(48);
     expect(html).toContain("równo: 14% dziennie");
     expect(html).not.toContain("desk zbiera historię od");
+  });
+});
+
+describe("token counts", () => {
+  it("shortens big numbers the way the breakdown shows them", () => {
+    expect([950, 7100, 2_400_000, 120_000_000, 1_400_000_000].map(bigTokens)).toEqual(["950", "7.1K", "2.4M", "120M", "1.4B"]);
   });
 });
