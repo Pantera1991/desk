@@ -1644,13 +1644,14 @@ html.dragging-card .tile .term {
   opacity: 0.75;
 }
 
-.fan-chart line.slow {
-  stroke: var(--model);
+/* The lines across the chart (now, slowing, the emergency stop) and their labels above it. A label
+   sits on a patch of the panel's colour, so a line passing behind it never runs through its text. */
+.fan-chart line.mark {
   stroke-dasharray: 2 3;
 }
 
-.fan-chart text.slow {
-  fill: var(--model);
+.fan-chart .mark-bg {
+  fill: var(--panel);
 }
 
 .fan-chart line.now {
@@ -1660,6 +1661,23 @@ html.dragging-card .tile .term {
 
 .fan-chart text.now {
   fill: var(--waiting);
+}
+
+.fan-chart line.slow {
+  stroke: var(--model);
+}
+
+.fan-chart text.slow {
+  fill: var(--model);
+}
+
+.fan-chart line.emergency {
+  stroke: var(--danger);
+  stroke-dasharray: 6 3;
+}
+
+.fan-chart text.emergency {
+  fill: var(--danger);
 }
 
 .new-project {

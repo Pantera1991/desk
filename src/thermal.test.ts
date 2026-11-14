@@ -41,7 +41,10 @@ const S3 = [
 
 describe("the way down", () => {
   it("keeps the margin within what Options offers", () => {
-    expect([clampFanMargin(0), clampFanMargin(40), clampFanMargin(Number.NaN), clampFanMargin(4.6)]).toEqual([2, 15, 7, 5]);
+    // 0: a step comes down as soon as the average is below its own limit.
+    expect([clampFanMargin(0), clampFanMargin(-3), clampFanMargin(40), clampFanMargin(Number.NaN), clampFanMargin(4.6)]).toEqual([
+      0, 0, 15, 7, 5,
+    ]);
     expect(FAN_WAITS).toEqual([15, 30, 60, 120, 300]);
   });
 });
@@ -119,11 +122,15 @@ describe("temperature chip", () => {
       { celsius: 75, percent: 80 },
     ];
     expect(thermalTitle(at(76, { fanSteps: wide, fanStep: 1, fans: fan({ percent: 80 }) }))).toContain(
-      "W dół: przy 68°C → 50%, auto poniżej 60°C.",
+      "W dół: poniżej 68°C → 50%, auto poniżej 60°C.",
     );
     // The margin from Options, not a fixed 7°C.
     expect(thermalTitle(at(76, { fanSteps: wide, fanStep: 1, fanMargin: 3, fans: fan({ percent: 80 }) }))).toContain(
-      "W dół: przy 72°C → 50%, auto poniżej 60°C.",
+      "W dół: poniżej 72°C → 50%, auto poniżej 60°C.",
+    );
+    // No margin: down as soon as it is below the step's own limit.
+    expect(thermalTitle(at(76, { fanSteps: wide, fanStep: 1, fanMargin: 0, fans: fan({ percent: 80 }) }))).toContain(
+      "W dół: poniżej 75°C → 50%, auto poniżej 60°C.",
     );
     const top = thermalTitle(at(78, { fanSteps: ONE, fanStep: 0, fans: forced }));
     expect(top).toContain("6800");
@@ -173,7 +180,7 @@ describe("fan steps", () => {
   });
 
   it("draws the steps", () => {
-    const c = fanChart(S3, 85, 74, 7);
+    const c = fanChart(S3, 7, { slow: 85, now: 74 });
     // 35–100°C across, 0–100% up: idle temperatures show left of the first step.
     expect(c.line).toBe("M 274.5 108 V 63 H 329.2 V 45 H 391.7 V 18 H 548");
     expect(c.ticks).toEqual([
@@ -184,16 +191,64 @@ describe("fan steps", () => {
     expect(c.degrees.map((d) => d.celsius)).toEqual([40, 50, 60, 70, 80, 90, 100]);
     expect(c.degrees[0].x).toBe(79.1);
     expect(c.autoWidth).toBe(234.5);
-    expect(c.slowX).toBe(430.8);
-    expect(c.nowX).toBe(344.8);
-    expect(fanChart(S3, 0, 48, 7).nowX).toBe(141.6);
-    expect(fanChart(S3, 0, null, 7)).toMatchObject({ slowX: null, nowX: null });
+    expect([c.top, c.bottom, c.height]).toEqual([18, 108, 148]);
+  });
+
+  it("labels each line above the chart, with its temperature", () => {
+    // Apart: both labels in the one row above the chart, centred on their lines.
+    expect(fanChart(S3, 7, { slow: 85, now: 74 }).marks).toEqual([
+      { kind: "now", x: 344.8, text: "teraz 74°", labelX: 344.8, labelY: 10, labelWidth: 54.9 },
+      { kind: "slow", x: 430.8, text: "zwalnianie 85°", labelX: 430.8, labelY: 10, labelWidth: 85.4 },
+    ]);
+    expect(fanChart(S3, 7, { now: 48 }).marks.map((m) => [m.kind, m.x])).toEqual([["now", 141.6]]);
+    expect(fanChart(S3, 7, { slow: 0, emergency: 0, now: null }).marks).toEqual([]);
+    expect(fanChart(S3, 7, {}).marks).toEqual([]);
+  });
+
+  it("never lets two labels overlap: the second moves a row down and the chart grows", () => {
+    const c = fanChart(S3, 7, { slow: 90, emergency: 95, now: 48 });
+    expect(c.marks.map((m) => [m.kind, m.text, m.labelY])).toEqual([
+      ["now", "teraz 48°", 10],
+      ["slow", "zwalnianie 90°", 10],
+      ["emergency", "zatrzymanie 95°", 22],
+    ]);
+    // One more row: everything below moves 12 down.
+    expect([c.top, c.bottom, c.height]).toEqual([30, 120, 160]);
+    expect(c.ticks[0]).toEqual({ percent: 100, y: 30 });
+    expect(c.line).toBe("M 274.5 120 V 75 H 329.2 V 57 H 391.7 V 30 H 548");
+    // The same reading as slowing: two rows, never one label on another.
+    expect(fanChart(S3, 7, { slow: 80, now: 80 }).marks.map((m) => m.labelY)).toEqual([10, 22]);
+    // Labels in one row keep a gap between them.
+    for (const set of [
+      { slow: 85, emergency: 95, now: 90 },
+      { slow: 60, emergency: 62, now: 64 },
+      { slow: 100, emergency: 100, now: 100 },
+    ]) {
+      const marks = fanChart(S3, 7, set).marks;
+      for (const a of marks)
+        for (const b of marks) {
+          if (a === b || a.labelY !== b.labelY) continue;
+          expect(Math.abs(a.labelX - b.labelX)).toBeGreaterThanOrEqual((a.labelWidth + b.labelWidth) / 2 + 6);
+        }
+    }
+  });
+
+  it("keeps labels inside the chart, and a stop above 100°C at the edge with its real value", () => {
+    const [stop] = fanChart(S3, 7, { emergency: 105 }).marks;
+    expect(stop).toMatchObject({ kind: "emergency", x: 548, text: "zatrzymanie 105°" });
+    // Centred as far right as the label fits.
+    expect(stop.labelX + stop.labelWidth / 2).toBeLessThanOrEqual(558);
+    const [now] = fanChart(S3, 7, { now: 30 }).marks;
+    expect(now.x).toBe(40);
+    expect(now.labelX - now.labelWidth / 2).toBeGreaterThanOrEqual(2);
   });
 
   it("draws the way down: each step the margin lower, never below the first limit", () => {
     // 72 − 7 meets the first limit (65): from step 2 straight to auto.
-    expect(fanChart(S3, 0, null, 7).down).toBe("M 274.5 108 V 63 H 274.5 V 45 H 337 V 18 H 548");
-    expect(fanChart(S3, 0, null, 3).down).toBe("M 274.5 108 V 63 H 305.7 V 45 H 368.2 V 18 H 548");
+    expect(fanChart(S3, 7, {}).down).toBe("M 274.5 108 V 63 H 274.5 V 45 H 337 V 18 H 548");
+    expect(fanChart(S3, 3, {}).down).toBe("M 274.5 108 V 63 H 305.7 V 45 H 368.2 V 18 H 548");
+    // No margin: the way down is the way up.
+    expect(fanChart(S3, 0, {}).down).toBe(fanChart(S3, 0, {}).line);
   });
 });
 

@@ -11,7 +11,8 @@ export const MAX_LIMIT = 100;
 export const COOL_MARGIN = 7;
 /** A fan step comes down this far below its limit (thermal.rs StepDown), °C. */
 export const DEFAULT_FAN_MARGIN = 7;
-export const MIN_FAN_MARGIN = 2;
+/** 0: a step comes down as soon as the average is below its own limit. */
+export const MIN_FAN_MARGIN = 0;
 export const MAX_FAN_MARGIN = 15;
 /** How long a fan step waits before coming down: the choices in Options, s. */
 export const FAN_WAITS = [15, 30, 60, 120, 300];
@@ -102,20 +103,76 @@ export function stepRpm(percent: number, maxRpm: number | null): number | null {
 const tenth = (n: number) => Math.round(n * 10) / 10;
 /** Where the chart starts: below the lowest limit, so idle temperatures show too, °C. */
 const CHART_FROM = 35;
-/** The chart's axes: 35–100°C across x 40–548, 0–100% up y 108–18. */
+/** The plot's left and right edge, and the whole width (viewBox units). */
+const CHART_LEFT = 40;
+const CHART_RIGHT = 548;
+const CHART_WIDTH = 560;
+/** 35–100°C across x 40–548. */
 const chartX = (celsius: number) =>
-  tenth(40 + ((Math.min(MAX_LIMIT, Math.max(CHART_FROM, celsius)) - CHART_FROM) * 508) / (MAX_LIMIT - CHART_FROM));
-const chartY = (percent: number) => tenth(108 - percent * 0.9);
+  tenth(
+    CHART_LEFT +
+      ((Math.min(MAX_LIMIT, Math.max(CHART_FROM, celsius)) - CHART_FROM) * (CHART_RIGHT - CHART_LEFT)) /
+        (MAX_LIMIT - CHART_FROM),
+  );
+/** The labels of the lines sit in rows above the plot: the first row's baseline, and each row's height. */
+const LABEL_FIRST = 10;
+const LABEL_ROW = 12;
+/** A label's width at the chart's 10px monospace, per character; and the least gap between two labels. */
+const LABEL_CHAR = 6.1;
+const LABEL_GAP = 6;
+/** 0–100% takes 90 units up from the plot's bottom. */
+const PLOT_HEIGHT = 90;
+
+/** A line across the fan chart: the reading now, where slowing starts, or the emergency stop. */
+export type ChartMarkKind = "now" | "slow" | "emergency";
+
+export interface ChartMark {
+  kind: ChartMarkKind;
+  /** The line. */
+  x: number;
+  /** Its label: the text, its centre, baseline and width, above the plot. */
+  text: string;
+  labelX: number;
+  labelY: number;
+  labelWidth: number;
+}
+
+const MARK_TEXT: Record<ChartMarkKind, MessageKey> = {
+  now: "settings.fanChartNow",
+  slow: "settings.fanChartSlow",
+  emergency: "settings.fanChartEmergency",
+};
+
+/** The lines' labels, each centred on its line as far as it fits in the chart, and a row lower
+ * whenever it would touch a label already placed; also how many rows that took (at least one). */
+function placeMarks(marks: { kind: ChartMarkKind; celsius: number }[]): { marks: ChartMark[]; rows: number } {
+  const placed: { left: number; right: number; row: number }[] = [];
+  const out = marks
+    .map((m) => ({ ...m, x: chartX(m.celsius) }))
+    .sort((a, b) => a.x - b.x)
+    .map(({ kind, celsius, x }) => {
+      const text = t(MARK_TEXT[kind], { c: celsius });
+      const half = (text.length * LABEL_CHAR) / 2;
+      const centre = Math.min(CHART_WIDTH - 2 - half, Math.max(2 + half, x));
+      const [left, right] = [centre - half, centre + half];
+      let row = 0;
+      while (placed.some((p) => p.row === row && left < p.right + LABEL_GAP && p.left < right + LABEL_GAP)) row++;
+      placed.push({ left, right, row });
+      return { kind, x, text, labelX: tenth(centre), labelY: LABEL_FIRST + row * LABEL_ROW, labelWidth: tenth(half * 2) };
+    });
+  return { marks: out, rows: Math.max(1, ...placed.map((p) => p.row + 1)) };
+}
 
 /** The steps as SVG geometry: the stair line going up, the way down (each step `margin` lower,
- * never below the first limit, where macOS takes over), the area under the way up, the
- * percent grid, the auto band before the first step, and where slowing (0: none) and the
- * current reading (null: none) sit. */
+ * never below the first limit, where macOS takes over; the same line when `margin` is 0), the
+ * area under the way up, the percent grid, the auto band before the first step, and the lines
+ * across it with their labels: the reading now (null: none), where slowing starts and the
+ * emergency stop (0 or left out: none). The labels sit in rows above the plot, so the plot's
+ * `top` and `bottom` and the chart's `height` grow with every extra row. */
 export function fanChart(
   steps: FanStep[],
-  slowLimit: number,
-  celsius: number | null,
   margin: number,
+  lines: { now?: number | null; slow?: number; emergency?: number },
 ): {
   line: string;
   down: string;
@@ -123,15 +180,25 @@ export function fanChart(
   ticks: { percent: number; y: number }[];
   degrees: { celsius: number; x: number }[];
   autoWidth: number;
-  slowX: number | null;
-  nowX: number | null;
+  marks: ChartMark[];
+  top: number;
+  bottom: number;
+  height: number;
 } {
-  const rows = steps.length ? steps : DEFAULT_STEPS;
-  const first = rows[0].celsius;
+  const wanted: { kind: ChartMarkKind; celsius: number }[] = [];
+  if (typeof lines.now === "number") wanted.push({ kind: "now", celsius: lines.now });
+  if (lines.slow) wanted.push({ kind: "slow", celsius: lines.slow });
+  if (lines.emergency) wanted.push({ kind: "emergency", celsius: lines.emergency });
+  const { marks, rows } = placeMarks(wanted);
+  const top = LABEL_FIRST + 8 + (rows - 1) * LABEL_ROW;
+  const bottom = top + PLOT_HEIGHT;
+  const chartY = (percent: number) => tenth(bottom - (percent * PLOT_HEIGHT) / 100);
+  const table = steps.length ? steps : DEFAULT_STEPS;
+  const first = table[0].celsius;
   const stairs = (from: (c: number) => number) => {
     let d = `M ${chartX(first)} ${chartY(0)}`;
-    rows.forEach((s, i) => {
-      d += ` V ${chartY(s.percent)} H ${chartX(i + 1 < rows.length ? from(rows[i + 1].celsius) : MAX_LIMIT)}`;
+    table.forEach((s, i) => {
+      d += ` V ${chartY(s.percent)} H ${chartX(i + 1 < table.length ? from(table[i + 1].celsius) : MAX_LIMIT)}`;
     });
     return d;
   };
@@ -142,9 +209,11 @@ export function fanChart(
     area: `${line} V ${chartY(0)} Z`,
     ticks: [100, 50, 0].map((percent) => ({ percent, y: chartY(percent) })),
     degrees: [40, 50, 60, 70, 80, 90, 100].map((celsius) => ({ celsius, x: chartX(celsius) })),
-    autoWidth: tenth(chartX(rows[0].celsius) - 40),
-    slowX: slowLimit > 0 ? chartX(slowLimit) : null,
-    nowX: celsius === null ? null : chartX(celsius),
+    autoWidth: tenth(chartX(first) - CHART_LEFT),
+    marks,
+    top,
+    bottom,
+    height: bottom + 40,
   };
 }
 
