@@ -213,14 +213,18 @@ pub fn normalize_steps(steps: Vec<Step>) -> Vec<Step> {
 #[derive(Debug, Default)]
 pub struct StepPolicy {
     readings: VecDeque<f32>,
-    step: Option<usize>,
+    /// The threshold of the held step (None: auto). Kept by threshold rather
+    /// than by row, so an edited table maps it to the row starting at or below
+    /// it and never holds the fans above what the new table says.
+    held: Option<u32>,
+    /// The last change of step, up or down.
     since: Option<Instant>,
 }
 
 impl StepPolicy {
     /// The step for now, as an index into `steps` (None: auto). `steps` may
-    /// differ from the last call (Options edited): a held step beyond it is
-    /// clamped to the last row.
+    /// differ from the last call (Options edited): the held step becomes the
+    /// last row starting at or below its threshold, then the usual rules apply.
     pub fn step(&mut self, celsius: Option<f32>, pressure: bool, steps: &[Step], now: Instant) -> Option<usize> {
         match celsius {
             Some(c) => {
@@ -232,32 +236,34 @@ impl StepPolicy {
             None => self.readings.clear(),
         }
         if steps.is_empty() {
-            self.step = None;
+            self.held = None;
             self.since = None;
             return None;
         }
         let avg = (self.readings.len() == WINDOW).then(|| self.readings.iter().sum::<f32>() / WINDOW as f32);
-        let held = self.step.map(|k| k.min(steps.len() - 1));
+        let held = self.held.and_then(|c| steps.iter().rposition(|s| s.celsius <= c));
         let up = if pressure {
             Some(steps.len() - 1)
         } else {
             avg.and_then(|a| steps.iter().rposition(|s| a >= s.celsius as f32))
         };
         let settled = self.since.is_none_or(|s| now.duration_since(s) >= MIN_SLOW);
-        if up > held {
-            self.step = up;
+        let next = if up > held {
             self.since = Some(now);
+            up
         } else if held.is_some() && !pressure && settled {
             let down = avg.and_then(|a| steps.iter().rposition(|s| a > s.celsius as f32 - COOL_MARGIN));
             if down < held {
-                self.step = down;
+                self.since = Some(now);
+                down
             } else {
-                self.step = held;
+                held
             }
         } else {
-            self.step = held;
-        }
-        self.step
+            held
+        };
+        self.held = next.map(|k| steps[k].celsius);
+        next
     }
 }
 
@@ -1472,7 +1478,41 @@ mod tests {
         let t = Instant::now();
         let mut p = StepPolicy::default();
         assert_eq!(hold(&mut p, 85.0, &s3(), t), Some(2));
-        assert_eq!(hold(&mut p, 60.0, &s3(), t + Duration::from_secs(61)), Some(0));
+        // Cooled within the minute: nothing yet, then straight to the first step.
+        assert_eq!(hold(&mut p, 60.0, &s3(), t + Duration::from_secs(30)), Some(2));
+        assert_eq!(p.step(Some(60.0), false, &s3(), t + Duration::from_secs(61)), Some(0));
+    }
+
+    #[test]
+    fn the_minute_counts_from_every_change() {
+        let t = Instant::now();
+        let mut p = StepPolicy::default();
+        assert_eq!(hold(&mut p, 85.0, &s3(), t), Some(2));
+        // A minute later it has cooled to 70°C: one step down.
+        assert_eq!(hold(&mut p, 70.0, &s3(), t + Duration::from_secs(61)), Some(1));
+        // Cooler still right after: the next change waits another minute.
+        assert_eq!(hold(&mut p, 55.0, &s3(), t + Duration::from_secs(66)), Some(1));
+        assert_eq!(hold(&mut p, 55.0, &s3(), t + Duration::from_secs(122)), None);
+    }
+
+    #[test]
+    fn an_edited_table_never_holds_the_fans_above_it() {
+        // "Chłodno" at 70°C holds 68 → 80%; the user deletes the first row.
+        let t = Instant::now();
+        let cool = vec![st(60, 60), st(68, 80), st(75, 100)];
+        let mut p = StepPolicy::default();
+        assert_eq!(hold(&mut p, 70.0, &cool, t), Some(1));
+        let edited = vec![st(68, 80), st(75, 100)];
+        assert_eq!(p.step(Some(70.0), false, &edited, t + Duration::from_secs(5)), Some(0));
+    }
+
+    #[test]
+    fn a_new_percent_on_the_held_step_applies_at_once() {
+        let t = Instant::now();
+        let mut p = StepPolicy::default();
+        assert_eq!(hold(&mut p, 74.0, &s3(), t), Some(1));
+        let louder = vec![st(65, 50), st(72, 90), st(80, 100)];
+        assert_eq!(p.step(Some(74.0), false, &louder, t + Duration::from_secs(5)), Some(1));
     }
 
     #[test]

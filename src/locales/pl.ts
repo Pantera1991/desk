@@ -453,7 +453,7 @@ export const pl = {
   "settings.fansOutdated": "Zgoda na wiatraki jest z poprzedniej wersji desk.",
   "settings.fansUpdate": "Zaktualizuj zgodę",
   "settings.thermalAboutOff": "desk tylko pokazuje temperaturę.",
-  "settings.thermalAboutFans": "Każdy stopień schodzi o jeden niżej 7°C pod swoim progiem, nie częściej niż co minutę; poniżej pierwszego progu wiatraki wracają do auto, czyli pod kontrolę macOS. Gdy wiatrakami steruje inny program (Stats, Macs Fan Control), desk ich nie rusza.",
+  "settings.thermalAboutFans": "Każdy stopień schodzi niżej 7°C pod swoim progiem, nie częściej niż co minutę; poniżej pierwszego progu wiatraki wracają do auto, czyli pod kontrolę macOS. Gdy wiatrakami steruje inny program (Stats, Macs Fan Control), desk ich nie rusza.",
   "settings.fanSteps": "Stopnie wiatraków",
   "settings.fanStepFrom": "od",
   "settings.fanStepNow": "● teraz",
