@@ -33,7 +33,7 @@
 //!   slowing (fans.rs; macOS on Apple Silicon only). A second `Policy` decides
 //!   for the fans, independent of the slowing one.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use crate::fans::{FanStatus, Fans};
 use std::path::Path;
@@ -155,6 +155,110 @@ impl Policy {
             None => {}
         }
         self.since.is_some()
+    }
+}
+
+/// One fan step from Options: from `celsius` (the average, as for slowing)
+/// the fans run at `percent` of their maximum (fan_control::LEVELS).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Step {
+    pub celsius: u32,
+    pub percent: u8,
+}
+
+/// Most steps Options keeps.
+pub const MAX_STEPS: usize = 4;
+
+/// One step, full speed from 70°C: what the fans did before steps.
+pub fn default_steps() -> Vec<Step> {
+    vec![Step { celsius: 70, percent: 100 }]
+}
+
+/// A table desk can use, whatever it was given: thresholds within
+/// MIN_LIMIT..=MAX_LIMIT and rising, percents on the 40–100 list (nearest 10)
+/// and never falling, one row per threshold (the last kept), at most
+/// MAX_STEPS rows; nothing left: the default.
+pub fn normalize_steps(steps: Vec<Step>) -> Vec<Step> {
+    let mut rows: Vec<Step> = steps
+        .into_iter()
+        .map(|s| Step {
+            celsius: s.celsius.clamp(MIN_LIMIT, MAX_LIMIT),
+            percent: ((f32::from(s.percent) / 10.0).round() * 10.0).clamp(40.0, 100.0) as u8,
+        })
+        .collect();
+    rows.sort_by_key(|s| (s.celsius, s.percent));
+    let mut out: Vec<Step> = Vec::new();
+    for row in rows {
+        match out.last_mut() {
+            Some(last) if last.celsius == row.celsius => *last = row,
+            _ => out.push(row),
+        }
+    }
+    out.truncate(MAX_STEPS);
+    let mut top = 0;
+    for row in &mut out {
+        top = top.max(row.percent);
+        row.percent = top;
+    }
+    if out.is_empty() { default_steps() } else { out }
+}
+
+/// Which step the fans should be at: up at once (several steps if need be),
+/// down only COOL_MARGIN below a step's threshold and MIN_SLOW after the last
+/// step up, straight to the step the average still holds. The minute counts
+/// from the last step up, not from each step down: the average falls through
+/// the steps in between, and the fans should follow it down, not wait a
+/// minute on each. No reading: nothing holds the fans, so they go back to
+/// auto after the minute.
+#[derive(Debug, Default)]
+pub struct StepPolicy {
+    readings: VecDeque<f32>,
+    step: Option<usize>,
+    since: Option<Instant>,
+}
+
+impl StepPolicy {
+    /// The step for now, as an index into `steps` (None: auto). `steps` may
+    /// differ from the last call (Options edited): a held step beyond it is
+    /// clamped to the last row.
+    pub fn step(&mut self, celsius: Option<f32>, pressure: bool, steps: &[Step], now: Instant) -> Option<usize> {
+        match celsius {
+            Some(c) => {
+                if self.readings.len() == WINDOW {
+                    self.readings.pop_front();
+                }
+                self.readings.push_back(c);
+            }
+            None => self.readings.clear(),
+        }
+        if steps.is_empty() {
+            self.step = None;
+            self.since = None;
+            return None;
+        }
+        let avg = (self.readings.len() == WINDOW).then(|| self.readings.iter().sum::<f32>() / WINDOW as f32);
+        let held = self.step.map(|k| k.min(steps.len() - 1));
+        let up = if pressure {
+            Some(steps.len() - 1)
+        } else {
+            avg.and_then(|a| steps.iter().rposition(|s| a >= s.celsius as f32))
+        };
+        let settled = self.since.is_none_or(|s| now.duration_since(s) >= MIN_SLOW);
+        if up > held {
+            self.step = up;
+            self.since = Some(now);
+        } else if held.is_some() && !pressure && settled {
+            let down = avg.and_then(|a| steps.iter().rposition(|s| a > s.celsius as f32 - COOL_MARGIN));
+            if down < held {
+                self.step = down;
+            } else {
+                self.step = held;
+            }
+        } else {
+            self.step = held;
+        }
+        self.step
     }
 }
 
@@ -1312,5 +1416,84 @@ mod tests {
         assert_eq!([1, 2, 8, 18].map(quota_usec), [1_000_000, 1_000_000, 4_000_000, 9_000_000]);
         assert!(in_scope("0::/user.slice/user-1000.slice/user@1000.service/desk-sessions.scope\n"));
         assert!(!in_scope("0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-desk.scope\n"));
+    }
+
+    fn st(celsius: u32, percent: u8) -> Step {
+        Step { celsius, percent }
+    }
+
+    fn s3() -> Vec<Step> {
+        vec![st(65, 50), st(72, 70), st(80, 100)]
+    }
+
+    /// A full window of the same reading.
+    fn hold(p: &mut StepPolicy, c: f32, steps: &[Step], t: Instant) -> Option<usize> {
+        (0..3).map(|_| p.step(Some(c), false, steps, t)).last().unwrap()
+    }
+
+    #[test]
+    fn normalize_repairs_any_table() {
+        assert_eq!(normalize_steps(vec![]), vec![st(70, 100)]);
+        assert_eq!(normalize_steps(vec![st(80, 100), st(65, 50)]), vec![st(65, 50), st(80, 100)]);
+        assert_eq!(normalize_steps(vec![st(30, 45), st(120, 100)]), vec![st(50, 50), st(100, 100)]);
+        assert_eq!(normalize_steps(vec![st(70, 90), st(80, 60)]), vec![st(70, 90), st(80, 90)]);
+        assert_eq!(normalize_steps(vec![st(70, 50), st(70, 80)]), vec![st(70, 80)]);
+        assert_eq!(normalize_steps(vec![st(70, 0)]), vec![st(70, 40)]);
+        let six = (0..6).map(|i| st(60 + i * 5, 40 + i as u8 * 10)).collect();
+        assert_eq!(normalize_steps(six), vec![st(60, 40), st(65, 50), st(70, 60), st(75, 70)]);
+    }
+
+    #[test]
+    fn steps_up_at_once_even_several() {
+        let t = Instant::now();
+        let mut p = StepPolicy::default();
+        assert_eq!(hold(&mut p, 60.0, &s3(), t), None);
+        assert_eq!(hold(&mut p, 74.0, &s3(), t), Some(1));
+        assert_eq!(hold(&mut p, 85.0, &s3(), t), Some(2));
+        assert_eq!(hold(&mut StepPolicy::default(), 85.0, &s3(), t), Some(2));
+    }
+
+    #[test]
+    fn steps_down_only_well_below_and_after_a_minute() {
+        let t = Instant::now();
+        let s = Duration::from_secs;
+        let mut p = StepPolicy::default();
+        assert_eq!(hold(&mut p, 74.0, &s3(), t), Some(1));
+        assert_eq!(hold(&mut p, 68.0, &s3(), t + s(10)), Some(1)); // above 72 − 7
+        assert_eq!(hold(&mut p, 64.0, &s3(), t + s(20)), Some(1)); // low enough, but not a minute yet
+        assert_eq!(hold(&mut p, 64.0, &s3(), t + s(61)), Some(0));
+        assert_eq!(hold(&mut p, 57.0, &s3(), t + s(122)), None);
+    }
+
+    #[test]
+    fn steps_down_straight_to_the_right_step() {
+        let t = Instant::now();
+        let mut p = StepPolicy::default();
+        assert_eq!(hold(&mut p, 85.0, &s3(), t), Some(2));
+        assert_eq!(hold(&mut p, 60.0, &s3(), t + Duration::from_secs(61)), Some(0));
+    }
+
+    #[test]
+    fn pressure_means_the_top_step() {
+        let mut p = StepPolicy::default();
+        assert_eq!(p.step(Some(50.0), true, &s3(), Instant::now()), Some(2));
+    }
+
+    #[test]
+    fn a_lost_sensor_gives_the_fans_back_after_the_minute() {
+        let t = Instant::now();
+        let mut p = StepPolicy::default();
+        assert_eq!(hold(&mut p, 74.0, &s3(), t), Some(1));
+        assert_eq!(p.step(None, false, &s3(), t + Duration::from_secs(30)), Some(1));
+        assert_eq!(p.step(None, false, &s3(), t + Duration::from_secs(61)), None);
+    }
+
+    #[test]
+    fn edited_table_clamps_the_held_step() {
+        let t = Instant::now();
+        let mut p = StepPolicy::default();
+        assert_eq!(hold(&mut p, 85.0, &s3(), t), Some(2));
+        assert_eq!(hold(&mut p, 85.0, &[st(65, 50)], t + Duration::from_secs(5)), Some(0));
+        assert_eq!(p.step(Some(85.0), false, &[], t + Duration::from_secs(10)), None);
     }
 }
