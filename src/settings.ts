@@ -29,13 +29,17 @@ import { LANGUAGES, language, t, type Language, type MessageKey } from "./i18n";
 import { acceleratorsOf, bindingLabel, BINDINGS, clashWith, FIXED, groupLabel, GROUPS, keyText } from "./keys";
 import {
   addStep,
+  clampFanMargin,
   clampLimit,
   DEFAULT_STEPS,
   FAN_LEVELS,
   FAN_PRESETS,
+  FAN_WAITS,
   fanChart,
+  MAX_FAN_MARGIN,
   MAX_LIMIT,
   MAX_STEPS,
+  MIN_FAN_MARGIN,
   MIN_LIMIT,
   MODE_LABELS,
   modeOptions,
@@ -76,7 +80,7 @@ export interface SettingsContext {
   addFolder: () => Promise<void>;
   removeFolder: (path: string) => void;
   /** What desk does when hot, and its limits (thermal.ts); saved at once. */
-  setThermal: (change: Partial<Pick<Layout, "thermalMode" | "thermalLimit" | "fanSteps">>) => void;
+  setThermal: (change: Partial<Pick<Layout, "thermalMode" | "thermalLimit" | "fanSteps" | "fanMargin" | "fanWait">>) => void;
   /** The last temperature reading and fan step (thermal.rs); null before the first. */
   thermal: () => ThermalStatus | null;
   /** Can desk drive the fans here, and is the permission installed; null: unknown. */
@@ -223,12 +227,18 @@ export class Settings {
       })
       .join("");
     const presets = FAN_PRESETS.map((p, i) => `<button data-preset="${i}">${t(p.key)}</button>`).join("");
+    const waits = FAN_WAITS.map((w) => {
+      const label = w < 60 ? t("settings.fanWaitSeconds", { n: w }) : t("settings.fanWaitMinutes", { n: w / 60 });
+      return `<option value="${w}"${w === layout.fanWait ? " selected" : ""}>${label}</option>`;
+    }).join("");
+    const down = `<div class="line wrap">${t("settings.fanDown")} <input type="number" min="${MIN_FAN_MARGIN}" max="${MAX_FAN_MARGIN}" step="1" value="${layout.fanMargin}" data-k="fan-margin" aria-label="${escapeHtml(t("settings.fanMargin"))}"/> ${t("settings.fanDownMargin")} <select data-k="fan-wait" aria-label="${escapeHtml(t("settings.fanWait"))}">${waits}</select></div>`;
     const chart = this.fanChartSvg(steps, slows(layout.thermalMode) ? layout.thermalLimit : 0, thermal?.celsius ?? null);
     return `<div class="fan-steps" data-row>
       <span>${t("settings.fanSteps")}</span>
       <div class="fan-step-rows">${rows}</div>
       <p class="error" data-k="steps-error" hidden></p>
       <div class="line wrap"><button data-k="step-add"${steps.length >= MAX_STEPS ? " disabled" : ""}>${t("settings.fanStepAdd")}</button><span class="dim">${t("settings.fanPresets")}</span>${presets}</div>
+      ${down}
       ${chart}
     </div>`;
   }
@@ -305,6 +315,14 @@ export class Settings {
       b.addEventListener("click", () => save(typed().filter((_, i) => i !== Number(b.dataset.stepRm)))),
     );
     box.querySelector<HTMLButtonElement>('[data-k="step-add"]')?.addEventListener("click", () => save(addStep(typed())));
+    const margin = box.querySelector<HTMLInputElement>('[data-k="fan-margin"]');
+    margin?.addEventListener("change", () => {
+      const c = clampFanMargin(margin.value === "" ? Number.NaN : Number(margin.value));
+      margin.value = String(c);
+      this.ctx.setThermal({ fanMargin: c });
+    });
+    const wait = box.querySelector<HTMLSelectElement>('[data-k="fan-wait"]');
+    wait?.addEventListener("change", () => this.ctx.setThermal({ fanWait: Number(wait.value) }));
     box.querySelectorAll<HTMLButtonElement>("[data-preset]").forEach((b) =>
       b.addEventListener("click", () => save(FAN_PRESETS[Number(b.dataset.preset)].steps.map((s) => ({ ...s })))),
     );

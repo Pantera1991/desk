@@ -99,6 +99,11 @@ pub struct Layout {
     /// The fan steps in modes "together" and "fans" (thermal::Step), repaired
     /// on load (thermal::normalize_steps).
     pub fan_steps: Vec<crate::thermal::Step>,
+    /// A fan step comes down this many °C below its threshold
+    /// (thermal::StepDown, clamped there).
+    pub fan_margin: u32,
+    /// …and no sooner than this many seconds after the last change.
+    pub fan_wait: u32,
     /// Files from before steps: fans at full speed from this, °C, in mode
     /// "fansFirst". Read for the migration in `load`, never written.
     #[serde(skip_serializing)]
@@ -163,6 +168,8 @@ impl Default for Layout {
             thermal_mode: "slow".into(),
             thermal_limit: crate::thermal::DEFAULT_LIMIT,
             fan_steps: crate::thermal::default_steps(),
+            fan_margin: crate::thermal::DEFAULT_FAN_MARGIN,
+            fan_wait: crate::thermal::DEFAULT_FAN_WAIT,
             fan_limit: None,
             usage_layout: "tabs".into(),
             usage_share: "cost".into(),
@@ -392,6 +399,14 @@ mod tests {
             r#"{"thermalMode":"together","fanSteps":[{"celsius":80,"percent":100},{"celsius":65,"percent":45}]}"#,
         );
         assert_eq!(l.fan_steps, vec![st(65, 50), st(80, 100)]);
+    }
+
+    #[test]
+    fn an_old_file_gets_the_default_way_down() {
+        let l = loaded(r#"{"thermalMode":"fans"}"#);
+        assert_eq!((l.fan_margin, l.fan_wait), (7, 60));
+        let l = loaded(r#"{"thermalMode":"fans","fanMargin":4,"fanWait":30}"#);
+        assert_eq!((l.fan_margin, l.fan_wait), (4, 30));
     }
 
     #[test]

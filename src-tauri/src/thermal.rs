@@ -53,6 +53,36 @@ const WINDOW: usize = 3;
 /// Slowed at least this long, so the sessions do not flap at the limit.
 const MIN_SLOW: Duration = Duration::from_secs(60);
 
+/// How a fan step comes down (Options, layout `fanMargin` and `fanWait`):
+/// `margin` °C below its threshold, and no sooner than `wait` seconds after
+/// the last change of step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StepDown {
+    pub margin: u32,
+    pub wait: u32,
+}
+
+pub const DEFAULT_FAN_MARGIN: u32 = 7;
+pub const DEFAULT_FAN_WAIT: u32 = 60;
+const FAN_MARGINS: std::ops::RangeInclusive<u32> = 2..=15;
+const FAN_WAITS: std::ops::RangeInclusive<u32> = 15..=300;
+
+impl StepDown {
+    /// Any pair from a file, clamped to what Options offers.
+    pub fn new(margin: u32, wait: u32) -> Self {
+        Self {
+            margin: margin.clamp(*FAN_MARGINS.start(), *FAN_MARGINS.end()),
+            wait: wait.clamp(*FAN_WAITS.start(), *FAN_WAITS.end()),
+        }
+    }
+}
+
+impl Default for StepDown {
+    fn default() -> Self {
+        Self { margin: DEFAULT_FAN_MARGIN, wait: DEFAULT_FAN_WAIT }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Status {
@@ -64,6 +94,8 @@ pub struct Status {
     pub fan_steps: Vec<Step>,
     /// The step desk wants the fans at now (index into `fan_steps`); None: auto.
     pub fan_step: Option<usize>,
+    /// A step comes down this many °C below its threshold (StepDown).
+    pub fan_margin: u32,
     /// Too hot: desk is slowing its sessions.
     pub slowed: bool,
     /// Processes slowed (what the sessions' shells, agents and editors started).
@@ -204,12 +236,10 @@ pub fn normalize_steps(steps: Vec<Step>) -> Vec<Step> {
 }
 
 /// Which step the fans should be at: up at once (several steps if need be),
-/// down only COOL_MARGIN below a step's threshold and MIN_SLOW after the last
-/// step up, straight to the step the average still holds. The minute counts
-/// from the last step up, not from each step down: the average falls through
-/// the steps in between, and the fans should follow it down, not wait a
-/// minute on each. No reading: nothing holds the fans, so they go back to
-/// auto after the minute.
+/// down only `StepDown::margin` below a step's threshold and `StepDown::wait`
+/// after the last change, straight to the step the average still holds;
+/// below the first threshold, auto. No reading: nothing holds the fans, so
+/// they go back to auto after the wait.
 #[derive(Debug, Default)]
 pub struct StepPolicy {
     readings: VecDeque<f32>,
@@ -219,9 +249,15 @@ pub struct StepPolicy {
     held: Option<u32>,
     /// The last change of step, up or down.
     since: Option<Instant>,
+    down: StepDown,
 }
 
 impl StepPolicy {
+    /// The way down from Options; takes effect from the next reading.
+    pub fn set_down(&mut self, down: StepDown) {
+        self.down = down;
+    }
+
     /// The step for now, as an index into `steps` (None: auto). `steps` may
     /// differ from the last call (Options edited): the held step becomes the
     /// last row starting at or below its threshold, then the usual rules apply.
@@ -247,7 +283,9 @@ impl StepPolicy {
         } else {
             avg.and_then(|a| steps.iter().rposition(|s| a >= s.celsius as f32))
         };
-        let settled = self.since.is_none_or(|s| now.duration_since(s) >= MIN_SLOW);
+        let wait = Duration::from_secs(self.down.wait.into());
+        let margin = self.down.margin as f32;
+        let settled = self.since.is_none_or(|s| now.duration_since(s) >= wait);
         let next = if up > held {
             self.since = Some(now);
             up
@@ -255,7 +293,7 @@ impl StepPolicy {
             // Below the first limit the fans are macOS's: the 7°C margin holds only between steps.
             let down = avg
                 .filter(|&a| a >= steps[0].celsius as f32)
-                .and_then(|a| steps.iter().rposition(|s| a > s.celsius as f32 - COOL_MARGIN));
+                .and_then(|a| steps.iter().rposition(|s| a > s.celsius as f32 - margin));
             if down < held {
                 self.since = Some(now);
                 down
@@ -477,22 +515,23 @@ struct Inner {
 }
 
 pub struct Guard {
-    /// From Options: the mode, the slowing limit and the fan steps.
-    config: Mutex<(Mode, u32, Vec<Step>)>,
+    /// From Options: the mode, the slowing limit, the fan steps and their way down.
+    config: Mutex<(Mode, u32, Vec<Step>, StepDown)>,
     inner: Mutex<Inner>,
 }
 
 impl Guard {
-    pub fn new(mode: Mode, limit: u32, steps: Vec<Step>, support_dir: &Path) -> Self {
+    pub fn new(mode: Mode, limit: u32, steps: Vec<Step>, down: StepDown, support_dir: &Path) -> Self {
         let fan_steps = if mode.uses_fans() { steps.clone() } else { Vec::new() };
         Self {
-            config: Mutex::new((mode, limit, steps)),
+            config: Mutex::new((mode, limit, steps, down)),
             inner: Mutex::new(Inner {
                 status: Status {
                     celsius: None,
                     limit: mode.slow_limit(limit),
                     fan_steps,
                     fan_step: None,
+                    fan_margin: down.margin,
                     slowed: false,
                     processes: 0,
                     cannot_slow: None,
@@ -510,8 +549,8 @@ impl Guard {
         }
     }
 
-    pub fn configure(&self, mode: Mode, limit: u32, steps: Vec<Step>) {
-        *self.config.lock().unwrap() = (mode, limit, steps);
+    pub fn configure(&self, mode: Mode, limit: u32, steps: Vec<Step>, down: StepDown) {
+        *self.config.lock().unwrap() = (mode, limit, steps, down);
     }
 
     /// Before removing the permission: the fans back to auto now, if desk set
@@ -543,12 +582,13 @@ impl Guard {
         if g.stopped {
             return None;
         }
-        let (mode, limit, steps) = self.config.lock().unwrap().clone();
+        let (mode, limit, steps, down) = self.config.lock().unwrap().clone();
         let limit = mode.slow_limit(limit);
         let steps = if mode.uses_fans() { steps } else { Vec::new() };
         let now = Instant::now();
         let was = g.status.slowed;
         let slow = g.policy.step(celsius, pressure, limit, now);
+        g.fan_policy.set_down(down);
         let fan_step = g.fan_policy.step(celsius, pressure, &steps, now);
         if g.first {
             g.fans.recover();
@@ -562,6 +602,7 @@ impl Guard {
             fans: fans.filter(|_| !steps.is_empty()),
             fan_steps: steps,
             fan_step,
+            fan_margin: down.margin,
             slowed: slow,
             processes: 0,
             cannot_slow: g.status.cannot_slow.clone(),
@@ -1486,6 +1527,26 @@ mod tests {
         // Cooled within the minute: nothing yet, then straight to the first step.
         assert_eq!(hold(&mut p, 62.0, &steps, t + Duration::from_secs(30)), Some(2));
         assert_eq!(p.step(Some(62.0), false, &steps, t + Duration::from_secs(61)), Some(0));
+    }
+
+    #[test]
+    fn the_way_down_follows_the_settings() {
+        // 3°C under the step and 15 s since the last change, instead of 7°C and a minute.
+        let t = Instant::now();
+        let s = Duration::from_secs;
+        let steps = vec![st(60, 50), st(72, 70)];
+        let mut p = StepPolicy::default();
+        p.set_down(StepDown::new(3, 15));
+        assert_eq!(hold(&mut p, 74.0, &steps, t), Some(1));
+        assert_eq!(hold(&mut p, 68.0, &steps, t + s(10)), Some(1)); // low enough, not 15 s yet
+        assert_eq!(hold(&mut p, 68.0, &steps, t + s(16)), Some(0)); // 68 ≤ 72 − 3
+    }
+
+    #[test]
+    fn the_way_down_is_clamped_to_what_options_offer() {
+        assert_eq!(StepDown::new(0, 1), StepDown { margin: 2, wait: 15 });
+        assert_eq!(StepDown::new(40, 9999), StepDown { margin: 15, wait: 300 });
+        assert_eq!(StepDown::default(), StepDown { margin: 7, wait: 60 });
     }
 
     #[test]

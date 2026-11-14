@@ -49,7 +49,7 @@ import { conversationBox } from "./conversationbox";
 import { setSaved, syncTile } from "./saved";
 import { usageHtml } from "./usage";
 import { UsagePopover } from "./usage-popover";
-import { DEFAULT_LIMIT, DEFAULT_STEPS, thermalHtml, thermalToast } from "./thermal";
+import { DEFAULT_FAN_MARGIN, DEFAULT_FAN_WAIT, DEFAULT_LIMIT, DEFAULT_STEPS, thermalHtml, thermalToast } from "./thermal";
 import { accountById, accountColor, accountFor, hasAccounts } from "./accounts";
 
 const POLL_MS = 3000;
@@ -414,6 +414,8 @@ export class App {
       thermalMode: boot.layout.thermalMode ?? "slow",
       thermalLimit: boot.layout.thermalLimit ?? DEFAULT_LIMIT,
       fanSteps: boot.layout.fanSteps?.length ? boot.layout.fanSteps : DEFAULT_STEPS,
+      fanMargin: boot.layout.fanMargin ?? DEFAULT_FAN_MARGIN,
+      fanWait: boot.layout.fanWait ?? DEFAULT_FAN_WAIT,
       usageLayout: boot.layout.usageLayout === "all" ? "all" : "tabs",
       usageShare: boot.layout.usageShare === "transcripts" ? "transcripts" : "cost",
       language,

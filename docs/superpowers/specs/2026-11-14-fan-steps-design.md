@@ -121,6 +121,9 @@ Nowe ryzyko, opisane w README: każdy program tego użytkownika może teraz usta
 - **W dół:** stopień k schodzi, gdy średnia ≤ próg(k) − 7 i od ostatniej zmiany minęła minuta.
   Schodzi wprost na najwyższy stopień j, dla którego średnia > próg(j) − 7, albo do auto, gdy
   takiego nie ma. Średnia poniżej pierwszego progu zawsze oznacza auto.
+- Zapas (domyślnie 7°C, 2–15°C) i czas między zmianami (domyślnie minuta; 15 s, 30 s, 1 min,
+  2 min, 5 min) ustawia się w Opcjach pod tabelą (`fanMargin`, `fanWait` w `layout.json`;
+  decyzja właściciela). Zwalnianie sesji zostaje przy stałych 7°C.
 - „Za gorąco” od systemu (thermal pressure): najwyższy stopień.
 - **Zmiana tabeli, gdy desk trzyma stopień** (usunięty wiersz, gotowy zestaw, niższy procent):
   stopień liczy się od nowa według nowej tabeli; w górę od razu, w dół dalej czeka na 7°C i minutę.

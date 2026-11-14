@@ -545,6 +545,7 @@ fn save_layout(app: State<App>, guard: State<thermal::Guard>, layout: layout::La
         thermal::Mode::parse(&layout.thermal_mode),
         layout.thermal_limit,
         thermal::normalize_steps(layout.fan_steps.clone()),
+        thermal::StepDown::new(layout.fan_margin, layout.fan_wait),
     );
     if app.tmux_menu.swap(layout.tmux_menu, Ordering::Relaxed) != layout.tmux_menu {
         app.sessions.reload_config(layout.tmux_menu);
@@ -870,6 +871,7 @@ pub fn run() {
                 thermal::Mode::parse(&saved.thermal_mode),
                 saved.thermal_limit,
                 saved.fan_steps.clone(),
+                thermal::StepDown::new(saved.fan_margin, saved.fan_wait),
                 &support,
             ));
             let handle = app.handle().clone();

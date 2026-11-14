@@ -9,6 +9,19 @@ export const MIN_LIMIT = 50;
 export const MAX_LIMIT = 100;
 /** Full speed back this far below the limit (thermal.rs COOL_MARGIN). */
 export const COOL_MARGIN = 7;
+/** A fan step comes down this far below its limit (thermal.rs StepDown), °C. */
+export const DEFAULT_FAN_MARGIN = 7;
+export const MIN_FAN_MARGIN = 2;
+export const MAX_FAN_MARGIN = 15;
+/** How long a fan step waits before coming down: the choices in Options, s. */
+export const FAN_WAITS = [15, 30, 60, 120, 300];
+export const DEFAULT_FAN_WAIT = 60;
+
+/** A typed margin, whole and within what Options offers. */
+export function clampFanMargin(c: number): number {
+  if (!Number.isFinite(c)) return DEFAULT_FAN_MARGIN;
+  return Math.min(MAX_FAN_MARGIN, Math.max(MIN_FAN_MARGIN, Math.round(c)));
+}
 /** The chip turns yellow this close to the limit. */
 const WARM_MARGIN = 10;
 /** One step, full speed from 70°C: what the fans did before steps (thermal.rs default_steps). */
@@ -168,7 +181,7 @@ function fanLines(s: ThermalStatus): string[] {
   if (k + 1 < steps.length) lines.push(t("thermal.fansUp", { c: steps[k + 1].celsius, percent: steps[k + 1].percent }));
   // Below the first limit macOS has the fans (thermal.rs StepPolicy); the margin holds between steps.
   const auto = steps[0].celsius;
-  const at = steps[k].celsius - COOL_MARGIN;
+  const at = steps[k].celsius - s.fanMargin;
   lines.push(
     k > 0 && at > auto
       ? t("thermal.fansDown", { c: at, percent: steps[k - 1].percent, auto })

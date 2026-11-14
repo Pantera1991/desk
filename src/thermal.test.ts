@@ -3,7 +3,9 @@ import type { FanStatus, ThermalStatus } from "./api";
 import { setLanguage, t } from "./i18n";
 import {
   addStep,
+  clampFanMargin,
   clampLimit,
+  FAN_WAITS,
   fanChart,
   modeOptions,
   slowing,
@@ -23,6 +25,7 @@ const at = (celsius: number | null, more: Partial<ThermalStatus> = {}): ThermalS
   cannotSlow: null,
   fanSteps: [],
   fanStep: null,
+  fanMargin: 7,
   fans: null,
   ...more,
 });
@@ -35,6 +38,13 @@ const S3 = [
   { celsius: 72, percent: 70 },
   { celsius: 80, percent: 100 },
 ];
+
+describe("the way down", () => {
+  it("keeps the margin within what Options offers", () => {
+    expect([clampFanMargin(0), clampFanMargin(40), clampFanMargin(Number.NaN), clampFanMargin(4.6)]).toEqual([2, 15, 7, 5]);
+    expect(FAN_WAITS).toEqual([15, 30, 60, 120, 300]);
+  });
+});
 
 describe("temperature chip", () => {
   beforeEach(() => setLanguage("pl"));
@@ -110,6 +120,10 @@ describe("temperature chip", () => {
     ];
     expect(thermalTitle(at(76, { fanSteps: wide, fanStep: 1, fans: fan({ percent: 80 }) }))).toContain(
       "W dół: przy 68°C → 50%, auto poniżej 60°C.",
+    );
+    // The margin from Options, not a fixed 7°C.
+    expect(thermalTitle(at(76, { fanSteps: wide, fanStep: 1, fanMargin: 3, fans: fan({ percent: 80 }) }))).toContain(
+      "W dół: przy 72°C → 50%, auto poniżej 60°C.",
     );
     const top = thermalTitle(at(78, { fanSteps: ONE, fanStep: 0, fans: forced }));
     expect(top).toContain("6800");

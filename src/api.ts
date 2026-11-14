@@ -82,6 +82,10 @@ export interface Layout {
   thermalLimit: number;
   /** The fan steps in modes "together" and "fans" (thermal.rs Step). */
   fanSteps: FanStep[];
+  /** A fan step comes down this many °C below its limit (thermal.rs StepDown). */
+  fanMargin: number;
+  /** …and no sooner than this many seconds after the last change. */
+  fanWait: number;
   /** The usage popover: one view at a time, or everything at once (usage-popover.ts). */
   usageLayout: UsageLayout;
   /** How a session's share of the 5-hour window is worked out (usage_share.rs). */
@@ -231,6 +235,8 @@ export interface ThermalStatus {
   fanSteps: FanStep[];
   /** The step desk wants the fans at now (index into fanSteps); null: auto. */
   fanStep: number | null;
+  /** A step comes down this many °C below its limit (Options). */
+  fanMargin: number;
   /** Too hot: desk is slowing its sessions. */
   slowed: boolean;
   /** Processes slowed (the sessions and everything they started). */
