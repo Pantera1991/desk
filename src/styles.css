@@ -759,6 +759,174 @@ html.dragging-card .tile .term {
   overflow: hidden;
 }
 
+/* ---- prompt pill: Ctrl+G rewriting on a Claude tile (prompt-pill.ts) ----
+   One floating bubble, as the CRM's spelling one: the violet star (AI), the
+   label, BETA, then the key or the action. It sits on the top rule of Claude's
+   prompt box, its bottom edge given by `top`. */
+.tile .term {
+  position: relative;
+}
+
+.prompt-pill {
+  position: absolute;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  /* It starts two columns in: room for that and a margin on the right. */
+  max-width: min(560px, calc(100% - 40px));
+  height: 22px;
+  padding: 0 3px 0 9px;
+  transform: translateY(-100%);
+  border: 1px solid var(--line-hi);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--dim);
+  font: 11px/1 var(--mono);
+  white-space: nowrap;
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.22);
+  animation: prompt-pill-in 0.14s ease-out;
+}
+
+.prompt-pill[hidden] {
+  display: none;
+}
+
+/* While the model rewrites, the tile keeps Claude's last frame (ScreenHold)
+   and this fades the prompt in it, as the text being worked on. */
+.prompt-fade {
+  position: absolute;
+  z-index: 3;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
+}
+
+.prompt-fade[hidden] {
+  display: none;
+}
+
+.prompt-pill .star {
+  flex: none;
+  display: flex;
+  color: var(--model);
+}
+
+.prompt-pill.busy .star {
+  animation: prompt-pill-star 0.9s ease-in-out infinite;
+}
+
+.prompt-pill .label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.prompt-pill .ok {
+  color: var(--working);
+}
+
+.prompt-pill .bad {
+  color: var(--fg);
+}
+
+.prompt-pill.error {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--line-hi));
+}
+
+.prompt-pill .beta {
+  flex: none;
+  padding: 0 5px;
+  border: 1px solid var(--line-hi);
+  border-radius: 999px;
+  font-size: 9px;
+  line-height: 13px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.prompt-pill kbd {
+  flex: none;
+  margin-right: 3px;
+  padding: 0 5px;
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--dim);
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.prompt-pill button {
+  flex: none;
+  display: flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: var(--fg);
+  cursor: pointer;
+}
+
+.prompt-pill button:hover {
+  background: var(--line);
+}
+
+.prompt-pill button.x {
+  width: 18px;
+  padding: 0;
+  justify-content: center;
+  color: var(--dim);
+}
+
+.prompt-pill button.x:hover {
+  color: var(--fg);
+}
+
+/* The offer is one button over the whole pill. */
+.prompt-pill.offer {
+  padding: 0;
+}
+
+.prompt-pill button.go {
+  gap: 6px;
+  height: 100%;
+  padding: 0 3px 0 9px;
+  color: var(--dim);
+}
+
+.prompt-pill button.go:hover {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--line) 60%, transparent);
+}
+
+@keyframes prompt-pill-star {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.25;
+    transform: scale(0.8);
+  }
+}
+
+@keyframes prompt-pill-in {
+  from {
+    opacity: 0;
+    transform: translateY(calc(-100% + 3px));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .prompt-pill,
+  .prompt-pill.busy .star {
+    animation: none;
+  }
+}
+
 .tile .state::before {
   content: "●";
   /* inline-end: in a folded tile the header runs top to bottom */

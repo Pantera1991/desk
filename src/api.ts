@@ -395,6 +395,8 @@ export const api = {
   promptAiVpn: () => invoke<string | null>("prompt_ai_vpn"),
   /** Save a pasted WireGuard .conf ("" removes it); returns its server. */
   setPromptAiVpn: (conf: string) => invoke<string | null>("set_prompt_ai_vpn", { conf }),
+  /** The prompt pill's "Cofnij": the next Ctrl+G in that session puts the draft back. */
+  promptAiUndo: (slug: string) => invoke<void>("prompt_ai_undo", { slug }),
   listProjects: (extra: string[]) => invoke<Project[]>("list_projects", { extra }),
   listSessions: () => invoke<SessionInfo[]>("list_sessions"),
   /** `resume`: a Claude conversation's id, to pick it up again (⌘S). */
