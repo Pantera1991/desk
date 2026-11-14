@@ -90,14 +90,19 @@ pub struct Layout {
     pub tile_accounts: std::collections::BTreeMap<String, String>,
     /// The account new Claude sessions of a project use, by project path.
     pub project_accounts: std::collections::BTreeMap<String, String>,
-    /// What desk does when hot: "off", "slow", "fansFirst", "together" or
-    /// "fans" (thermal::Mode).
+    /// What desk does when hot: "off", "slow", "together" or "fans"
+    /// (thermal::Mode; "fansFirst" from older files becomes "together").
     pub thermal_mode: String,
     /// Slow the sessions while the CPU is hotter than this, °C (thermal.rs).
     /// Files from before modes used 0 for "never" (see `load`).
     pub thermal_limit: u32,
-    /// Fans at full speed from this, °C, in mode "fansFirst" (fans.rs).
-    pub fan_limit: u32,
+    /// The fan steps in modes "together" and "fans" (thermal::Step), repaired
+    /// on load (thermal::normalize_steps).
+    pub fan_steps: Vec<crate::thermal::Step>,
+    /// Files from before steps: fans at full speed from this, °C, in mode
+    /// "fansFirst". Read for the migration in `load`, never written.
+    #[serde(skip_serializing)]
+    pub fan_limit: Option<u32>,
     /// The usage popover: "tabs" (one view at a time) or "all" (everything at once).
     pub usage_layout: String,
     /// How a session's share of the 5-hour window is worked out: "cost" (its
@@ -157,7 +162,8 @@ impl Default for Layout {
             project_accounts: Default::default(),
             thermal_mode: "slow".into(),
             thermal_limit: crate::thermal::DEFAULT_LIMIT,
-            fan_limit: crate::thermal::DEFAULT_FAN_LIMIT,
+            fan_steps: crate::thermal::default_steps(),
+            fan_limit: None,
             usage_layout: "tabs".into(),
             usage_share: "cost".into(),
         }
@@ -198,6 +204,8 @@ pub fn load(path: &Path) -> Layout {
                 l.thermal_mode = "off".into();
                 l.thermal_limit = crate::thermal::DEFAULT_LIMIT;
             }
+            let had_steps = serde_json::from_str::<serde_json::Value>(&text).is_ok_and(|v| v.get("fanSteps").is_some());
+            migrate_fan_steps(&mut l, had_steps);
             l.normalized()
         }
         Err(_) => {
@@ -205,6 +213,27 @@ pub fn load(path: &Path) -> Layout {
             Layout::default()
         }
     }
+}
+
+/// Files from before steps: each fan mode becomes one step at full speed
+/// from the threshold it used ("fansFirst": the lower of its two limits, now
+/// mode "together"), so nothing changes for anyone. Steps from the file are
+/// repaired.
+fn migrate_fan_steps(l: &mut Layout, had_steps: bool) {
+    use crate::thermal::{MAX_LIMIT, MIN_LIMIT, Step, default_steps, normalize_steps};
+    if !had_steps {
+        let one = |celsius: u32| vec![Step { celsius: celsius.clamp(MIN_LIMIT, MAX_LIMIT), percent: 100 }];
+        l.fan_steps = match l.thermal_mode.as_str() {
+            "fansFirst" => one(l.fan_limit.unwrap_or(70).min(l.thermal_limit)),
+            "together" | "fans" => one(l.thermal_limit),
+            _ => default_steps(),
+        };
+    }
+    l.fan_steps = normalize_steps(std::mem::take(&mut l.fan_steps));
+    if l.thermal_mode == "fansFirst" {
+        l.thermal_mode = "together".into();
+    }
+    l.fan_limit = None;
 }
 
 /// Atomic write: temp file in the same directory, then rename.
@@ -221,6 +250,7 @@ pub fn save(path: &Path, layout: &Layout) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::thermal::{Step, default_steps};
 
     #[test]
     fn missing_file_gives_default_with_four_lanes_and_no_autostart() {
@@ -246,8 +276,8 @@ mod tests {
             sizes: [("shell#0:/a".to_string(), 0.4)].into(),
             modes: [("/a".to_string(), "tabs".to_string())].into(),
             tabs: [("/a".to_string(), "shell#0:/a".to_string())].into(),
-            thermal_mode: "fansFirst".into(),
-            fan_limit: 65,
+            thermal_mode: "together".into(),
+            fan_steps: vec![st(65, 50), st(80, 100)],
             ..Layout::default()
         };
         save(&p, &l).unwrap();
@@ -310,7 +340,8 @@ mod tests {
         let p = tmp.path().join("layout.json");
         std::fs::write(&p, r#"{"thermalLimit":0}"#).unwrap();
         let l = load(&p);
-        assert_eq!((l.thermal_mode.as_str(), l.thermal_limit, l.fan_limit), ("off", 75, 70));
+        assert_eq!((l.thermal_mode.as_str(), l.thermal_limit), ("off", 75));
+        assert_eq!(l.fan_steps, default_steps());
     }
 
     #[test]
@@ -319,12 +350,56 @@ mod tests {
         let p = tmp.path().join("layout.json");
         std::fs::write(&p, r#"{"thermalLimit":80}"#).unwrap();
         let l = load(&p);
-        assert_eq!((l.thermal_mode.as_str(), l.thermal_limit, l.fan_limit), ("slow", 80, 70));
+        assert_eq!((l.thermal_mode.as_str(), l.thermal_limit), ("slow", 80));
+        assert_eq!(l.fan_steps, default_steps());
     }
 
     #[test]
     fn first_launch_has_no_language_yet() {
         let tmp = tempfile::tempdir().unwrap();
         assert_eq!(load(&tmp.path().join("layout.json")).language, "");
+    }
+
+    fn loaded(json: &str) -> Layout {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("layout.json");
+        std::fs::write(&p, json).unwrap();
+        load(&p)
+    }
+
+    fn st(celsius: u32, percent: u8) -> Step {
+        Step { celsius, percent }
+    }
+
+    #[test]
+    fn fans_first_becomes_together_with_the_fan_limit_as_one_step() {
+        let l = loaded(r#"{"thermalMode":"fansFirst","thermalLimit":80,"fanLimit":65}"#);
+        assert_eq!((l.thermal_mode.as_str(), l.thermal_limit, l.fan_steps.clone()), ("together", 80, vec![st(65, 100)]));
+        let l = loaded(r#"{"thermalMode":"fansFirst","thermalLimit":75,"fanLimit":90}"#);
+        assert_eq!(l.fan_steps, vec![st(75, 100)]);
+    }
+
+    #[test]
+    fn together_and_fans_keep_their_limit_as_one_step() {
+        assert_eq!(loaded(r#"{"thermalMode":"together","thermalLimit":78}"#).fan_steps, vec![st(78, 100)]);
+        assert_eq!(loaded(r#"{"thermalMode":"fans","thermalLimit":60}"#).fan_steps, vec![st(60, 100)]);
+        assert_eq!(loaded(r#"{"thermalMode":"slow","thermalLimit":80}"#).fan_steps, vec![st(70, 100)]);
+    }
+
+    #[test]
+    fn broken_steps_in_the_file_are_repaired() {
+        let l = loaded(
+            r#"{"thermalMode":"together","fanSteps":[{"celsius":80,"percent":100},{"celsius":65,"percent":45}]}"#,
+        );
+        assert_eq!(l.fan_steps, vec![st(65, 50), st(80, 100)]);
+    }
+
+    #[test]
+    fn the_old_fan_limit_is_not_written_back() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("layout.json");
+        std::fs::write(&p, r#"{"thermalMode":"fansFirst","fanLimit":65}"#).unwrap();
+        save(&p, &load(&p)).unwrap();
+        assert!(!std::fs::read_to_string(&p).unwrap().contains("fanLimit"));
     }
 }
