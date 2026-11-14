@@ -188,6 +188,7 @@ export const pl = {
   "usage.rest": "reszta",
   "usage.restClosed": "zamknięte sesje",
   "usage.toTile": "→ kafelek",
+  "usage.usedModel": "{name} w tej sesji (z subagentami): {cost}",
   "usage.coldWarning": "następna wiadomość w {name} wyśle od nowa ~{tokens} tokenów",
   "usage.shareLoading": "liczę udział z transkryptów…",
   "usage.sessionsTotal": "razem {cost} · cennik API, nie rachunek",

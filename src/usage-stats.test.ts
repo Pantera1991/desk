@@ -80,6 +80,26 @@ describe("limit levels", () => {
     expect(c.reasons.join(" ")).toContain("Fable 95%");
   });
 
+  it("keeps Fable's dot when the week is just as red", () => {
+    // 14.11.2026, 23:40: the week reached 92% and the chip lost the dot that said Fable is at 99%.
+    const u: Usage = {
+      agent: "claude",
+      account: null,
+      credits: false,
+      resets: null,
+      windows: [
+        { label: "5h", usedPercent: 42, resetsAt: s + 2 * H + 29 * 60, severity: null },
+        { label: "7d", usedPercent: 92, resetsAt: s + 5 * 86400 + 5 * H, severity: null },
+      ],
+      models: [
+        { name: "Fable", usedPercent: 99, resetsAt: s + 5 * 86400 + 5 * H, severity: "critical", shareOfWeekly: null, allowanceOfWeekly: null },
+      ],
+    };
+    const c = chipState(u, now);
+    expect([c.level, c.dot]).toEqual(["high", true]);
+    expect(c.reasons[0]).toContain("Fable 99%");
+  });
+
   it("keeps today's chip without model limits or warnings", () => {
     const u: Usage = {
       agent: "claude",

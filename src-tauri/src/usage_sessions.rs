@@ -3,6 +3,7 @@
 //! (`state/<slug>.status`, see `usage::STATUSLINE_SCRIPT`).
 
 use crate::accounts::ClaudeAccount;
+use crate::usage_transcripts::ModelCost;
 use serde::Serialize;
 use serde_json::Value;
 use std::path::Path;
@@ -29,6 +30,10 @@ pub struct SessionStatus {
     pub cache_expires_at: Option<u64>,
     /// Tokens the next message sends again when the cache is cold.
     pub recache_tokens: Option<u64>,
+    /// Every model the session used, its subagents too, from its
+    /// transcripts (`usage_transcripts::Scanner::session`): the status line
+    /// names only today's. Empty until the usage popover asks for them.
+    pub models: Vec<ModelCost>,
 }
 
 /// Every session with a status file; one without a session id (or not
@@ -79,6 +84,7 @@ fn parse(slug: String, v: &Value, accounts: &[ClaudeAccount], home: &Path) -> Op
         recache_tokens: cache
             .and_then(|c| c.get("recache_tokens_if_cold"))
             .and_then(Value::as_u64),
+        models: Vec::new(),
     })
 }
 
@@ -122,6 +128,7 @@ mod tests {
                 cache_warm: Some(true),
                 cache_expires_at: Some(1794621281),
                 recache_tokens: Some(73985),
+                models: vec![],
             }]
         );
     }

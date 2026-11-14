@@ -322,6 +322,7 @@ mod tests {
             cache_warm: None,
             cache_expires_at: None,
             recache_tokens: None,
+            models: Vec::new(),
         };
         let one = CostSample { t: 50, session: "abc".into(), slug: "p-1".into(), account: None, cost: 3.5 };
         assert_eq!(cost_samples(50, std::slice::from_ref(&s), false), vec![one.clone()]);

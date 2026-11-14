@@ -111,7 +111,7 @@ button:hover {
   cursor: pointer;
 }
 
-/* the color comes from a limit the text does not show (a model, the pace) */
+/* a limit the text does not show (a model, the pace) is as bad as the color */
 .usage .dot {
   display: inline-block;
   width: 6px;
