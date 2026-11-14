@@ -50,6 +50,7 @@ import { setSaved, syncTile } from "./saved";
 import { usageHtml } from "./usage";
 import { UsagePopover } from "./usage-popover";
 import { DEFAULT_FAN_MARGIN, DEFAULT_FAN_WAIT, DEFAULT_LIMIT, DEFAULT_STEPS, thermalHtml, thermalToast } from "./thermal";
+import { browserHtml, coffeeHtml } from "./topbar";
 import { accountById, accountColor, accountFor, hasAccounts } from "./accounts";
 
 const POLL_MS = 3000;
@@ -1685,7 +1686,7 @@ export class App {
     }<span class="spacer"${drag}></span>${this.updateHtml()}${usageHtml(this.usage, Date.now(), (id) => {
       const a = this.layout.claudeAccounts.find((x) => x.id === id);
       return a ? { name: a.name, color: accountColor(this.layout, a.id) } : null;
-    })}${thermalHtml(this.thermal)}<button class="top-btn" data-top="browser" title="${t("top.browserTitle", { keys: keysIn("⌘W") })}">${t("top.browser")}</button>${this.coffeeHtml()}${this.quitHtml()}`;
+    })}${thermalHtml(this.thermal)}${browserHtml(keysIn("⌘W"))}${coffeeHtml(this.coffee, PLATFORM)}${this.quitHtml()}`;
     this.footer.innerHTML =
       `<span class="here" hidden></span><span class="hints">${hints()
         .map(([k, label]) => `<span><kbd>${k}</kbd> ${escapeHtml(label)}</span>`)
@@ -1841,21 +1842,6 @@ export class App {
       toast(msg);
       sendNotification({ title: "desk", body: msg });
     }
-  }
-
-  private coffeeHtml(): string {
-    const c = this.coffee;
-    const label = { off: "☕", awake: t("coffee.awake"), lid: t("coffee.lid") }[c.level];
-    const title = {
-      off: t("coffee.offTitle"),
-      awake: PLATFORM === "mac" && !c.helperInstalled ? t("coffee.awakeTitleAsk") : t("coffee.awakeTitle"),
-      lid: t("coffee.lidTitle"),
-    }[c.level];
-    const stray =
-      c.sleepDisabled && c.level !== "lid"
-        ? `<button class="coffee warn" data-coffee="restore" title="${t("coffee.strayTitle")}">${t("coffee.stray")}</button>`
-        : "";
-    return `${stray}<button class="coffee ${c.level}" data-coffee="cycle" title="${title}">${label}</button>`;
   }
 
   // ---- lock --------------------------------------------------------------
