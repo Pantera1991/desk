@@ -440,7 +440,7 @@ impl Guard {
             g.fans.recover();
         }
         // Also when the mode just dropped the fans: step releases them.
-        let fans = (fan_limit > 0 || g.fans.ours()).then(|| g.fans.step(want_fans, now));
+        let fans = (fan_limit > 0 || g.fans.ours()).then(|| g.fans.step(want_fans.then_some(100), now));
         let mut next = Status {
             celsius: celsius.map(|c| c.round() as i32),
             limit,
