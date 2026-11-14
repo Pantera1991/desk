@@ -2375,8 +2375,9 @@ button.danger {
   font-size: 10.5px;
 }
 
+/* never sideways: a few px too wide would shift the whole view under a scrollbar */
 .up-body {
-  overflow: auto;
+  overflow: hidden auto;
   padding: 4px 14px 10px;
 }
 
@@ -2532,6 +2533,7 @@ p.up-model {
   font-weight: 600;
   text-align: left;
   vertical-align: bottom;
+  white-space: nowrap;
   color: var(--dim);
 }
 
@@ -2544,6 +2546,14 @@ p.up-model {
   padding: 5px 6px;
   border-top: 1px solid var(--line);
   white-space: nowrap;
+}
+
+/* the name takes what the other columns leave, cut short with "…" (whole in its title) */
+.up-table .up-name {
+  width: 100%;
+  max-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .up-srow {
@@ -2695,6 +2705,12 @@ p.up-model {
   left: 3px;
   color: var(--dim);
   font-size: 10px;
+}
+
+/* near now: the time on the line's left, inside the chart */
+.up-rs.end span {
+  left: auto;
+  right: 3px;
 }
 
 .up-axis {

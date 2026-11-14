@@ -1159,6 +1159,24 @@ mod acl_tests {
             }
         }
     }
+
+    /// Every command `run` registers passes the ACL from desk's own page. One
+    /// missing from build.rs and capabilities/default.json is refused, and
+    /// the page waits for it forever (the usage popover stayed "loading…").
+    #[test]
+    fn the_main_window_can_call_every_registered_command() {
+        let src = include_str!("lib.rs");
+        let start = src.find("generate_handler![").unwrap() + "generate_handler![".len();
+        let list = &src[start..start + src[start..].find(']').unwrap()];
+        let cmds: Vec<&str> = list.split(',').map(str::trim).filter(|c| !c.is_empty()).collect();
+        assert!(cmds.contains(&"bootstrap") && cmds.contains(&"quit_desk"), "{cmds:?}");
+        for cmd in cmds {
+            // Past the ACL: this mock app has only is_locked, the rest are
+            // "Command x not found". The ACL refuses with "x not allowed".
+            let main = call("main", LOCAL, cmd);
+            assert!(!main.as_ref().is_err_and(|e| e.contains("not allowed")), "{cmd}: {main:?}");
+        }
+    }
 }
 
 #[cfg(test)]

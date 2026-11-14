@@ -68,6 +68,7 @@
     "allow-recent-conversations",
     "allow-claude-accounts",
     "allow-usage-models",
+    "allow-usage-details",
     "allow-quit-desk"
   ]
 }
