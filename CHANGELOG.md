@@ -1,5 +1,26 @@
 # Zmiany
 
+## 0.1.38 (2026-11-14)
+
+- **Przy przegrzaniu desk może też włączyć wiatraki (macOS na Apple Silicon).** W Opcje →
+  Zasilanie są cztery tryby: nic, zwalnianie sesji (domyślnie), wiatraki i zwalnianie albo tylko
+  wiatraki. W trybie z wiatrakami ustawiasz do 4 stopni „od X °C → Y%” (obroty 40–100%), są też
+  gotowe zestawy i wykres. W górę desk wchodzi od razu, a w dół schodzi dopiero o ustawiony zapas
+  pod progiem (domyślnie 7°C) i nie częściej niż co ustawiony czas (domyślnie minuta). Poniżej
+  pierwszego progu wiatrakami zawsze steruje macOS. Bieżące obroty widać przy temperaturze
+  (≋ 70%). Wiatraki działają tylko w trybie, który sam wybierzesz: macOS raz pyta o hasło
+  administratora, zgodę usuwasz w Opcjach, a gdy desk się zamknie, osobny strażnik oddaje
+  wiatraki macOS. Wiatraków, którymi steruje inny program (Stats, Macs Fan Control), desk nie
+  rusza.
+- **Temperatura stoi zaraz za licznikiem limitów** w górnym pasku.
+- **Wykres 24 h mówi, co zapełniło okno 5 h.** Najechanie na słupek pokazuje, ile ma i od kiedy
+  trwa jego okno, a kliknięcie (konta Claude) koszt i tokeny każdego modelu od początku tego
+  okna, policzone z transkryptów Claude Code. Esc chowa rozbicie.
+- **Sesje i Historia w szczegółach limitów się ładują.** W wydanych wersjach dymek zatrzymywał
+  się na „wczytuję…”, bo zabezpieczenia aplikacji odrzucały pytanie o szczegóły. Teraz ładują
+  się od razu, dymek nie przewija się na boki, a długie nazwy sesji są skracane „…” (cała nazwa
+  w podpowiedzi).
+
 ## 0.1.37 (2026-11-14)
 
 - **Pisanie nie zacina się, gdy desk chłodzi komputer.** Przy przegrzaniu desk zwalniał każdy
