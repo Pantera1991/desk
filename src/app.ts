@@ -49,7 +49,7 @@ import { conversationBox } from "./conversationbox";
 import { setSaved, syncTile } from "./saved";
 import { usageHtml } from "./usage";
 import { UsagePopover } from "./usage-popover";
-import { DEFAULT_FAN_LIMIT, DEFAULT_LIMIT, thermalHtml, thermalToast } from "./thermal";
+import { DEFAULT_FAN_MARGIN, DEFAULT_FAN_WAIT, DEFAULT_LIMIT, DEFAULT_STEPS, thermalHtml, thermalToast } from "./thermal";
 import { accountById, accountColor, accountFor, hasAccounts } from "./accounts";
 
 const POLL_MS = 3000;
@@ -278,6 +278,7 @@ export class App {
         this.save();
       },
       fans: () => this.fanInfo,
+      thermal: () => this.thermal,
       installFans: async () => {
         try {
           this.fanInfo = await api.fansInstall();
@@ -296,7 +297,7 @@ export class App {
         }
         // Without the permission the fan modes fall back to what they did besides.
         const mode = this.layout.thermalMode;
-        if (mode === "fansFirst" || mode === "together") this.layout.thermalMode = "slow";
+        if (mode === "together") this.layout.thermalMode = "slow";
         else if (mode === "fans") this.layout.thermalMode = "off";
         this.save();
       },
@@ -412,7 +413,9 @@ export class App {
       tmuxMenu: boot.layout.tmuxMenu ?? false,
       thermalMode: boot.layout.thermalMode ?? "slow",
       thermalLimit: boot.layout.thermalLimit ?? DEFAULT_LIMIT,
-      fanLimit: boot.layout.fanLimit ?? DEFAULT_FAN_LIMIT,
+      fanSteps: boot.layout.fanSteps?.length ? boot.layout.fanSteps : DEFAULT_STEPS,
+      fanMargin: boot.layout.fanMargin ?? DEFAULT_FAN_MARGIN,
+      fanWait: boot.layout.fanWait ?? DEFAULT_FAN_WAIT,
       usageLayout: boot.layout.usageLayout === "all" ? "all" : "tabs",
       usageShare: boot.layout.usageShare === "transcripts" ? "transcripts" : "cost",
       language,
@@ -1681,7 +1684,7 @@ export class App {
     }<span class="spacer"${drag}></span>${this.updateHtml()}${usageHtml(this.usage, Date.now(), (id) => {
       const a = this.layout.claudeAccounts.find((x) => x.id === id);
       return a ? { name: a.name, color: accountColor(this.layout, a.id) } : null;
-    })}<button class="top-btn" data-top="browser" title="${t("top.browserTitle", { keys: keysIn("⌘W") })}">${t("top.browser")}</button>${thermalHtml(this.thermal)}${this.coffeeHtml()}${this.quitHtml()}`;
+    })}${thermalHtml(this.thermal)}<button class="top-btn" data-top="browser" title="${t("top.browserTitle", { keys: keysIn("⌘W") })}">${t("top.browser")}</button>${this.coffeeHtml()}${this.quitHtml()}`;
     this.footer.innerHTML =
       `<span class="here" hidden></span><span class="hints">${hints()
         .map(([k, label]) => `<span><kbd>${k}</kbd> ${escapeHtml(label)}</span>`)

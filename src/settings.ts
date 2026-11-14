@@ -9,10 +9,12 @@ import {
   type ClaudeAccount,
   type CoffeeStatus,
   type FanInfo,
+  type FanStep,
   type Layout,
   type Project,
   type PromptAi,
   type ThermalMode,
+  type ThermalStatus,
   type UsageLayout,
   type UsageShare,
 } from "./api";
@@ -25,7 +27,27 @@ import { escapeHtml } from "./tile";
 import { acceleratorFor, DEFAULT_HOTKEY, hotkeyLabel } from "./hotkey";
 import { LANGUAGES, language, t, type Language, type MessageKey } from "./i18n";
 import { acceleratorsOf, bindingLabel, BINDINGS, clashWith, FIXED, groupLabel, GROUPS, keyText } from "./keys";
-import { clampFanLimit, clampLimit, MAX_LIMIT, MIN_LIMIT, MODE_LABELS, modeOptions, slows, usesFans } from "./thermal";
+import {
+  addStep,
+  clampFanMargin,
+  clampLimit,
+  DEFAULT_STEPS,
+  FAN_LEVELS,
+  FAN_PRESETS,
+  FAN_WAITS,
+  fanChart,
+  MAX_FAN_MARGIN,
+  MAX_LIMIT,
+  MAX_STEPS,
+  MIN_FAN_MARGIN,
+  MIN_LIMIT,
+  MODE_LABELS,
+  modeOptions,
+  slows,
+  stepRpm,
+  stepsProblem,
+  usesFans,
+} from "./thermal";
 import { toast } from "./ui";
 
 export interface SettingsContext {
@@ -58,7 +80,9 @@ export interface SettingsContext {
   addFolder: () => Promise<void>;
   removeFolder: (path: string) => void;
   /** What desk does when hot, and its limits (thermal.ts); saved at once. */
-  setThermal: (change: Partial<Pick<Layout, "thermalMode" | "thermalLimit" | "fanLimit">>) => void;
+  setThermal: (change: Partial<Pick<Layout, "thermalMode" | "thermalLimit" | "fanSteps" | "fanMargin" | "fanWait">>) => void;
+  /** The last temperature reading and fan step (thermal.rs); null before the first. */
+  thermal: () => ThermalStatus | null;
   /** Can desk drive the fans here, and is the permission installed; null: unknown. */
   fans: () => FanInfo | null;
   /** The one admin password prompt for the fans; false: cancelled or failed (a toast says why). */
@@ -98,6 +122,11 @@ function words(el: HTMLElement): string {
 
 /** A folder for an account: in the home folder (~/...) or a full path. */
 const ACCOUNT_DIR = /^(~[\\/]|\/|[a-z]:[\\/]|\\\\)/i;
+
+/** A fan step's wait as Options shows it: "30 s", "2 min". */
+function waitLabel(seconds: number): string {
+  return seconds < 60 ? t("settings.fanWaitSeconds", { n: seconds }) : t("settings.fanWaitMinutes", { n: seconds / 60 });
+}
 
 export class Settings {
   /** Pasted WireGuard config for prompt rewriting: saved by Rust to an
@@ -161,11 +190,11 @@ export class Settings {
           `<button class="${m === mode ? "sel" : ""}" data-thermal-mode="${m}"${why ? ` disabled title="${escapeHtml(why)}"` : ""}>${t(MODE_LABELS[m])}</button>`,
       )
       .join("");
-    const input = (key: string, value: number) =>
-      `<input type="number" min="${MIN_LIMIT}" max="${MAX_LIMIT}" step="1" value="${value}" data-k="${key}"/> °C`;
     let html = `<div class="line" data-row><span>${t("settings.thermalMode")}</span><span class="seg wrap">${seg}</span></div>`;
-    if (mode !== "off") html += `<label class="line" data-row>${t("settings.thermalLimit")} ${input("thermal-limit", layout.thermalLimit)}</label>`;
-    if (mode === "fansFirst") html += `<label class="line" data-row>${t("settings.fanLimit")} ${input("fan-limit", layout.fanLimit)}</label>`;
+    if (slows(mode)) {
+      html += `<label class="line" data-row>${t("settings.thermalLimit")} <input type="number" min="${MIN_LIMIT}" max="${MAX_LIMIT}" step="1" value="${layout.thermalLimit}" data-k="thermal-limit"/> °C</label>`;
+    }
+    if (usesFans(mode)) html += this.fanStepsHtml(layout, info);
     if (info && !info.unsupported) {
       const consent =
         info.consent === "installed"
@@ -180,6 +209,67 @@ export class Settings {
         ? ["settings.thermalAboutOff"]
         : [...(slows(mode) ? (["settings.thermalAbout"] as const) : []), ...(usesFans(mode) ? (["settings.thermalAboutFans"] as const) : [])];
     return html + about.map((k) => `<p class="dim small" data-row>${t(k)}</p>`).join("");
+  }
+
+  /** The fan steps: a row per step, add, presets, the reason a table is not saved, and the chart. */
+  private fanStepsHtml(layout: Layout, info: FanInfo | null): string {
+    const steps = layout.fanSteps.length ? layout.fanSteps : DEFAULT_STEPS;
+    const thermal = this.ctx.thermal();
+    // The step desk holds now: only once it has set the fans.
+    const held = (thermal?.fans?.percent ?? null) !== null ? thermal?.fanStep : null;
+    const rows = steps
+      .map((s, i) => {
+        const rpm = stepRpm(s.percent, info?.maxRpm ?? null);
+        const levels = FAN_LEVELS.map((p) => `<option value="${p}"${p === s.percent ? " selected" : ""}>${p}%</option>`).join("");
+        return `<div class="fan-step${i === held ? " now" : ""}">
+          <label class="line">${t("settings.fanStepFrom")} <input type="number" min="${MIN_LIMIT}" max="${MAX_LIMIT}" step="1" value="${s.celsius}" data-step-c="${i}" aria-label="${escapeHtml(t("settings.fanStepCelsius", { n: i + 1 }))}"/> °C</label>
+          <span class="dim">→</span>
+          <select data-step-p="${i}" aria-label="${escapeHtml(t("settings.fanStepPercent", { n: i + 1 }))}">${levels}</select>
+          ${rpm === null ? "" : `<span class="dim">${t("settings.fanStepRpm", { rpm })}</span>`}
+          ${i === held ? `<span class="step-now">${t("settings.fanStepNow")}</span>` : ""}
+          <button class="step-rm" data-step-rm="${i}" aria-label="${escapeHtml(t("settings.fanStepRemove", { n: i + 1 }))}"${steps.length <= 1 ? " disabled" : ""}>✕</button>
+        </div>`;
+      })
+      .join("");
+    const presets = FAN_PRESETS.map((p, i) => `<button data-preset="${i}">${t(p.key)}</button>`).join("");
+    const waits = FAN_WAITS.map(
+      (w) => `<option value="${w}"${w === layout.fanWait ? " selected" : ""}>${waitLabel(w)}</option>`,
+    ).join("");
+    const down = `<div class="line wrap">${t("settings.fanDown")} <input type="number" min="${MIN_FAN_MARGIN}" max="${MAX_FAN_MARGIN}" step="1" value="${layout.fanMargin}" data-k="fan-margin" aria-label="${escapeHtml(t("settings.fanMargin"))}"/> ${t("settings.fanDownMargin")} <select data-k="fan-wait" aria-label="${escapeHtml(t("settings.fanWait"))}">${waits}</select></div>`;
+    const chart = this.fanChartSvg(steps, slows(layout.thermalMode) ? layout.thermalLimit : 0, thermal?.celsius ?? null, layout);
+    return `<div class="fan-steps" data-row>
+      <span>${t("settings.fanSteps")}</span>
+      <div class="fan-step-rows">${rows}</div>
+      <p class="error" data-k="steps-error" hidden></p>
+      <div class="line wrap"><button data-k="step-add"${steps.length >= MAX_STEPS ? " disabled" : ""}>${t("settings.fanStepAdd")}</button><span class="dim">${t("settings.fanPresets")}</span>${presets}</div>
+      ${down}
+      ${chart}
+    </div>`;
+  }
+
+  /** The steps over 50–100°C (thermal.ts fanChart): auto before the first, slowing and now as lines. */
+  private fanChartSvg(steps: FanStep[], slowLimit: number, celsius: number | null, layout: Layout): string {
+    const c = fanChart(steps, slowLimit, celsius, layout.fanMargin);
+    const ticks = c.degrees.map((d) => `<text class="tick" x="${d.x}" y="124" text-anchor="middle">${d.celsius}°</text>`).join("");
+    const pct = c.ticks.map((g) => `<text class="tick" x="34" y="${g.y + 3}" text-anchor="end">${g.percent}%</text>`).join("");
+    const grid = c.ticks.map((g) => `<line class="grid" x1="40" y1="${g.y}" x2="548" y2="${g.y}"/>`).join("");
+    const legend = `<line class="steps" x1="40" y1="139" x2="60" y2="139"/><text class="tick" x="66" y="142">${t("settings.fanChartUp")}</text>
+      <line class="down" x1="140" y1="139" x2="160" y2="139"/><text class="tick" x="166" y="142">${t("settings.fanChartDown", { m: layout.fanMargin, wait: waitLabel(layout.fanWait) })}</text>`;
+    const slow =
+      c.slowX === null
+        ? ""
+        : `<line class="slow" x1="${c.slowX}" y1="18" x2="${c.slowX}" y2="108"/><text class="slow" x="${c.slowX - 4}" y="30" text-anchor="end">${t("settings.fanChartSlow")}</text>`;
+    const now =
+      c.nowX === null
+        ? ""
+        : `<line class="now" x1="${c.nowX}" y1="12" x2="${c.nowX}" y2="108"/><text class="now" x="${Math.min(520, Math.max(70, c.nowX))}" y="9" text-anchor="middle">${t("settings.fanChartNow", { c: celsius ?? "" })}</text>`;
+    const auto = c.autoWidth > 80 ? `<text class="tick" x="${40 + c.autoWidth / 2}" y="44" text-anchor="middle">${t("settings.fanChartAuto")}</text>` : "";
+    return `<svg class="fan-chart" viewBox="0 0 560 148" role="img" aria-label="${escapeHtml(t("settings.fanSteps"))}">
+      <rect class="auto" x="40" y="18" width="${c.autoWidth}" height="90"/>${auto}
+      ${grid}<line class="axis" x1="40" y1="108" x2="548" y2="108"/>
+      ${pct}<path class="area" d="${c.area}"/><path class="down" d="${c.down}"/><path class="steps" d="${c.line}"/>${slow}${now}${ticks}
+      ${legend}
+    </svg>`;
   }
 
   private bindThermal(box: HTMLElement): void {
@@ -199,16 +289,48 @@ export class Settings {
     limit?.addEventListener("change", () => {
       const celsius = clampLimit(Number(limit.value));
       limit.value = String(celsius);
-      const fanLimit = this.ctx.layout().fanLimit;
-      this.ctx.setThermal({ thermalLimit: celsius, fanLimit: clampFanLimit(fanLimit, celsius) });
+      this.ctx.setThermal({ thermalLimit: celsius });
       this.render();
     });
-    const fan = box.querySelector<HTMLInputElement>('[data-k="fan-limit"]');
-    fan?.addEventListener("change", () => {
-      const celsius = clampFanLimit(Number(fan.value), this.ctx.layout().thermalLimit);
-      fan.value = String(celsius);
-      this.ctx.setThermal({ fanLimit: celsius });
+    // A table is saved only whole and valid; otherwise the reason shows and nothing changes.
+    const save = (fanSteps: FanStep[]) => {
+      const why = stepsProblem(fanSteps);
+      const error = box.querySelector<HTMLElement>('[data-k="steps-error"]');
+      if (why) {
+        if (error) {
+          error.textContent = t(why);
+          error.hidden = false;
+        }
+        return;
+      }
+      this.ctx.setThermal({ fanSteps });
+      this.render();
+    };
+    const typed = (): FanStep[] =>
+      [...box.querySelectorAll<HTMLInputElement>("[data-step-c]")].map((input) => ({
+        celsius: Number(input.value),
+        percent: Number(box.querySelector<HTMLSelectElement>(`[data-step-p="${input.dataset.stepC}"]`)?.value),
+      }));
+    box.querySelectorAll("[data-step-c], [data-step-p]").forEach((el) => el.addEventListener("change", () => save(typed())));
+    box.querySelectorAll<HTMLButtonElement>("[data-step-rm]").forEach((b) =>
+      b.addEventListener("click", () => save(typed().filter((_, i) => i !== Number(b.dataset.stepRm)))),
+    );
+    box.querySelector<HTMLButtonElement>('[data-k="step-add"]')?.addEventListener("click", () => save(addStep(typed())));
+    const margin = box.querySelector<HTMLInputElement>('[data-k="fan-margin"]');
+    margin?.addEventListener("change", () => {
+      const c = clampFanMargin(margin.value === "" ? Number.NaN : Number(margin.value));
+      margin.value = String(c);
+      this.ctx.setThermal({ fanMargin: c });
+      this.render();
     });
+    const wait = box.querySelector<HTMLSelectElement>('[data-k="fan-wait"]');
+    wait?.addEventListener("change", () => {
+      this.ctx.setThermal({ fanWait: Number(wait.value) });
+      this.render();
+    });
+    box.querySelectorAll<HTMLButtonElement>("[data-preset]").forEach((b) =>
+      b.addEventListener("click", () => save(FAN_PRESETS[Number(b.dataset.preset)].steps.map((s) => ({ ...s })))),
+    );
     box.querySelector<HTMLButtonElement>('[data-k="fans-rm"]')?.addEventListener("click", async () => {
       await this.ctx.uninstallFans();
       this.render();

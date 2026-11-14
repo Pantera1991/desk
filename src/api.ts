@@ -80,16 +80,26 @@ export interface Layout {
   thermalMode: ThermalMode;
   /** Slow the sessions while the CPU is hotter than this, °C (thermal.ts). */
   thermalLimit: number;
-  /** Fans at full speed from this, °C, in mode "fansFirst" (fans.rs). */
-  fanLimit: number;
+  /** The fan steps in modes "together" and "fans" (thermal.rs Step). */
+  fanSteps: FanStep[];
+  /** A fan step comes down this many °C below its limit (thermal.rs StepDown). */
+  fanMargin: number;
+  /** …and no sooner than this many seconds after the last change. */
+  fanWait: number;
   /** The usage popover: one view at a time, or everything at once (usage-popover.ts). */
   usageLayout: UsageLayout;
   /** How a session's share of the 5-hour window is worked out (usage_share.rs). */
   usageShare: UsageShare;
 }
 
-/** What desk does when hot: nothing, slow its sessions, the fans at full speed, or both. */
-export type ThermalMode = "off" | "slow" | "fansFirst" | "together" | "fans";
+/** What desk does when hot: nothing, slow its sessions, the fan steps, or both. */
+export type ThermalMode = "off" | "slow" | "together" | "fans";
+
+/** From `celsius` (the average reading) the fans run at `percent` of their maximum. */
+export interface FanStep {
+  celsius: number;
+  percent: number;
+}
 
 export type UsageLayout = "tabs" | "all";
 export type UsageShare = "cost" | "transcripts";
@@ -221,8 +231,12 @@ export interface ThermalStatus {
   celsius: number | null;
   /** Slowing limit; 0: this mode never slows. */
   limit: number;
-  /** Fan limit; 0: this mode never uses the fans. */
-  fanLimit: number;
+  /** The fan steps; empty: this mode never uses the fans. */
+  fanSteps: FanStep[];
+  /** The step desk wants the fans at now (index into fanSteps); null: auto. */
+  fanStep: number | null;
+  /** A step comes down this many °C below its limit (Options). */
+  fanMargin: number;
   /** Too hot: desk is slowing its sessions. */
   slowed: boolean;
   /** Processes slowed (the sessions and everything they started). */
@@ -235,8 +249,8 @@ export interface ThermalStatus {
 
 /** The fans while a mode uses them (fans.rs). */
 export interface FanStatus {
-  /** desk has them at full speed. */
-  forced: boolean;
+  /** The percent desk set and still holds; null: not desk's. */
+  percent: number | null;
   /** The fastest fan now. */
   rpm: number | null;
   maxRpm: number | null;
@@ -249,6 +263,8 @@ export interface FanInfo {
   /** Why the fan modes are greyed out, if they are. */
   unsupported: string | null;
   consent: "missing" | "outdated" | "installed";
+  /** The fastest fan's maximum, rpm; null where the fans do not read. */
+  maxRpm: number | null;
 }
 
 export interface UsageWindow {

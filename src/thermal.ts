@@ -1,7 +1,7 @@
 // CPU temperature in the top bar ("72°", "84° ↓" while desk slows its
-// sessions, "78° ≋" while the fans are at full speed). The readings, the
-// slowing and the fans are Rust's (src-tauri/src/thermal.rs, fans.rs).
-import type { FanInfo, ThermalMode, ThermalStatus } from "./api";
+// sessions, "78° ≋ 70%" while the fans run at a step desk set). The readings,
+// the slowing and the fans are Rust's (src-tauri/src/thermal.rs, fans.rs).
+import type { FanInfo, FanStep, ThermalMode, ThermalStatus } from "./api";
 import { t, tn, type MessageKey } from "./i18n";
 
 export const DEFAULT_LIMIT = 75;
@@ -9,28 +9,64 @@ export const MIN_LIMIT = 50;
 export const MAX_LIMIT = 100;
 /** Full speed back this far below the limit (thermal.rs COOL_MARGIN). */
 export const COOL_MARGIN = 7;
+/** A fan step comes down this far below its limit (thermal.rs StepDown), °C. */
+export const DEFAULT_FAN_MARGIN = 7;
+export const MIN_FAN_MARGIN = 2;
+export const MAX_FAN_MARGIN = 15;
+/** How long a fan step waits before coming down: the choices in Options, s. */
+export const FAN_WAITS = [15, 30, 60, 120, 300];
+export const DEFAULT_FAN_WAIT = 60;
+
+/** A typed margin, whole and within what Options offers. */
+export function clampFanMargin(c: number): number {
+  if (!Number.isFinite(c)) return DEFAULT_FAN_MARGIN;
+  return Math.min(MAX_FAN_MARGIN, Math.max(MIN_FAN_MARGIN, Math.round(c)));
+}
 /** The chip turns yellow this close to the limit. */
 const WARM_MARGIN = 10;
-/** Where the fans start in "fansFirst", unless Options say otherwise (thermal.rs). */
-export const DEFAULT_FAN_LIMIT = 70;
+/** One step, full speed from 70°C: what the fans did before steps (thermal.rs default_steps). */
+export const DEFAULT_STEPS: FanStep[] = [{ celsius: 70, percent: 100 }];
+/** The speeds a step can have, % of the maximum (fan_control.rs LEVELS). */
+export const FAN_LEVELS = [40, 50, 60, 70, 80, 90, 100];
+export const MAX_STEPS = 4;
+
+/** Ready-made tables in Options. */
+export const FAN_PRESETS: { key: MessageKey; steps: FanStep[] }[] = [
+  { key: "settings.fanPresetOld", steps: DEFAULT_STEPS },
+  {
+    key: "settings.fanPresetQuiet",
+    steps: [
+      { celsius: 72, percent: 50 },
+      { celsius: 80, percent: 70 },
+      { celsius: 88, percent: 100 },
+    ],
+  },
+  {
+    key: "settings.fanPresetCool",
+    steps: [
+      { celsius: 60, percent: 60 },
+      { celsius: 68, percent: 80 },
+      { celsius: 75, percent: 100 },
+    ],
+  },
+];
 
 /** Options' order. */
-export const THERMAL_MODES: ThermalMode[] = ["off", "slow", "fansFirst", "together", "fans"];
+export const THERMAL_MODES: ThermalMode[] = ["off", "slow", "together", "fans"];
 
 export const MODE_LABELS: Record<ThermalMode, MessageKey> = {
   off: "settings.thermalModeOff",
   slow: "settings.thermalModeSlow",
-  fansFirst: "settings.thermalModeFansFirst",
   together: "settings.thermalModeTogether",
   fans: "settings.thermalModeFans",
 };
 
 export function usesFans(mode: ThermalMode): boolean {
-  return mode === "fansFirst" || mode === "together" || mode === "fans";
+  return mode === "together" || mode === "fans";
 }
 
 export function slows(mode: ThermalMode): boolean {
-  return mode === "slow" || mode === "fansFirst" || mode === "together";
+  return mode === "slow" || mode === "together";
 }
 
 /** A limit typed in Options: within MIN..MAX, whole degrees. */
@@ -39,9 +75,77 @@ export function clampLimit(n: number): number {
   return Math.min(MAX_LIMIT, Math.max(MIN_LIMIT, Math.round(n)));
 }
 
-/** The fan limit typed in Options: like the limit, and never above it. */
-export function clampFanLimit(n: number, limit: number): number {
-  return Math.min(Number.isFinite(n) ? clampLimit(n) : DEFAULT_FAN_LIMIT, limit);
+/** Why a table typed in Options cannot be saved; null: it can. */
+export function stepsProblem(steps: FanStep[]): MessageKey | null {
+  const bad = (s: FanStep) =>
+    !Number.isInteger(s.celsius) || s.celsius < MIN_LIMIT || s.celsius > MAX_LIMIT || !FAN_LEVELS.includes(s.percent);
+  if (!steps.length || steps.length > MAX_STEPS || steps.some(bad)) return "settings.fanStepsRange";
+  for (let i = 1; i < steps.length; i++) {
+    if (steps[i].celsius <= steps[i - 1].celsius) return "settings.fanStepsOrder";
+    if (steps[i].percent < steps[i - 1].percent) return "settings.fanStepsSpeed";
+  }
+  return null;
+}
+
+/** One more step above the last: 6°C higher, 10% faster (both capped); none past MAX_STEPS. */
+export function addStep(steps: FanStep[]): FanStep[] {
+  if (steps.length >= MAX_STEPS) return steps;
+  const last = steps[steps.length - 1] ?? DEFAULT_STEPS[0];
+  return [...steps, { celsius: Math.min(MAX_LIMIT, last.celsius + 6), percent: Math.min(100, last.percent + 10) }];
+}
+
+/** A step's target speed; null when the maximum is unknown. */
+export function stepRpm(percent: number, maxRpm: number | null): number | null {
+  return maxRpm === null ? null : Math.round((maxRpm * percent) / 100);
+}
+
+const tenth = (n: number) => Math.round(n * 10) / 10;
+/** Where the chart starts: below the lowest limit, so idle temperatures show too, °C. */
+const CHART_FROM = 35;
+/** The chart's axes: 35–100°C across x 40–548, 0–100% up y 108–18. */
+const chartX = (celsius: number) =>
+  tenth(40 + ((Math.min(MAX_LIMIT, Math.max(CHART_FROM, celsius)) - CHART_FROM) * 508) / (MAX_LIMIT - CHART_FROM));
+const chartY = (percent: number) => tenth(108 - percent * 0.9);
+
+/** The steps as SVG geometry: the stair line going up, the way down (each step `margin` lower,
+ * never below the first limit, where macOS takes over), the area under the way up, the
+ * percent grid, the auto band before the first step, and where slowing (0: none) and the
+ * current reading (null: none) sit. */
+export function fanChart(
+  steps: FanStep[],
+  slowLimit: number,
+  celsius: number | null,
+  margin: number,
+): {
+  line: string;
+  down: string;
+  area: string;
+  ticks: { percent: number; y: number }[];
+  degrees: { celsius: number; x: number }[];
+  autoWidth: number;
+  slowX: number | null;
+  nowX: number | null;
+} {
+  const rows = steps.length ? steps : DEFAULT_STEPS;
+  const first = rows[0].celsius;
+  const stairs = (from: (c: number) => number) => {
+    let d = `M ${chartX(first)} ${chartY(0)}`;
+    rows.forEach((s, i) => {
+      d += ` V ${chartY(s.percent)} H ${chartX(i + 1 < rows.length ? from(rows[i + 1].celsius) : MAX_LIMIT)}`;
+    });
+    return d;
+  };
+  const line = stairs((c) => c);
+  return {
+    line,
+    down: stairs((c) => Math.max(first, c - margin)),
+    area: `${line} V ${chartY(0)} Z`,
+    ticks: [100, 50, 0].map((percent) => ({ percent, y: chartY(percent) })),
+    degrees: [40, 50, 60, 70, 80, 90, 100].map((celsius) => ({ celsius, x: chartX(celsius) })),
+    autoWidth: tenth(chartX(rows[0].celsius) - 40),
+    slowX: slowLimit > 0 ? chartX(slowLimit) : null,
+    nowX: celsius === null ? null : chartX(celsius),
+  };
 }
 
 /** Options' modes; `why`: a fan mode greyed out, and the reason. */
@@ -55,9 +159,14 @@ export function slowing(s: ThermalStatus | null): boolean {
   return !!s && s.slowed && s.processes > 0;
 }
 
+/** The percent desk set on the fans; null: they are not desk's. */
+function fanPercent(s: ThermalStatus | null): number | null {
+  return s?.fans?.percent ?? null;
+}
+
 export function thermalLevel(s: ThermalStatus): "" | "warm" | "hot" {
-  if (s.slowed || s.fans?.forced) return "hot";
-  const active = [s.limit, s.fanLimit].filter((n) => n > 0);
+  if (s.slowed || fanPercent(s) !== null) return "hot";
+  const active = [s.limit, s.fanSteps[0]?.celsius ?? 0].filter((n) => n > 0);
   const limit = active.length ? Math.min(...active) : DEFAULT_LIMIT;
   if (s.celsius !== null && s.celsius >= limit) return "hot";
   if (s.celsius !== null && s.celsius >= limit - WARM_MARGIN) return "warm";
@@ -66,9 +175,9 @@ export function thermalLevel(s: ThermalStatus): "" | "warm" | "hot" {
 
 export function thermalTitle(s: ThermalStatus): string {
   const c = s.celsius === null ? "?" : String(s.celsius);
-  if (!s.limit && !s.fanLimit) return t("thermal.offTitle", { c });
+  if (!s.limit && !s.fanSteps.length) return t("thermal.offTitle", { c });
   const lines = [slowTitle(s, c)];
-  if (s.fanLimit) lines.push(fanLine(s));
+  if (s.fanSteps.length) lines.push(...fanLines(s));
   return lines.join("\n");
 }
 
@@ -79,12 +188,29 @@ function slowTitle(s: ThermalStatus, c: string): string {
   return tn("thermal.slowedTitle", s.processes, { c, limit: s.limit, cool: s.limit - COOL_MARGIN });
 }
 
-function fanLine(s: ThermalStatus): string {
-  if (s.fans?.problem) return t("thermal.fansProblemLine", { why: s.fans.problem });
-  if (s.fans?.forced) {
-    return t("thermal.fansForced", { rpm: s.fans.rpm ?? s.fans.maxRpm ?? "?", cool: s.fanLimit - COOL_MARGIN });
+/** The step desk holds, how fast, and when it goes up or down; or why desk does not drive the fans. */
+function fanLines(s: ThermalStatus): string[] {
+  const steps = s.fanSteps;
+  const k = s.fanStep === null ? null : Math.min(s.fanStep, steps.length - 1);
+  const percent = fanPercent(s);
+  if (s.fans?.problem && k !== null) {
+    return [t("thermal.fansWant", { k: k + 1, percent: steps[k].percent, why: s.fans.problem })];
   }
-  return t("thermal.fansReady", { limit: s.fanLimit });
+  if (percent === null || k === null) {
+    return [t("thermal.fansReady", { limit: steps[0].celsius, percent: steps[0].percent })];
+  }
+  const rpm = stepRpm(percent, s.fans?.maxRpm ?? null) ?? s.fans?.rpm ?? "?";
+  const lines = [t("thermal.fansStep", { k: k + 1, n: steps.length, percent, rpm })];
+  if (k + 1 < steps.length) lines.push(t("thermal.fansUp", { c: steps[k + 1].celsius, percent: steps[k + 1].percent }));
+  // Below the first limit macOS has the fans (thermal.rs StepPolicy); the margin holds between steps.
+  const auto = steps[0].celsius;
+  const at = steps[k].celsius - s.fanMargin;
+  lines.push(
+    k > 0 && at > auto
+      ? t("thermal.fansDown", { c: at, percent: steps[k - 1].percent, auto })
+      : t("thermal.fansDownAuto", { auto }),
+  );
+  return lines;
 }
 
 /** What changed between two readings, as one toast (or none). */
@@ -93,14 +219,16 @@ export function thermalToast(prev: ThermalStatus | null, next: ThermalStatus): s
   const slowOn = slowing(next) && !slowing(prev);
   // Turned off in Options is not "cooled down".
   const slowOff = slowing(prev) && !next.slowed && next.limit > 0;
-  const wasFans = !!prev?.fans?.forced;
-  const isFans = !!next.fans?.forced;
+  const percent = fanPercent(next);
+  const wasFans = fanPercent(prev) !== null;
+  const isFans = percent !== null;
+  // A new step while the fans are already desk's: no toast.
   const fansOn = isFans && !wasFans;
-  const fansOff = wasFans && !isFans && next.fanLimit > 0;
-  if (slowOn && fansOn) return t("thermal.slowingFans", { c });
+  const fansOff = wasFans && !isFans && next.fanSteps.length > 0;
+  if (slowOn && fansOn) return t("thermal.slowingFans", { c, percent: percent ?? "?" });
   if (slowOff && fansOff) return t("thermal.cooledFans", { c });
   if (slowOn) return t("thermal.slowing", { c });
-  if (fansOn) return t("thermal.fansOn", { c });
+  if (fansOn) return t("thermal.fansOn", { c, percent: percent ?? "?" });
   if (slowOff) return t("thermal.cooled", { c });
   if (fansOff) return t("thermal.fansOff", { c });
   const why = next.fans?.problem;
@@ -110,8 +238,9 @@ export function thermalToast(prev: ThermalStatus | null, next: ThermalStatus): s
 
 /** The chip; nothing on a computer without a readable sensor that is not slowing. */
 export function thermalHtml(s: ThermalStatus | null): string {
-  if (!s || (s.celsius === null && !s.slowed && !s.fans?.forced)) return "";
-  const text = `${s.celsius === null ? "🌡" : `${s.celsius}°`}${s.fans?.forced ? " ≋" : ""}${slowing(s) ? " ↓" : ""}`;
+  const percent = fanPercent(s);
+  if (!s || (s.celsius === null && !s.slowed && percent === null)) return "";
+  const text = `${s.celsius === null ? "🌡" : `${s.celsius}°`}${percent !== null ? ` ≋ ${percent}%` : ""}${slowing(s) ? " ↓" : ""}`;
   const cls = ["top-btn", "thermal", thermalLevel(s)].filter(Boolean).join(" ");
   return `<button class="${cls}" data-top="thermal" data-thermal title="${escapeHtml(thermalTitle(s))}">${text}</button>`;
 }

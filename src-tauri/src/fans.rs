@@ -1,11 +1,11 @@
-//! The fans at full speed while the CPU is hot, only when the user picked a
-//! mode with fans in Options (thermal.rs decides when).
+//! The fans at a step's speed while the CPU is hot, only when the user picked
+//! a mode with fans in Options (thermal.rs decides when and how fast).
 //!
 //! macOS (Apple Silicon) only. desk reads the fans itself (smc.rs, no rights
 //! needed); writing them needs root, so the first time the user picks a fan
 //! mode, macOS asks for an admin password once (admin.rs) and desk installs
 //! the `desk-fans` helper root-owned at HELPER plus a sudoers rule allowing
-//! exactly `HELPER max` and `HELPER auto`.
+//! exactly `HELPER level N` for each of fan_control::LEVELS and `HELPER auto`.
 //!
 //! The fans never stay manual after desk stops driving them: desk runs
 //! `auto` when it cools down, when the mode changes and when it quits; a
@@ -23,11 +23,12 @@ use std::time::{Duration, Instant};
 
 pub const HELPER: &str = "/Library/PrivilegedHelperTools/pl.makarowski.desk.fans";
 pub const SUDOERS: &str = "/etc/sudoers.d/desk-fans";
-/// In desk's support dir: desk has the fans at full speed.
+/// In desk's support dir: desk has the fans at a level.
 const MARKER: &str = "fans-forced";
 /// In desk's support dir: the watchdog may stop (desk released the fans).
 const STOP: &str = "fans.stop";
-/// A force lost on the hardware (the Mac slept) is re-applied this often.
+/// A level lost on the hardware (the Mac slept) is re-applied this often,
+/// and a failed one tried again.
 const RETRY: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -46,13 +47,15 @@ pub struct Info {
     /// Why the fan modes are greyed out, if they are.
     pub unsupported: Option<String>,
     pub consent: Consent,
+    /// The fastest fan's maximum, for "≈ 4760 rpm" next to a step.
+    pub max_rpm: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FanStatus {
-    /// desk has the fans at full speed.
-    pub forced: bool,
+    /// The level desk set and still holds, % of the maximum; None: not desk's.
+    pub percent: Option<u8>,
     /// The fastest fan now, rounded to 100.
     pub rpm: Option<u32>,
     pub max_rpm: Option<u32>,
@@ -63,7 +66,8 @@ pub struct FanStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
     Nothing,
-    Force,
+    /// The fans to this level.
+    Force(u8),
     Release,
     OtherProgram,
 }
@@ -76,26 +80,39 @@ pub fn consent(sudoers: bool, helper_version: Option<u32>) -> Consent {
     }
 }
 
-/// `want`: hot enough for the fans; `ours`: desk set them; `manual`: some fan
-/// is manual now; `since_attempt`: since desk last tried `max`, worked or not.
-/// Tries are at least RETRY apart: a failing helper is not run every reading,
-/// and a force lost on the hardware (sleep) comes back within a minute.
-pub fn next_action(want: bool, ours: bool, manual: bool, since_attempt: Option<Duration>) -> Action {
+/// `want`: the level the fans should be at (None: auto); `ours`: desk set
+/// them; `applied`: the level desk last set and it took (None after a
+/// failure); `manual`: some fan is manual now; `since_attempt`: since desk
+/// last ran `level`, worked or not. A new level goes out at once; after a
+/// failure, and for a level lost on the hardware (sleep), tries are RETRY apart.
+pub fn next_action(want: Option<u8>, ours: bool, applied: Option<u8>, manual: bool, since_attempt: Option<Duration>) -> Action {
     let due = since_attempt.is_none_or(|d| d >= RETRY);
     match (want, ours) {
-        (false, true) => Action::Release,
-        (false, false) => Action::Nothing,
-        (true, false) if manual => Action::OtherProgram,
-        (true, false) if due => Action::Force,
-        (true, true) if !manual && due => Action::Force,
-        (true, _) => Action::Nothing,
+        (None, true) => Action::Release,
+        (None, false) => Action::Nothing,
+        (Some(_), false) if manual => Action::OtherProgram,
+        (Some(p), false) => {
+            if due {
+                Action::Force(p)
+            } else {
+                Action::Nothing
+            }
+        }
+        (Some(p), true) => match applied {
+            Some(a) if a != p => Action::Force(p),
+            Some(_) if !manual && due => Action::Force(p),
+            None if due => Action::Force(p),
+            _ => Action::Nothing,
+        },
     }
 }
 
-/// The sudoers line: this user may run exactly `HELPER max` and `HELPER auto`.
+/// The sudoers line: this user may run exactly `HELPER level N` for each of
+/// fan_control::LEVELS, and `HELPER auto`.
 pub fn sudoers_rule(user: &str) -> Result<String, String> {
     crate::admin::check_user(user)?;
-    Ok(format!("{user} ALL=(root) NOPASSWD: {HELPER} max, {HELPER} auto\n"))
+    let levels: Vec<String> = fan_control::LEVELS.iter().map(|n| format!("{HELPER} level {n}")).collect();
+    Ok(format!("{user} ALL=(root) NOPASSWD: {}, {HELPER} auto\n", levels.join(", ")))
 }
 
 /// Root script: copy the helper into a root-only temp dir, check it is the
@@ -161,7 +178,7 @@ pub type StartWatchdog = Box<dyn FnMut(&Path, &Path) -> Result<(), String> + Sen
 /// and the watchdog.
 pub struct Ops {
     pub read: ReadFans,
-    /// `sudo -n HELPER max|auto`.
+    /// `sudo -n HELPER auto` or `sudo -n HELPER level N` ("level N" as one string).
     pub helper: RunHelper,
     pub consent: Box<dyn FnMut() -> Consent + Send>,
     /// Start the watchdog (stop file, marker).
@@ -197,10 +214,12 @@ pub struct Fans {
     stop: PathBuf,
     /// desk set the fans (or a failed try of its own may have left them manual).
     ours: bool,
+    /// The level desk last set and it took; None after a failure or release.
+    applied: Option<u8>,
     /// Removing the permission: no forcing until it is done.
     paused: bool,
     watchdog: bool,
-    /// The last `max` tried, worked or not: tries are a minute apart.
+    /// The last `level` tried, worked or not.
     last_attempt: Option<Instant>,
     /// Why the last try failed, kept while backing off.
     problem: Option<String>,
@@ -217,6 +236,7 @@ impl Fans {
             marker: support_dir.join(MARKER),
             stop: support_dir.join(STOP),
             ours: false,
+            applied: None,
             paused: false,
             watchdog: false,
             last_attempt: None,
@@ -229,7 +249,7 @@ impl Fans {
         self.ours
     }
 
-    /// At start: a desk that died with the fans at full speed left the marker.
+    /// At start: a desk that died with the fans at a level left the marker.
     /// If `auto` cannot run now, the fans count as desk's, so it is retried.
     pub fn recover(&mut self) {
         if !self.marker.exists() {
@@ -254,10 +274,11 @@ impl Fans {
         self.paused = false;
     }
 
-    /// One reading: force, keep, or release the fans; `want`: hot enough.
-    pub fn step(&mut self, want: bool, now: Instant) -> FanStatus {
-        let want = want && !self.paused;
-        if !want {
+    /// One reading: set, keep, or release the fans; `want`: the level they
+    /// should be at, None: auto.
+    pub fn step(&mut self, want: Option<u8>, now: Instant) -> FanStatus {
+        let want = want.filter(|_| !self.paused);
+        if want.is_none() {
             self.problem = None;
         }
         let fans = (self.ops.read)();
@@ -268,8 +289,8 @@ impl Fans {
         };
         let manual = fans.as_ref().is_ok_and(|f| fan_control::manual(f));
         let since = self.last_attempt.map(|t| now.saturating_duration_since(t));
-        match next_action(want && problem.is_none(), self.ours, manual, since) {
-            Action::Force => self.force(now),
+        match next_action(want.filter(|_| problem.is_none()), self.ours, self.applied, manual, since) {
+            Action::Force(p) => self.force(p, now),
             Action::Release => self.release(),
             Action::OtherProgram => {
                 self.problem = Some(tr!("wiatrakami steruje inny program", "another program controls the fans").into())
@@ -281,10 +302,10 @@ impl Fans {
         let fans = fans.unwrap_or_default();
         let top = |v: &dyn Fn(&Fan) -> f32| fans.iter().map(v).reduce(f32::max);
         FanStatus {
-            forced: self.ours,
+            percent: self.applied.filter(|_| self.ours),
             rpm: top(&|f| f.rpm).map(|r| ((r / 100.0).round() * 100.0) as u32),
             max_rpm: top(&|f| f.max_rpm).map(|r| r as u32),
-            problem: problem.filter(|_| want),
+            problem: problem.filter(|_| want.is_some()),
         }
     }
 
@@ -298,6 +319,7 @@ impl Fans {
         match (self.ops.helper)("auto") {
             Ok(()) => {
                 self.ours = false;
+                self.applied = None;
                 self.last_attempt = None;
                 self.forget();
             }
@@ -305,7 +327,7 @@ impl Fans {
         }
     }
 
-    fn force(&mut self, now: Instant) {
+    fn force(&mut self, percent: u8, now: Instant) {
         self.last_attempt = Some(now);
         match (self.ops.consent)() {
             Consent::Missing => {
@@ -324,19 +346,21 @@ impl Fans {
             }
             Consent::Installed => {}
         }
-        // Marked first: a desk that dies during `max` must still lead back to auto.
+        // Marked first: a desk that dies during `level` must still lead back to auto.
         let _ = std::fs::write(&self.marker, b"");
         if !self.watchdog {
             let _ = std::fs::remove_file(&self.stop);
             self.watchdog = (self.ops.watchdog)(&self.stop, &self.marker).is_ok();
         }
-        match (self.ops.helper)("max") {
+        match (self.ops.helper)(&format!("level {percent}")) {
             Ok(()) => {
                 self.ours = true;
+                self.applied = Some(percent);
                 self.problem = None;
             }
             Err(e) => {
                 self.problem = Some(e);
+                self.applied = None;
                 // The helper rolls back to auto; a fan still manual is desk's to put back.
                 self.ours = (self.ops.read)().is_ok_and(|f| fan_control::manual(&f));
                 if !self.ours {
@@ -356,24 +380,26 @@ impl Fans {
 
 /// For Options.
 pub fn info() -> Info {
+    let fans = read_now();
     Info {
-        unsupported: unsupported_now(),
+        unsupported: match &fans {
+            Err(_) => Some(unsupported()),
+            Ok(f) if f.is_empty() => Some(no_fans()),
+            Ok(_) => None,
+        },
         consent: consent_now(),
+        max_rpm: fans.ok().and_then(|f| f.iter().map(|f| f.max_rpm).reduce(f32::max)).map(|r| r as u32),
     }
 }
 
 #[cfg(target_os = "macos")]
-fn unsupported_now() -> Option<String> {
-    match crate::smc::IoSmc::open().and_then(|mut s| fan_control::read(&mut s)) {
-        Err(_) => Some(unsupported()),
-        Ok(f) if f.is_empty() => Some(no_fans()),
-        Ok(_) => None,
-    }
+fn read_now() -> Result<Vec<Fan>, String> {
+    crate::smc::IoSmc::open().and_then(|mut s| fan_control::read(&mut s))
 }
 
 #[cfg(not(target_os = "macos"))]
-fn unsupported_now() -> Option<String> {
-    Some(unsupported())
+fn read_now() -> Result<Vec<Fan>, String> {
+    Err(unsupported())
 }
 
 fn consent_now() -> Consent {
@@ -391,11 +417,13 @@ fn helper_version() -> Option<u32> {
     None
 }
 
-/// `sudo -n HELPER max|auto` (the rule allows exactly these).
+/// `sudo -n HELPER auto` or `sudo -n HELPER level N` (the rule allows exactly
+/// these); `cmd` is split on spaces into the helper's arguments.
 #[cfg(target_os = "macos")]
 fn run_helper(cmd: &str) -> Result<(), String> {
     let out = Command::new("/usr/bin/sudo")
-        .args(["-n", HELPER, cmd])
+        .args(["-n", HELPER])
+        .args(cmd.split(' '))
         .output()
         .map_err(|e| e.to_string())?;
     if out.status.success() {
@@ -460,8 +488,8 @@ pub fn install() -> Result<Info, String> {
     crate::admin::run_admin(
         &script,
         tr!(
-            "desk: jednorazowa zgoda na sterowanie wiatrakami przy przegrzaniu (tylko „maksimum” i „auto”). Później desk nie będzie już pytać.",
-            "desk: one-time permission to control the fans when hot (only “max” and “auto”). desk will not ask again."
+            "desk: jednorazowa zgoda na sterowanie wiatrakami przy przegrzaniu (tylko obroty 40–100% i „auto”). Później desk nie będzie już pytać.",
+            "desk: one-time permission to control the fans when hot (only speeds 40–100% and “auto”). desk will not ask again."
         ),
     )?;
     Ok(info())
@@ -504,39 +532,41 @@ mod tests {
     }
 
     #[test]
-    fn next_action_forces_when_hot_and_releases_when_cool() {
-        assert_eq!(next_action(true, false, false, None), Action::Force);
-        assert_eq!(next_action(false, true, true, Some(Duration::from_secs(5))), Action::Release);
-        assert_eq!(next_action(false, false, false, None), Action::Nothing);
+    fn next_action_follows_the_wanted_percent() {
+        let s = Duration::from_secs;
+        assert_eq!(next_action(Some(70), false, None, false, None), Action::Force(70));
+        assert_eq!(next_action(Some(100), true, Some(70), true, Some(s(5))), Action::Force(100));
+        assert_eq!(next_action(Some(70), true, Some(70), true, Some(s(5))), Action::Nothing);
+        assert_eq!(next_action(None, true, Some(70), true, Some(s(5))), Action::Release);
+        assert_eq!(next_action(None, false, None, false, None), Action::Nothing);
     }
 
     #[test]
     fn next_action_leaves_another_programs_fans_alone() {
-        assert_eq!(next_action(true, false, true, None), Action::OtherProgram);
-        assert_eq!(next_action(false, false, true, None), Action::Nothing);
+        assert_eq!(next_action(Some(70), false, None, true, None), Action::OtherProgram);
+        assert_eq!(next_action(None, false, None, true, None), Action::Nothing);
     }
 
     #[test]
-    fn next_action_backs_off_after_a_failed_force() {
+    fn next_action_waits_a_minute_after_a_failure_and_for_a_lost_level() {
         let s = Duration::from_secs;
-        assert_eq!(next_action(true, false, false, Some(s(30))), Action::Nothing);
-        assert_eq!(next_action(true, false, false, Some(s(60))), Action::Force);
+        assert_eq!(next_action(Some(70), false, None, false, Some(s(30))), Action::Nothing);
+        assert_eq!(next_action(Some(70), false, None, false, Some(s(60))), Action::Force(70));
+        // A failure that left the fans manual: desk's, but no new percent before the minute.
+        assert_eq!(next_action(Some(100), true, None, true, Some(s(30))), Action::Nothing);
+        assert_eq!(next_action(Some(100), true, None, true, Some(s(60))), Action::Force(100));
+        // Set, then lost (the Mac slept): once a minute.
+        assert_eq!(next_action(Some(70), true, Some(70), false, Some(s(30))), Action::Nothing);
+        assert_eq!(next_action(Some(70), true, Some(70), false, Some(s(60))), Action::Force(70));
     }
 
     #[test]
-    fn next_action_reapplies_a_lost_force_once_a_minute() {
-        let s = Duration::from_secs;
-        assert_eq!(next_action(true, true, false, Some(s(30))), Action::Nothing);
-        assert_eq!(next_action(true, true, false, Some(s(60))), Action::Force);
-        assert_eq!(next_action(true, true, true, Some(s(600))), Action::Nothing);
-    }
-
-    #[test]
-    fn sudoers_rule_allows_exactly_max_and_auto() {
+    fn sudoers_rule_allows_exactly_the_levels_and_auto() {
+        let h = "/Library/PrivilegedHelperTools/pl.makarowski.desk.fans";
+        let levels: Vec<String> = [40, 50, 60, 70, 80, 90, 100].iter().map(|n| format!("{h} level {n}")).collect();
         assert_eq!(
             sudoers_rule("kamil").unwrap(),
-            "kamil ALL=(root) NOPASSWD: /Library/PrivilegedHelperTools/pl.makarowski.desk.fans max, \
-             /Library/PrivilegedHelperTools/pl.makarowski.desk.fans auto\n"
+            format!("kamil ALL=(root) NOPASSWD: {}, {h} auto\n", levels.join(", "))
         );
         for bad in ["", "a b", "x ALL=(ALL) ALL", "-x"] {
             assert!(sudoers_rule(bad).is_err(), "{bad:?}");
@@ -614,7 +644,7 @@ mod tests {
         log: Arc<Mutex<Vec<String>>>,
         manual: Arc<AtomicBool>,
         fail: Arc<Mutex<Vec<&'static str>>>,
-        /// A failing `max` leaves the fans manual (its rollback failed too).
+        /// A failing `level` leaves the fans manual (its rollback failed too).
         half: Arc<AtomicBool>,
     }
 
@@ -628,19 +658,19 @@ mod tests {
         let (manual, log, fail) = (f.manual.clone(), f.log.clone(), f.fail.clone());
         let read = Box::new(move || {
             let mode = if manual.load(Ordering::SeqCst) { fan_control::MANUAL } else { fan_control::AUTO };
-            Ok(vec![Fan { mode, rpm: 2300.0, max_rpm: 6800.0 }; 2])
+            Ok(vec![Fan { mode, rpm: 2300.0, max_rpm: 6800.0, min_rpm: Some(2317.0) }; 2])
         });
         let (manual, marker, half) = (f.manual.clone(), dir.join(MARKER), f.half.clone());
         let helper = Box::new(move |cmd: &str| {
             let marked = if marker.exists() { "+marker" } else { "" };
             log.lock().unwrap().push(format!("{cmd}{marked}"));
             if fail.lock().unwrap().contains(&cmd) {
-                if cmd == "max" && half.load(Ordering::SeqCst) {
+                if cmd.starts_with("level") && half.load(Ordering::SeqCst) {
                     manual.store(true, Ordering::SeqCst);
                 }
                 return Err(format!("{cmd} failed"));
             }
-            manual.store(cmd == "max", Ordering::SeqCst);
+            manual.store(cmd.starts_with("level"), Ordering::SeqCst);
             Ok(())
         });
         let log = f.log.clone();
@@ -682,12 +712,23 @@ mod tests {
     }
 
     #[test]
-    fn marker_and_watchdog_come_before_max() {
+    fn marker_and_watchdog_come_before_the_first_level() {
         let tmp = tempfile::tempdir().unwrap();
         let (mut fans, f) = fake(tmp.path(), Consent::Installed);
-        let s = fans.step(true, Instant::now());
-        assert!(s.forced);
-        assert_eq!(log(&f), ["watchdog", "max+marker"]);
+        let s = fans.step(Some(100), Instant::now());
+        assert!(s.percent.is_some());
+        assert_eq!(log(&f), ["watchdog", "level 100+marker"]);
+    }
+
+    #[test]
+    fn a_new_percent_goes_out_at_once_and_the_same_one_not_again() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut fans, f) = fake(tmp.path(), Consent::Installed);
+        let t = Instant::now();
+        assert_eq!(fans.step(Some(70), t).percent, Some(70));
+        assert_eq!(fans.step(Some(100), t + Duration::from_secs(5)).percent, Some(100));
+        fans.step(Some(100), t + Duration::from_secs(10));
+        assert_eq!(log(&f), ["watchdog", "level 70+marker", "level 100+marker"]);
     }
 
     #[test]
@@ -695,12 +736,12 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let (mut fans, f) = fake(tmp.path(), Consent::Installed);
         fans.pause();
-        let s = fans.step(true, Instant::now());
-        assert!(!s.forced);
+        let s = fans.step(Some(100), Instant::now());
+        assert!(!s.percent.is_some());
         assert_eq!(s.problem, None);
         assert!(log(&f).is_empty());
         fans.resume();
-        assert!(fans.step(true, Instant::now()).forced);
+        assert!(fans.step(Some(100), Instant::now()).percent.is_some());
     }
 
     #[test]
@@ -708,49 +749,49 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let (mut fans, f) = fake(tmp.path(), Consent::Installed);
         let t = Instant::now();
-        fans.step(true, t);
+        fans.step(Some(100), t);
         fans.pause();
         assert!(!fans.ours());
         assert_eq!(log(&f).last().unwrap(), "auto+marker");
-        assert!(!fans.step(true, t + Duration::from_secs(120)).forced);
+        assert!(!fans.step(Some(100), t + Duration::from_secs(120)).percent.is_some());
     }
 
     #[test]
-    fn a_failed_max_backs_off_for_a_minute() {
+    fn a_failed_level_backs_off_for_a_minute() {
         let tmp = tempfile::tempdir().unwrap();
         let (mut fans, f) = fake(tmp.path(), Consent::Installed);
-        f.fail.lock().unwrap().push("max");
+        f.fail.lock().unwrap().push("level 100");
         let t = Instant::now();
-        assert_eq!(fans.step(true, t).problem.as_deref(), Some("max failed"));
+        assert_eq!(fans.step(Some(100), t).problem.as_deref(), Some("level 100 failed"));
         // The same problem while backing off, and no second try.
-        assert_eq!(fans.step(true, t + Duration::from_secs(5)).problem.as_deref(), Some("max failed"));
-        assert_eq!(log(&f).iter().filter(|c| c.starts_with("max")).count(), 1);
-        fans.step(true, t + Duration::from_secs(60));
-        assert_eq!(log(&f).iter().filter(|c| c.starts_with("max")).count(), 2);
+        assert_eq!(fans.step(Some(100), t + Duration::from_secs(5)).problem.as_deref(), Some("level 100 failed"));
+        assert_eq!(log(&f).iter().filter(|c| c.starts_with("level")).count(), 1);
+        fans.step(Some(100), t + Duration::from_secs(60));
+        assert_eq!(log(&f).iter().filter(|c| c.starts_with("level")).count(), 2);
     }
 
     #[test]
-    fn a_failed_max_that_left_the_fans_in_auto_cleans_up() {
+    fn a_failed_level_that_left_the_fans_in_auto_cleans_up() {
         let tmp = tempfile::tempdir().unwrap();
         let (mut fans, f) = fake(tmp.path(), Consent::Installed);
-        f.fail.lock().unwrap().push("max");
-        fans.step(true, Instant::now());
+        f.fail.lock().unwrap().push("level 100");
+        fans.step(Some(100), Instant::now());
         assert!(!fans.ours());
         assert!(!tmp.path().join(MARKER).exists());
         assert!(tmp.path().join(STOP).exists());
     }
 
     #[test]
-    fn a_failed_max_that_left_a_fan_manual_is_still_desks() {
+    fn a_failed_level_that_left_a_fan_manual_is_still_desks() {
         let tmp = tempfile::tempdir().unwrap();
         let (mut fans, f) = fake(tmp.path(), Consent::Installed);
-        f.fail.lock().unwrap().push("max");
+        f.fail.lock().unwrap().push("level 100");
         f.half.store(true, Ordering::SeqCst); // the helper's own rollback did not get through
         let t = Instant::now();
-        assert_eq!(fans.step(true, t).problem.as_deref(), Some("max failed"));
+        assert_eq!(fans.step(Some(100), t).problem.as_deref(), Some("level 100 failed"));
         assert!(fans.ours());
         assert!(tmp.path().join(MARKER).exists());
-        fans.step(false, t + Duration::from_secs(90));
+        fans.step(None, t + Duration::from_secs(90));
         assert_eq!(log(&f).last().unwrap(), "auto+marker");
         assert!(!fans.ours());
     }
@@ -760,14 +801,14 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let (mut fans, f) = fake(tmp.path(), Consent::Installed);
         let t = Instant::now();
-        fans.step(true, t);
+        fans.step(Some(100), t);
         f.fail.lock().unwrap().push("auto");
-        fans.step(false, t + Duration::from_secs(70));
+        fans.step(None, t + Duration::from_secs(70));
         assert!(fans.ours());
         assert!(tmp.path().join(MARKER).exists());
         assert!(!tmp.path().join(STOP).exists());
         f.fail.lock().unwrap().clear();
-        fans.step(false, t + Duration::from_secs(75));
+        fans.step(None, t + Duration::from_secs(75));
         assert!(!fans.ours());
         assert_eq!(log(&f).iter().filter(|c| c.starts_with("auto")).count(), 2);
     }
@@ -777,10 +818,10 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let (mut fans, f) = fake(tmp.path(), Consent::Installed);
         f.manual.store(true, Ordering::SeqCst);
-        let s = fans.step(true, Instant::now());
-        assert!(!s.forced);
+        let s = fans.step(Some(100), Instant::now());
+        assert!(!s.percent.is_some());
         assert!(s.problem.is_some());
-        fans.step(false, Instant::now());
+        fans.step(None, Instant::now());
         assert!(log(&f).is_empty());
     }
 }

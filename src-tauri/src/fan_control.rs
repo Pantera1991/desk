@@ -1,5 +1,5 @@
-//! The fans through the SMC: read them, put them all at full speed, give them
-//! back to macOS. Shared by desk (reading, without root) and the `desk-fans`
+//! The fans through the SMC: read them, put them all at a level (a percent
+//! of each fan's maximum), give them back to macOS. Shared by desk (reading, without root) and the `desk-fans`
 //! helper (writing, as root; src-tauri/fans-helper), which includes this file
 //! with `#[path]`, so nothing here may use desk's other modules or `tr!`.
 //!
@@ -7,7 +7,7 @@
 //! then keeps driving the fans for a few seconds: a write of a fan's mode
 //! (`FnMd`, manual = 1) or target speed (`FnTg`) succeeds, but macOS puts its
 //! own back (an M3 Pro reads mode 0, target at the minimum). So every round
-//! writes manual, then the maximum, and reads them back after a pause, until
+//! writes manual, then the target, and reads them back after a pause, until
 //! they stick. The target goes in right after the mode (before it macOS
 //! overwrites it), and any failure ends in auto, so a fan never stays manual
 //! at a low target. Going back is late too: right after the write of auto
@@ -19,11 +19,14 @@
 //! Pro). `Keys` tells the two apart.
 
 /// 2: waits for macOS to let go of the fans (protocol 1 gave up at once) and
-/// knows the M5's keys.
-pub const PROTOCOL: u32 = 2;
+/// knows the M5's keys. 3: `level N` instead of `max`.
+pub const PROTOCOL: u32 = 3;
+/// The levels the helper sets, in % of each fan's maximum (the sudoers rule
+/// lists exactly these).
+pub const LEVELS: [u8; 7] = [40, 50, 60, 70, 80, 90, 100];
 pub const AUTO: u8 = 0;
 pub const MANUAL: u8 = 1;
-/// Rounds of `max` (and read-backs of `auto`), a pause apart (100 ms in the
+/// Rounds of `level` (and read-backs of `auto`), a pause apart (100 ms in the
 /// helper): about 10 s for macOS to let go of the fans or take them back.
 pub const TRIES: usize = 100;
 /// A fan's maximum below this is not believed (a laptop fan tops out at
@@ -43,6 +46,16 @@ pub struct Fan {
     pub mode: u8,
     pub rpm: f32,
     pub max_rpm: f32,
+    /// `FnMn`, the lowest speed macOS gives the fan; None where it does not read.
+    pub min_rpm: Option<f32>,
+}
+
+/// A fan's target at a level: the percent of its maximum, never below its
+/// minimum nor above its maximum.
+pub fn target(fan: &Fan, percent: u8) -> f32 {
+    (fan.max_rpm * f32::from(percent) / 100.0)
+        .max(fan.min_rpm.unwrap_or(0.0))
+        .min(fan.max_rpm)
 }
 
 /// The key of a fan's field: `key(0, "Md")` is "F0Md".
@@ -88,8 +101,9 @@ fn read_with(smc: &mut impl Smc, keys: Keys) -> Result<Vec<Fan>, String> {
                 mode: smc.read_u8(&keys.mode(i))?,
                 rpm: smc.read_f32(&key(i, "Ac"))?,
                 max_rpm: smc.read_f32(&key(i, "Mx"))?,
+                min_rpm: smc.read_f32(&key(i, "Mn")).ok(),
             };
-            // A maximum no fan has would make "max" a low manual speed.
+            // A maximum no fan has would make every level a low manual speed.
             if !(fan.max_rpm.is_finite() && fan.max_rpm >= MIN_MAX_RPM) {
                 return Err(format!("fan {i}: implausible maximum {}", fan.max_rpm));
             }
@@ -103,32 +117,37 @@ pub fn manual(fans: &[Fan]) -> bool {
     fans.iter().any(|f| f.mode == MANUAL)
 }
 
-/// Every fan at full speed. On any failure the fans go back to auto first.
-pub fn force_max(smc: &mut impl Smc, pause: &mut dyn FnMut()) -> Result<(), String> {
+/// Every fan at `percent` of its maximum (one of LEVELS). On any failure the
+/// fans go back to auto first; a percent not in LEVELS touches nothing.
+pub fn force_level(smc: &mut impl Smc, percent: u8, pause: &mut dyn FnMut()) -> Result<(), String> {
+    if !LEVELS.contains(&percent) {
+        return Err(format!("level {percent}: not one of {LEVELS:?}"));
+    }
     let keys = Keys::probe(smc);
     let fans = read_with(smc, keys)?;
     if fans.is_empty() {
         return Err("no fans".into());
     }
-    let result = apply_max(smc, keys, &fans, pause);
+    let targets: Vec<f32> = fans.iter().map(|f| target(f, percent)).collect();
+    let result = apply(smc, keys, &targets, pause);
     if result.is_err() {
         let _ = restore_with(smc, keys, pause);
     }
     result
 }
 
-fn apply_max(smc: &mut impl Smc, keys: Keys, fans: &[Fan], pause: &mut dyn FnMut()) -> Result<(), String> {
+fn apply(smc: &mut impl Smc, keys: Keys, targets: &[f32], pause: &mut dyn FnMut()) -> Result<(), String> {
     // M1–M4; an M5 has no Ftst and takes the writes as they are.
     if keys.unlock {
         smc.write_u8("Ftst", 1)?;
     }
     let mut last = String::new();
     for _ in 0..TRIES {
-        let locked = set_max(smc, keys, fans)?;
+        let locked = set_targets(smc, keys, targets)?;
         pause();
         last = match locked {
             Some(e) => e,
-            None => match not_applied(smc, keys, fans)? {
+            None => match not_applied(smc, keys, targets)? {
                 None => return Ok(()),
                 Some(why) => why,
             },
@@ -137,25 +156,25 @@ fn apply_max(smc: &mut impl Smc, keys: Keys, fans: &[Fan], pause: &mut dyn FnMut
     Err(last)
 }
 
-/// Every fan manual, then at its maximum. Some: a mode write was refused
+/// Every fan manual, then at its target. Some: a mode write was refused
 /// (still locked after the unlock), so the round is cut short; a refused
 /// target write ends the try.
-fn set_max(smc: &mut impl Smc, keys: Keys, fans: &[Fan]) -> Result<Option<String>, String> {
-    for (i, fan) in (0u8..).zip(fans) {
+fn set_targets(smc: &mut impl Smc, keys: Keys, targets: &[f32]) -> Result<Option<String>, String> {
+    for (i, &target) in (0u8..).zip(targets) {
         if let Err(e) = smc.write_u8(&keys.mode(i), MANUAL) {
             return Ok(Some(e));
         }
-        smc.write_f32(&key(i, "Tg"), fan.max_rpm)?;
+        smc.write_f32(&key(i, "Tg"), target)?;
     }
     Ok(None)
 }
 
-/// None: every fan reads manual at its maximum; Some: the first that does not.
-fn not_applied(smc: &mut impl Smc, keys: Keys, fans: &[Fan]) -> Result<Option<String>, String> {
-    for (i, fan) in (0u8..).zip(fans) {
+/// None: every fan reads manual at its target; Some: the first that does not.
+fn not_applied(smc: &mut impl Smc, keys: Keys, targets: &[f32]) -> Result<Option<String>, String> {
+    for (i, &want) in (0u8..).zip(targets) {
         let mode = smc.read_u8(&keys.mode(i))?;
         let target = smc.read_f32(&key(i, "Tg"))?;
-        if mode != MANUAL || (target - fan.max_rpm).abs() >= 1.0 {
+        if mode != MANUAL || (target - want).abs() >= 1.0 {
             return Ok(Some(format!("fan {i}: not applied (mode {mode}, target {target})")));
         }
     }
@@ -241,6 +260,8 @@ mod tests {
                 ("F1Ac", 0.0),
                 ("F0Tg", 0.0),
                 ("F1Tg", 0.0),
+                ("F0Mn", 2317.0),
+                ("F1Mn", 2317.0),
             ];
             Self {
                 u8s: u8s.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
@@ -357,24 +378,24 @@ mod tests {
             let mut smc = FakeSmc::two_fans();
             smc.f32s.insert("F0Mx".into(), bad);
             assert!(read(&mut smc).is_err(), "{bad}");
-            assert!(force_max(&mut smc, &mut || {}).is_err());
+            assert!(force_level(&mut smc, 100, &mut || {}).is_err());
             assert!(smc.log.is_empty(), "{bad}: {:?}", smc.log);
         }
     }
 
     #[test]
-    fn force_max_sets_every_fan_manual_then_at_its_maximum() {
+    fn force_level_sets_every_fan_manual_then_at_its_maximum() {
         let mut smc = FakeSmc::two_fans();
-        force_max(&mut smc, &mut || {}).unwrap();
+        force_level(&mut smc, 100, &mut || {}).unwrap();
         assert_eq!(smc.log, ["Ftst=1", "F0Md=1", "F0Tg=6800", "F1Md=1", "F1Tg=6800"]);
     }
 
     #[test]
-    fn force_max_retries_manual_mode_after_unlock() {
+    fn force_level_retries_manual_mode_after_unlock() {
         let mut smc = FakeSmc::two_fans();
         smc.md_locked = 3;
         let mut pauses = 0;
-        force_max(&mut smc, &mut || pauses += 1).unwrap();
+        force_level(&mut smc, 100, &mut || pauses += 1).unwrap();
         // Three while locked, one to let the last round settle.
         assert_eq!(pauses, 4);
         assert_eq!(smc.u8("F0Md"), MANUAL);
@@ -382,11 +403,11 @@ mod tests {
     }
 
     #[test]
-    fn force_max_gives_up_and_restores_auto() {
+    fn force_level_gives_up_and_restores_auto() {
         let mut smc = FakeSmc::two_fans();
         smc.md_locked = usize::MAX;
         let mut pauses = 0;
-        assert!(force_max(&mut smc, &mut || pauses += 1).is_err());
+        assert!(force_level(&mut smc, 100, &mut || pauses += 1).is_err());
         assert_eq!(pauses, TRIES);
         // Still locked, so auto could not be written either; never manual.
         assert_ne!(smc.u8("F0Md"), MANUAL);
@@ -398,7 +419,7 @@ mod tests {
     fn failed_target_write_restores_auto() {
         let mut smc = FakeSmc::two_fans();
         smc.reject.insert("F1Tg".into());
-        assert!(force_max(&mut smc, &mut || {}).is_err());
+        assert!(force_level(&mut smc, 100, &mut || {}).is_err());
         assert_eq!(smc.u8("F0Md"), AUTO);
         assert_ne!(smc.u8("F1Md"), MANUAL);
         assert_eq!(smc.u8("Ftst"), 0);
@@ -407,7 +428,7 @@ mod tests {
     #[test]
     fn restore_auto_tries_every_fan_even_if_one_fails() {
         let mut smc = FakeSmc::two_fans();
-        force_max(&mut smc, &mut || {}).unwrap();
+        force_level(&mut smc, 100, &mut || {}).unwrap();
         smc.reject.insert("F0Md".into());
         assert!(restore_auto(&mut smc, &mut || {}).is_err());
         assert_eq!(smc.u8("F1Md"), AUTO);
@@ -415,10 +436,10 @@ mod tests {
     }
 
     #[test]
-    fn force_max_waits_until_macos_lets_go_of_the_fans() {
+    fn force_level_waits_until_macos_lets_go_of_the_fans() {
         let mut smc = FakeSmc::two_fans();
         smc.held = 5;
-        force_max(&mut smc, &mut || {}).unwrap();
+        force_level(&mut smc, 100, &mut || {}).unwrap();
         assert_eq!(smc.u8("F0Md"), MANUAL);
         assert_eq!(smc.u8("F1Md"), MANUAL);
         assert_eq!(smc.f32s["F0Tg"], 6800.0);
@@ -426,11 +447,11 @@ mod tests {
     }
 
     #[test]
-    fn force_max_gives_up_if_macos_never_lets_go() {
+    fn force_level_gives_up_if_macos_never_lets_go() {
         let mut smc = FakeSmc::two_fans();
         smc.held = usize::MAX;
         let mut pauses = 0;
-        assert!(force_max(&mut smc, &mut || pauses += 1).is_err());
+        assert!(force_level(&mut smc, 100, &mut || pauses += 1).is_err());
         assert_eq!(pauses, TRIES);
         assert_ne!(smc.u8("F0Md"), MANUAL);
         assert_ne!(smc.u8("F1Md"), MANUAL);
@@ -440,7 +461,7 @@ mod tests {
     #[test]
     fn restore_auto_waits_until_the_fans_read_auto() {
         let mut smc = FakeSmc::two_fans();
-        force_max(&mut smc, &mut || {}).unwrap();
+        force_level(&mut smc, 100, &mut || {}).unwrap();
         smc.stale_reads = 3;
         let mut pauses = 0;
         restore_auto(&mut smc, &mut || pauses += 1).unwrap();
@@ -452,7 +473,7 @@ mod tests {
     #[test]
     fn restore_auto_gives_up_on_a_fan_that_stays_manual() {
         let mut smc = FakeSmc::two_fans();
-        force_max(&mut smc, &mut || {}).unwrap();
+        force_level(&mut smc, 100, &mut || {}).unwrap();
         smc.stale_reads = usize::MAX;
         let mut pauses = 0;
         assert!(restore_auto(&mut smc, &mut || pauses += 1).is_err());
@@ -480,7 +501,7 @@ mod tests {
     #[test]
     fn an_m5_goes_to_max_and_back_without_ftst() {
         let mut smc = FakeSmc::m5();
-        force_max(&mut smc, &mut || {}).unwrap();
+        force_level(&mut smc, 100, &mut || {}).unwrap();
         assert_eq!(smc.log, ["F0md=1", "F0Tg=6800", "F1md=1", "F1Tg=6800"]);
         smc.log.clear();
         restore_auto(&mut smc, &mut || {}).unwrap();
@@ -489,11 +510,45 @@ mod tests {
     }
 
     #[test]
-    fn force_max_without_fans_is_an_error() {
+    fn target_is_the_percent_of_max_never_below_the_minimum() {
+        let fan = Fan { mode: 3, rpm: 0.0, max_rpm: 6800.0, min_rpm: Some(2317.0) };
+        assert_eq!(target(&fan, 100), 6800.0);
+        assert_eq!(target(&fan, 50), 3400.0);
+        assert_eq!(target(&fan, 40), 2720.0);
+        let small = Fan { max_rpm: 5000.0, ..fan.clone() };
+        assert_eq!(target(&small, 40), 2317.0);
+        assert_eq!(target(&Fan { min_rpm: None, ..small }, 40), 2000.0);
+    }
+
+    #[test]
+    fn force_level_sets_every_fan_to_its_target() {
+        let mut smc = FakeSmc::two_fans();
+        force_level(&mut smc, 50, &mut || {}).unwrap();
+        assert_eq!(smc.log, ["Ftst=1", "F0Md=1", "F0Tg=3400", "F1Md=1", "F1Tg=3400"]);
+    }
+
+    #[test]
+    fn force_level_on_an_m5() {
+        let mut smc = FakeSmc::m5();
+        force_level(&mut smc, 70, &mut || {}).unwrap();
+        assert_eq!(smc.log, ["F0md=1", "F0Tg=4760", "F1md=1", "F1Tg=4760"]);
+    }
+
+    #[test]
+    fn a_level_outside_the_list_writes_nothing() {
+        for p in [0, 39, 45, 101, 255] {
+            let mut smc = FakeSmc::two_fans();
+            assert!(force_level(&mut smc, p, &mut || {}).is_err(), "{p}");
+            assert!(smc.log.is_empty(), "{p}");
+        }
+    }
+
+    #[test]
+    fn force_level_without_fans_is_an_error() {
         let mut smc = FakeSmc::empty();
         smc.u8s.insert("Ftst".into(), 0);
         smc.u8s.insert("FNum".into(), 0);
-        assert!(force_max(&mut smc, &mut || {}).is_err());
+        assert!(force_level(&mut smc, 100, &mut || {}).is_err());
         assert!(smc.log.is_empty());
     }
 }
