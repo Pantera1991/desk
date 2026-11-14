@@ -250,8 +250,7 @@ export class Settings {
   /** The steps over 50–100°C (thermal.ts fanChart): auto before the first, slowing and now as lines. */
   private fanChartSvg(steps: FanStep[], slowLimit: number, celsius: number | null, layout: Layout): string {
     const c = fanChart(steps, slowLimit, celsius, layout.fanMargin);
-    const x = (d: number) => Math.round((40 + (d - 50) * 10.16) * 10) / 10;
-    const ticks = [50, 60, 70, 80, 90, 100].map((d) => `<text class="tick" x="${x(d)}" y="124" text-anchor="middle">${d}°</text>`).join("");
+    const ticks = c.degrees.map((d) => `<text class="tick" x="${d.x}" y="124" text-anchor="middle">${d.celsius}°</text>`).join("");
     const pct = c.ticks.map((g) => `<text class="tick" x="34" y="${g.y + 3}" text-anchor="end">${g.percent}%</text>`).join("");
     const grid = c.ticks.map((g) => `<line class="grid" x1="40" y1="${g.y}" x2="548" y2="${g.y}"/>`).join("");
     const legend = `<line class="steps" x1="40" y1="139" x2="60" y2="139"/><text class="tick" x="66" y="142">${t("settings.fanChartUp")}</text>
@@ -264,7 +263,7 @@ export class Settings {
       c.nowX === null
         ? ""
         : `<line class="now" x1="${c.nowX}" y1="12" x2="${c.nowX}" y2="108"/><text class="now" x="${Math.min(520, Math.max(70, c.nowX))}" y="9" text-anchor="middle">${t("settings.fanChartNow", { c: celsius ?? "" })}</text>`;
-    const auto = c.autoWidth > 80 ? `<text class="tick" x="${40 + c.autoWidth / 2}" y="67" text-anchor="middle">${t("settings.fanChartAuto")}</text>` : "";
+    const auto = c.autoWidth > 80 ? `<text class="tick" x="${40 + c.autoWidth / 2}" y="44" text-anchor="middle">${t("settings.fanChartAuto")}</text>` : "";
     return `<svg class="fan-chart" viewBox="0 0 560 148" role="img" aria-label="${escapeHtml(t("settings.fanSteps"))}">
       <rect class="auto" x="40" y="18" width="${c.autoWidth}" height="90"/>${auto}
       ${grid}<line class="axis" x1="40" y1="108" x2="548" y2="108"/>

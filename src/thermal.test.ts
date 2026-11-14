@@ -174,23 +174,26 @@ describe("fan steps", () => {
 
   it("draws the steps", () => {
     const c = fanChart(S3, 85, 74, 7);
-    // 35% at the bottom (y 108), 100% at the top (y 18).
-    expect(c.line).toBe("M 192.4 108 V 87.2 H 263.5 V 59.5 H 344.8 V 18 H 548");
+    // 35–100°C across, 0–100% up: idle temperatures show left of the first step.
+    expect(c.line).toBe("M 274.5 108 V 63 H 329.2 V 45 H 391.7 V 18 H 548");
     expect(c.ticks).toEqual([
       { percent: 100, y: 18 },
-      { percent: 70, y: 59.5 },
-      { percent: 40, y: 101.1 },
+      { percent: 50, y: 63 },
+      { percent: 0, y: 108 },
     ]);
-    expect(c.autoWidth).toBe(152.4);
-    expect(c.slowX).toBe(395.6);
-    expect(c.nowX).toBe(283.8);
+    expect(c.degrees.map((d) => d.celsius)).toEqual([40, 50, 60, 70, 80, 90, 100]);
+    expect(c.degrees[0].x).toBe(79.1);
+    expect(c.autoWidth).toBe(234.5);
+    expect(c.slowX).toBe(430.8);
+    expect(c.nowX).toBe(344.8);
+    expect(fanChart(S3, 0, 48, 7).nowX).toBe(141.6);
     expect(fanChart(S3, 0, null, 7)).toMatchObject({ slowX: null, nowX: null });
   });
 
   it("draws the way down: each step the margin lower, never below the first limit", () => {
     // 72 − 7 meets the first limit (65): from step 2 straight to auto.
-    expect(fanChart(S3, 0, null, 7).down).toBe("M 192.4 108 V 87.2 H 192.4 V 59.5 H 273.7 V 18 H 548");
-    expect(fanChart(S3, 0, null, 3).down).toBe("M 192.4 108 V 87.2 H 233 V 59.5 H 314.3 V 18 H 548");
+    expect(fanChart(S3, 0, null, 7).down).toBe("M 274.5 108 V 63 H 274.5 V 45 H 337 V 18 H 548");
+    expect(fanChart(S3, 0, null, 3).down).toBe("M 274.5 108 V 63 H 305.7 V 45 H 368.2 V 18 H 548");
   });
 });
 

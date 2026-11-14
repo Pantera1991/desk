@@ -100,11 +100,12 @@ export function stepRpm(percent: number, maxRpm: number | null): number | null {
 }
 
 const tenth = (n: number) => Math.round(n * 10) / 10;
-/** The chart's floor: the fans never go below 40%, so the y axis starts just under it. */
-const CHART_FLOOR = 35;
-/** The chart's axes: 50–100°C across x 40–548, 35–100% up y 108–18 (viewBox 560×132). */
-const chartX = (celsius: number) => tenth(40 + (Math.min(MAX_LIMIT, Math.max(MIN_LIMIT, celsius)) - MIN_LIMIT) * 10.16);
-const chartY = (percent: number) => tenth(108 - ((Math.max(CHART_FLOOR, percent) - CHART_FLOOR) * 90) / (100 - CHART_FLOOR));
+/** Where the chart starts: below the lowest limit, so idle temperatures show too, °C. */
+const CHART_FROM = 35;
+/** The chart's axes: 35–100°C across x 40–548, 0–100% up y 108–18. */
+const chartX = (celsius: number) =>
+  tenth(40 + ((Math.min(MAX_LIMIT, Math.max(CHART_FROM, celsius)) - CHART_FROM) * 508) / (MAX_LIMIT - CHART_FROM));
+const chartY = (percent: number) => tenth(108 - percent * 0.9);
 
 /** The steps as SVG geometry: the stair line going up, the way down (each step `margin` lower,
  * never below the first limit, where macOS takes over), the area under the way up, the
@@ -120,6 +121,7 @@ export function fanChart(
   down: string;
   area: string;
   ticks: { percent: number; y: number }[];
+  degrees: { celsius: number; x: number }[];
   autoWidth: number;
   slowX: number | null;
   nowX: number | null;
@@ -138,7 +140,8 @@ export function fanChart(
     line,
     down: stairs((c) => Math.max(first, c - margin)),
     area: `${line} V ${chartY(0)} Z`,
-    ticks: [100, 70, 40].map((percent) => ({ percent, y: chartY(percent) })),
+    ticks: [100, 50, 0].map((percent) => ({ percent, y: chartY(percent) })),
+    degrees: [40, 50, 60, 70, 80, 90, 100].map((celsius) => ({ celsius, x: chartX(celsius) })),
     autoWidth: tenth(chartX(rows[0].celsius) - 40),
     slowX: slowLimit > 0 ? chartX(slowLimit) : null,
     nowX: celsius === null ? null : chartX(celsius),
