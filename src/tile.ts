@@ -14,7 +14,7 @@ import { Terminal, type ITheme } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { linkClickMode, openOutside, preview, previewFile } from "./side";
 import { api, type HookState } from "./api";
-import { stripProbeReplies } from "./input";
+import { MouseHold, stripProbeReplies } from "./input";
 import { DEFAULT_THEME, terminalTheme, themeById } from "./themes";
 import { PLATFORM } from "./platform";
 import { actionFor } from "./keys";
@@ -116,6 +116,8 @@ export class Tile {
   private fit = new FitAddon();
   /** Clipboard writes from programs here, allowed after your click or key (clip.ts). */
   private clip = new ClipGate();
+  /** A button xterm.js reported pressed; its release may never come (input.ts). */
+  private mouse = new MouseHold();
   private released: (e: MouseEvent) => void = () => undefined;
   private body: HTMLElement;
   private title: HTMLElement;
@@ -245,6 +247,11 @@ export class Tile {
       if (!e.isTrusted || !pressed) return;
       pressed = false;
       this.clip.input(Date.now());
+      // After xterm.js has handled this mouseup: the release it did not send.
+      setTimeout(() => {
+        const up = this.mouse.release();
+        if (up && this.ptyId !== null) void api.ptyWrite(this.ptyId, up);
+      });
     };
     window.addEventListener("mouseup", this.released, true);
     // A clicked link opens in desk's panel or outside desk (Brave / Chrome /
@@ -330,6 +337,7 @@ export class Tile {
       return true;
     });
     this.term.onData((raw) => {
+      this.mouse.sent(raw);
       const d = stripProbeReplies(raw);
       if (d && this.ptyId !== null) void api.ptyWrite(this.ptyId, d);
     });
