@@ -36,7 +36,7 @@
 //!
 //! Emergency stop
 //! - Only when turned on in Options (off by default): once the same average
-//!   reaches its limit (95 °C by default), desk freezes the work in all its
+//!   reaches its limit (90 °C by default), desk freezes the work in all its
 //!   sessions, tiles open or not (`Halt`, `freeze_plan`). Nothing is killed:
 //!   macOS and Linux stop the processes (SIGSTOP), Windows suspends their
 //!   threads. It stays so until the user resumes it from the top bar, which
@@ -65,7 +65,7 @@ const WINDOW: usize = 3;
 const MIN_SLOW: Duration = Duration::from_secs(60);
 
 /// The emergency stop's limit (Options, layout `emergencyAt`), °C.
-pub const DEFAULT_EMERGENCY: u32 = 95;
+pub const DEFAULT_EMERGENCY: u32 = 90;
 pub const MIN_EMERGENCY: u32 = 60;
 pub const MAX_EMERGENCY: u32 = 110;
 /// Resuming after an emergency stop waits until the average is this far
@@ -225,47 +225,84 @@ impl Policy {
     }
 }
 
+/// Why the emergency stop tripped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum HaltCause {
+    /// The average of the readings reached the limit.
+    Temperature,
+    /// macOS said its thermal state is critical.
+    System,
+}
+
+/// Why "resume" is refused.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Refusal {
+    /// The average is not yet RESUME_MARGIN below the limit.
+    Hot(f32),
+    /// macOS still says its thermal state is critical.
+    Critical,
+}
+
 /// When to freeze the sessions' work: the average of the last readings at or
-/// over the emergency limit. It holds until the user resumes (`resume`); the
-/// temperature dropping does not undo it.
+/// over the emergency limit, or at once the system's critical thermal state.
+/// It holds until the user resumes (`resume`); cooling down does not undo it.
 #[derive(Debug, Default)]
 pub struct Halt {
     readings: VecDeque<f32>,
-    tripped: bool,
+    /// Some while tripped.
+    cause: Option<HaltCause>,
+    /// The last step's critical state.
+    critical: bool,
 }
 
 impl Halt {
-    /// Takes a reading (None: no sensor, nothing changes); says whether the
-    /// work should be frozen now. `limit` 0: the stop is off and lets go.
-    pub fn step(&mut self, celsius: Option<f32>, limit: u32) -> bool {
+    /// Takes a reading (None: no sensor, nothing changes) and the system's
+    /// critical state; says whether the work should be frozen now. `limit` 0:
+    /// the stop is off and lets go.
+    pub fn step(&mut self, celsius: Option<f32>, critical: bool, limit: u32) -> bool {
         if let Some(c) = celsius {
             if self.readings.len() == WINDOW {
                 self.readings.pop_front();
             }
             self.readings.push_back(c);
         }
+        self.critical = critical;
         if limit == 0 {
-            self.tripped = false;
-        } else if self.average().is_some_and(|a| a >= limit as f32) {
-            self.tripped = true;
+            self.cause = None;
+        } else if self.cause.is_none() {
+            if critical {
+                self.cause = Some(HaltCause::System);
+            } else if self.average().is_some_and(|a| a >= limit as f32) {
+                self.cause = Some(HaltCause::Temperature);
+            }
         }
-        self.tripped
+        self.tripped()
     }
 
     pub fn tripped(&self) -> bool {
-        self.tripped
+        self.cause.is_some()
     }
 
-    /// The user's "resume": refused with the average while it is not yet
-    /// RESUME_MARGIN below `limit` (0: off, always allowed).
-    pub fn resume(&mut self, limit: u32) -> Result<(), f32> {
+    /// Why it tripped; None while it has not.
+    pub fn cause(&self) -> Option<HaltCause> {
+        self.cause
+    }
+
+    /// The user's "resume": refused while the system is still critical, or
+    /// with the average while it is not yet RESUME_MARGIN below `limit`
+    /// (0: off, always allowed).
+    pub fn resume(&mut self, limit: u32) -> Result<(), Refusal> {
+        if limit > 0 && self.critical {
+            return Err(Refusal::Critical);
+        }
         if let Some(a) = self.average()
             && limit > 0
             && a > limit as f32 - RESUME_MARGIN
         {
-            return Err(a);
+            return Err(Refusal::Hot(a));
         }
-        self.tripped = false;
+        self.cause = None;
         Ok(())
     }
 
@@ -763,9 +800,9 @@ impl Guard {
         self.emergency.store(limit, Ordering::Relaxed);
     }
 
-    /// The user's "resume" after an emergency stop. Refused, with the
-    /// average, while the CPU is not yet RESUME_MARGIN below the limit.
-    pub fn resume(&self) -> Result<Status, f32> {
+    /// The user's "resume" after an emergency stop. Refused while the system
+    /// is critical, or with the average while not yet RESUME_MARGIN below.
+    pub fn resume(&self) -> Result<Status, Refusal> {
         let mut g = self.inner.lock().unwrap();
         g.halt.resume(self.emergency.load(Ordering::Relaxed))?;
         g.thaw();
@@ -811,7 +848,7 @@ impl Guard {
         let now = Instant::now();
         let was = g.status.slowed;
         let slow = g.policy.step(celsius, pressure, limit, now);
-        let halt = g.halt.step(celsius, emergency);
+        let halt = g.halt.step(celsius, false, emergency);
         g.fan_policy.set_down(down);
         let fan_step = g.fan_policy.step(celsius, pressure, &steps, now);
         if g.first {
@@ -2017,7 +2054,7 @@ mod tests {
     }
 
     fn halt_run(h: &mut Halt, readings: &[f32], limit: u32) -> Vec<bool> {
-        readings.iter().map(|&c| h.step(Some(c), limit)).collect()
+        readings.iter().map(|&c| h.step(Some(c), false, limit)).collect()
     }
 
     #[test]
@@ -2036,7 +2073,7 @@ mod tests {
         assert_eq!(halt_run(&mut h, &[50.0, 50.0, 50.0], 95), [true; 3]);
         assert_eq!(h.resume(95), Ok(()));
         assert!(!h.tripped());
-        assert!(!h.step(Some(50.0), 95));
+        assert!(!h.step(Some(50.0), false, 95));
         // Hot again: frozen again.
         assert_eq!(halt_run(&mut h, &[99.0, 99.0, 99.0], 95), [false, false, true]);
     }
@@ -2046,7 +2083,7 @@ mod tests {
         let mut h = Halt::default();
         halt_run(&mut h, &[96.0, 96.0, 96.0], 95);
         halt_run(&mut h, &[91.0, 91.0, 91.0], 95);
-        assert_eq!(h.resume(95), Err(91.0));
+        assert_eq!(h.resume(95), Err(Refusal::Hot(91.0)));
         assert!(h.tripped());
         halt_run(&mut h, &[90.0, 90.0, 90.0], 95);
         assert_eq!(h.resume(95), Ok(()));
@@ -2059,10 +2096,57 @@ mod tests {
     fn turning_the_emergency_stop_off_lets_go_and_it_never_trips_off() {
         let mut h = Halt::default();
         assert_eq!(halt_run(&mut h, &[99.0, 99.0, 99.0], 0), [false; 3]);
-        assert!(h.step(Some(99.0), 95));
-        assert!(!h.step(Some(99.0), 0));
+        assert!(h.step(Some(99.0), false, 95));
+        assert!(!h.step(Some(99.0), false, 0));
         assert_eq!(h.resume(0), Ok(()));
-        assert!(h.step(None, 95), "the readings are kept: the average is still over");
+        assert!(h.step(None, false, 95), "the readings are kept: the average is still over");
+    }
+
+    #[test]
+    fn a_critical_macos_stops_at_once_and_blocks_resume() {
+        let mut h = Halt::default();
+        assert!(h.step(Some(50.0), true, 90));
+        assert_eq!(h.cause(), Some(HaltCause::System));
+        assert_eq!(h.resume(90), Err(Refusal::Critical));
+        for _ in 0..3 {
+            assert!(h.step(Some(50.0), false, 90), "cooled down: still frozen until resumed");
+        }
+        assert_eq!(h.resume(90), Ok(()));
+        assert_eq!(h.cause(), None);
+    }
+
+    #[test]
+    fn critical_with_the_stop_off_does_nothing() {
+        let mut h = Halt::default();
+        assert!(!h.step(Some(99.0), true, 0));
+        assert_eq!(h.cause(), None);
+        assert!(h.step(Some(50.0), true, 90));
+        assert!(!h.step(Some(50.0), true, 0), "turned off: lets go");
+        assert_eq!(h.resume(0), Ok(()));
+    }
+
+    #[test]
+    fn the_cause_is_the_temperature_when_the_average_trips() {
+        let mut h = Halt::default();
+        for c in [91.0, 91.0, 91.0] {
+            h.step(Some(c), false, 90);
+        }
+        assert_eq!(h.cause(), Some(HaltCause::Temperature));
+        h.step(Some(91.0), true, 90);
+        assert_eq!(h.cause(), Some(HaltCause::Temperature), "the first cause stays");
+    }
+
+    #[test]
+    fn after_critical_clears_a_hot_average_still_blocks_resume() {
+        let mut h = Halt::default();
+        for c in [95.0, 95.0, 95.0] {
+            h.step(Some(c), true, 90);
+        }
+        assert_eq!(h.cause(), Some(HaltCause::System));
+        for _ in 0..3 {
+            h.step(Some(88.0), false, 90);
+        }
+        assert_eq!(h.resume(90), Err(Refusal::Hot(88.0)));
     }
 
     #[test]
@@ -2175,7 +2259,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&marker).unwrap(), work.to_string());
 
         // Still hot: refused. Cooled down: frozen all the same until resumed.
-        assert_eq!(guard.resume().unwrap_err(), 97.0);
+        assert_eq!(guard.resume().unwrap_err(), Refusal::Hot(97.0));
         for _ in 0..3 {
             tick(85.0);
         }

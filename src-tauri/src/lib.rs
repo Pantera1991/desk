@@ -750,15 +750,22 @@ fn thermal_status(guard: State<thermal::Guard>) -> thermal::Status {
 }
 
 /// The top bar's "resume" after an emergency stop: refused, with the reason,
-/// until the CPU has cooled down (thermal::RESUME_MARGIN).
+/// while macOS is critical or until the CPU has cooled down
+/// (thermal::RESUME_MARGIN).
 #[tauri::command]
 fn thermal_resume(guard: State<thermal::Guard>) -> Result<thermal::Status, String> {
-    guard.resume().map_err(|avg| {
-        let (c, at) = (avg.round(), guard.status().emergency as f32 - thermal::RESUME_MARGIN);
-        tr!(
-            format!("Procesor ma jeszcze {c}°C: karty wznowisz od {at}°C (albo wyłącz awaryjne zatrzymanie w Opcjach)."),
-            format!("The CPU is still at {c}°C: the tiles can resume from {at}°C (or turn the emergency stop off in Options).")
-        )
+    guard.resume().map_err(|why| match why {
+        thermal::Refusal::Hot(avg) => {
+            let (c, at) = (avg.round(), guard.status().emergency as f32 - thermal::RESUME_MARGIN);
+            tr!(
+                format!("Najgorętszy czujnik ma jeszcze {c}°C: karty wznowisz od {at}°C (albo wyłącz awaryjne zatrzymanie w Opcjach)."),
+                format!("The hottest sensor is still at {c}°C: the tiles can resume from {at}°C (or turn the emergency stop off in Options).")
+            )
+        }
+        thermal::Refusal::Critical => tr!(
+            "macOS wciąż zgłasza krytyczną temperaturę: karty wznowisz, gdy to minie (albo wyłącz awaryjne zatrzymanie w Opcjach).".to_string(),
+            "macOS still reports a critical temperature: the tiles can resume once it passes (or turn the emergency stop off in Options).".to_string()
+        ),
     })
 }
 

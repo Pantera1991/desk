@@ -326,7 +326,7 @@ mod tests {
         let p = tmp.path().join("layout.json");
         std::fs::write(&p, r#"{"version":1,"thermalLimit":80}"#).unwrap();
         let l = load(&p);
-        assert_eq!((l.emergency_on, l.emergency_at, l.thermal_colors), (false, 95, None));
+        assert_eq!((l.emergency_on, l.emergency_at, l.thermal_colors), (false, 90, None));
         std::fs::write(&p, r#"{"thermalColors":{"warm":55,"hot":70},"emergencyOn":true,"emergencyAt":90}"#).unwrap();
         let l = load(&p);
         assert_eq!((l.emergency_on, l.emergency_at), (true, 90));
