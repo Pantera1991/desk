@@ -169,7 +169,7 @@ export class Settings {
         .then((server) => {
           area.value = "";
           show(server);
-          if (server) toast(t("settings.promptAiVpnSaved", { server }));
+          if (server) toast(t("settings.promptAiVpnSaved", { server }), { kind: "ok" });
         })
         .catch((err) => {
           error.textContent = String(err);
@@ -184,7 +184,7 @@ export class Settings {
     });
     saveBtn.addEventListener("click", () => {
       if (area.value.trim()) void save(area.value);
-      else if (saved) toast(t("settings.promptAiVpnSaved", { server: saved }));
+      else if (saved) toast(t("settings.promptAiVpnSaved", { server: saved }), { kind: "ok" });
       else error.textContent = t("settings.promptAiVpnEmpty");
     });
     rm.addEventListener("click", () => void save(""));
@@ -457,7 +457,7 @@ export class Settings {
         const name = input.value.trim();
         const id = input.dataset.acctName!;
         if (!name || rows.some((a) => a.id !== id && a.name.toLowerCase() === name.toLowerCase())) {
-          if (name) toast(t("settings.accountExists"));
+          if (name) toast(t("settings.accountExists"), { kind: "warn" });
           input.value = rows.find((a) => a.id === id)?.name ?? "";
           return;
         }
@@ -473,8 +473,8 @@ export class Settings {
       const name = box.querySelector<HTMLInputElement>('[data-k="acct-name"]')!.value.trim();
       const dir = box.querySelector<HTMLInputElement>('[data-k="acct-dir"]')!.value.trim();
       if (!name) return;
-      if (rows.some((a) => a.name.toLowerCase() === name.toLowerCase())) return toast(t("settings.accountExists"));
-      if (dir && !ACCOUNT_DIR.test(dir)) return toast(t("settings.accountDirBad"));
+      if (rows.some((a) => a.name.toLowerCase() === name.toLowerCase())) return toast(t("settings.accountExists"), { kind: "warn" });
+      if (dir && !ACCOUNT_DIR.test(dir)) return toast(t("settings.accountDirBad"), { kind: "warn" });
       void change(withAccount(layout.claudeAccounts ?? [], name, dir, t("settings.accountMain")));
     });
     // Who is logged in, read from each account's own Claude config.
@@ -607,7 +607,7 @@ export class Settings {
     const dropdown = layout.dropdown ? layout.dropdownHotkey || DEFAULT_HOTKEY() : "";
     const clash = id !== "dropdown" && accelerator === dropdown ? "dropdown" : clashWith(id, accelerator);
     if (clash) {
-      toast(t("settings.taken", { key: hotkeyLabel(accelerator), what: clash }));
+      toast(t("settings.taken", { key: hotkeyLabel(accelerator), what: clash }), { kind: "warn" });
       this.render();
       return;
     }

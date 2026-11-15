@@ -266,18 +266,18 @@ describe("temperature toasts", () => {
   const hotBoth = at(80, { fanSteps: ONE, fanStep: 0, fans: forced, slowed: true, processes: 3 });
 
   it("fans on, fans off, and the two together", () => {
-    expect(thermalToast(cool, hotFans)).toBe(t("thermal.fansOn", { c: 72, percent: 100 }));
-    expect(thermalToast(cool, hotBoth)).toBe(t("thermal.slowingFans", { c: 80, percent: 100 }));
-    expect(thermalToast(hotFans, at(62, { fanSteps: ONE, fans: fan() }))).toBe(t("thermal.fansOff", { c: 62 }));
-    expect(thermalToast(hotBoth, at(62, { fanSteps: ONE, fans: fan() }))).toBe(t("thermal.cooledFans", { c: 62 }));
+    expect(thermalToast(cool, hotFans)?.text).toBe(t("thermal.fansOn", { c: 72, percent: 100 }));
+    expect(thermalToast(cool, hotBoth)?.text).toBe(t("thermal.slowingFans", { c: 80, percent: 100 }));
+    expect(thermalToast(hotFans, at(62, { fanSteps: ONE, fans: fan() }))?.text).toBe(t("thermal.fansOff", { c: 62 }));
+    expect(thermalToast(hotBoth, at(62, { fanSteps: ONE, fans: fan() }))?.text).toBe(t("thermal.cooledFans", { c: 62 }));
   });
 
   it("toasts when the fans start and stop, not on every step", () => {
     const a = at(72, { fanSteps: S3, fanStep: 1, fans: fan({ percent: 70 }) });
     const b = at(81, { fanSteps: S3, fanStep: 2, fans: fan({ percent: 100 }) });
-    expect(thermalToast(at(60, { fanSteps: S3, fans: fan() }), a)).toBe(t("thermal.fansOn", { c: 72, percent: 70 }));
+    expect(thermalToast(at(60, { fanSteps: S3, fans: fan() }), a)?.text).toBe(t("thermal.fansOn", { c: 72, percent: 70 }));
     expect(thermalToast(a, b)).toBeNull();
-    expect(thermalToast(b, at(57, { fanSteps: S3, fans: fan() }))).toBe(t("thermal.fansOff", { c: 57 }));
+    expect(thermalToast(b, at(57, { fanSteps: S3, fans: fan() }))?.text).toBe(t("thermal.fansOff", { c: 57 }));
   });
 
   it("no toast when the fans stop because the mode dropped them", () => {
@@ -286,13 +286,23 @@ describe("temperature toasts", () => {
 
   it("a new problem once", () => {
     const stuck = at(72, { fanSteps: ONE, fanStep: 0, fans: fan({ problem: "brak zgody" }) });
-    expect(thermalToast(cool, stuck)).toBe(t("thermal.fansProblem", { why: "brak zgody" }));
+    expect(thermalToast(cool, stuck)?.text).toBe(t("thermal.fansProblem", { why: "brak zgody" }));
     expect(thermalToast(stuck, stuck)).toBeNull();
   });
 
+  it("says how much each one matters", () => {
+    expect(thermalToast(cool, hotFans)?.kind).toBe("warn");
+    expect(thermalToast(cool, hotBoth)?.kind).toBe("warn");
+    expect(thermalToast(at(70), at(80, { slowed: true, processes: 2 }))?.kind).toBe("warn");
+    expect(thermalToast(cool, at(72, { fanSteps: ONE, fanStep: 0, fans: fan({ problem: "brak zgody" }) }))?.kind).toBe("warn");
+    expect(thermalToast(hotFans, at(62, { fanSteps: ONE, fans: fan() }))?.kind).toBe("ok");
+    expect(thermalToast(hotBoth, at(62, { fanSteps: ONE, fans: fan() }))?.kind).toBe("ok");
+    expect(thermalToast(at(80, { slowed: true, processes: 2 }), at(66))?.kind).toBe("ok");
+  });
+
   it("slowing alone as before", () => {
-    expect(thermalToast(at(70), at(80, { slowed: true, processes: 2 }))).toBe(t("thermal.slowing", { c: 80 }));
-    expect(thermalToast(at(80, { slowed: true, processes: 2 }), at(66))).toBe(t("thermal.cooled", { c: 66 }));
+    expect(thermalToast(at(70), at(80, { slowed: true, processes: 2 }))?.text).toBe(t("thermal.slowing", { c: 80 }));
+    expect(thermalToast(at(80, { slowed: true, processes: 2 }), at(66))?.text).toBe(t("thermal.cooled", { c: 66 }));
   });
 });
 
@@ -382,10 +392,13 @@ describe("emergency stop", () => {
 
   it("a toast when it stops, before anything else that changed, and when it resumes", () => {
     const before = at(94, { emergency: 95, slowed: true, processes: 3 });
-    expect(thermalToast(before, { ...halted, slowed: true, processes: 3 })).toBe(
+    expect(thermalToast(before, { ...halted, slowed: true, processes: 3 })?.text).toBe(
       "Procesor ma 97°C: desk awaryjnie zatrzymał pracę w kartach (12 procesów). Wznów przyciskiem ▶ w górnym pasku.",
     );
     expect(thermalToast(halted, halted)).toBeNull();
-    expect(thermalToast(halted, at(88, { emergency: 95 }))).toBe(t("thermal.resumed"));
+    expect(thermalToast(halted, at(88, { emergency: 95 }))?.text).toBe(t("thermal.resumed"));
+    // The stop is an error that stays; resuming is good news.
+    expect(thermalToast(before, { ...halted, slowed: true, processes: 3 })?.kind).toBe("error");
+    expect(thermalToast(halted, at(88, { emergency: 95 }))?.kind).toBe("ok");
   });
 });

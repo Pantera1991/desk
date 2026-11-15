@@ -189,7 +189,7 @@ export class Side {
   private attach(path: string): void {
     const text = mention(this.tree.project, path);
     if (text) this.ctx.insert(text);
-    else toast(t("side.unsafePath"));
+    else toast(t("side.unsafePath"), { kind: "warn" });
   }
 
   get isOpen(): boolean {
@@ -378,7 +378,7 @@ export class Side {
     try {
       text = await api.readText(path);
     } catch (err) {
-      if (!quiet) toast(t("side.editError", { err: String(err) }));
+      if (!quiet) toast(t("side.editError", { err: String(err) }), { kind: "error" });
       return;
     }
     if (this.address.value !== path || this.editing) return; // another file meanwhile
@@ -406,7 +406,7 @@ export class Side {
       this.syncButtons();
       return true;
     } catch (err) {
-      toast(t("side.saveError", { err: String(err) }));
+      toast(t("side.saveError", { err: String(err) }), { kind: "error" });
       return false;
     }
   }
@@ -440,7 +440,7 @@ export class Side {
   }
 
   private fail = (err: unknown): void => {
-    if (this.created) return toast(t("side.previewError", { err: String(err) }));
+    if (this.created) return toast(t("side.previewError", { err: String(err) }), { kind: "error" });
     const msg = document.createElement("div");
     msg.className = "side-empty dim";
     msg.textContent = String(err);

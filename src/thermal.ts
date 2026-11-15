@@ -5,6 +5,7 @@
 // chip opens the busiest session (busiest.rs).
 import type { FanInfo, FanStep, ThermalColors, ThermalMode, ThermalStatus } from "./api";
 import { t, tn, type MessageKey } from "./i18n";
+import type { NoticeKind } from "./notices";
 
 export const DEFAULT_LIMIT = 75;
 export const MIN_LIMIT = 50;
@@ -331,11 +332,13 @@ function fanLines(s: ThermalStatus): string[] {
 }
 
 /** What changed between two readings, as one toast (or none). */
-export function thermalToast(prev: ThermalStatus | null, next: ThermalStatus): string | null {
+export function thermalToast(prev: ThermalStatus | null, next: ThermalStatus): { text: string; kind: NoticeKind } | null {
   const c = next.celsius ?? "?";
+  const warn = (text: string) => ({ text, kind: "warn" as const });
+  const ok = (text: string) => ({ text, kind: "ok" as const });
   // The emergency stop comes before everything else that changed with it.
-  if (next.halted && !prev?.halted) return tn("thermal.halted", next.frozen, { c, limit: next.emergency });
-  if (prev?.halted && !next.halted) return t("thermal.resumed");
+  if (next.halted && !prev?.halted) return { text: tn("thermal.halted", next.frozen, { c, limit: next.emergency }), kind: "error" };
+  if (prev?.halted && !next.halted) return ok(t("thermal.resumed"));
   const slowOn = slowing(next) && !slowing(prev);
   // Turned off in Options is not "cooled down".
   const slowOff = slowing(prev) && !next.slowed && next.limit > 0;
@@ -345,14 +348,14 @@ export function thermalToast(prev: ThermalStatus | null, next: ThermalStatus): s
   // A new step while the fans are already desk's: no toast.
   const fansOn = isFans && !wasFans;
   const fansOff = wasFans && !isFans && next.fanSteps.length > 0;
-  if (slowOn && fansOn) return t("thermal.slowingFans", { c, percent: percent ?? "?" });
-  if (slowOff && fansOff) return t("thermal.cooledFans", { c });
-  if (slowOn) return t("thermal.slowing", { c });
-  if (fansOn) return t("thermal.fansOn", { c, percent: percent ?? "?" });
-  if (slowOff) return t("thermal.cooled", { c });
-  if (fansOff) return t("thermal.fansOff", { c });
+  if (slowOn && fansOn) return warn(t("thermal.slowingFans", { c, percent: percent ?? "?" }));
+  if (slowOff && fansOff) return ok(t("thermal.cooledFans", { c }));
+  if (slowOn) return warn(t("thermal.slowing", { c }));
+  if (fansOn) return warn(t("thermal.fansOn", { c, percent: percent ?? "?" }));
+  if (slowOff) return ok(t("thermal.cooled", { c }));
+  if (fansOff) return ok(t("thermal.fansOff", { c }));
   const why = next.fans?.problem;
-  if (why && why !== prev?.fans?.problem) return t("thermal.fansProblem", { why });
+  if (why && why !== prev?.fans?.problem) return warn(t("thermal.fansProblem", { why }));
   return null;
 }
 

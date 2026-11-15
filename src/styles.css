@@ -1976,16 +1976,257 @@ button.danger {
   border-color: var(--danger);
 }
 
-.toast {
+/* ---- notices: cards under the top bar, the bell's history (notices.ts, ui.ts toast) ---- */
+/* top right, away from where you type at the bottom of the terminals */
+.notices {
   position: fixed;
-  right: 12px;
-  bottom: 30px;
+  top: 34px;
+  right: 10px;
   z-index: 30;
-  max-width: 420px;
-  padding: 6px 10px;
+  width: 340px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  pointer-events: none; /* clicks between the cards reach the tiles */
+}
+
+.notice {
+  position: relative;
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) 16px;
+  column-gap: 8px;
+  align-items: start;
+  padding: 7px 6px 8px 9px;
   background: var(--panel);
   border: 1px solid var(--line-hi);
+  border-radius: 5px;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 0.35);
+  overflow: hidden;
+  pointer-events: auto;
+  animation: notice-in 0.12s ease-out;
+}
+
+.notice-icon {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  margin-top: 2px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.notice.error {
+  border-color: color-mix(in srgb, var(--danger) 55%, var(--bg));
+}
+
+.notice.warn {
+  border-color: color-mix(in srgb, var(--waiting) 45%, var(--bg));
+}
+
+.notice.error > .notice-icon,
+.notice-row.error > .notice-icon {
+  color: var(--danger);
+}
+
+.notice.warn > .notice-icon,
+.notice-row.warn > .notice-icon {
+  color: var(--waiting);
+}
+
+.notice.info > .notice-icon,
+.notice-row.info > .notice-icon {
+  color: var(--accent);
+}
+
+.notice.ok > .notice-icon,
+.notice-row.ok > .notice-icon {
+  color: var(--working);
+}
+
+/* an error can be selected and copied */
+.notice-text {
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.notice-acts {
+  display: flex;
+  gap: 6px;
+  margin-top: 7px;
+}
+
+.notice-acts button {
+  padding: 0 7px;
+  line-height: 18px;
+}
+
+.notice-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--dim);
+}
+
+.notice-x .notice-icon {
+  margin: 0;
+}
+
+.notice-x:hover {
+  color: var(--fg);
+}
+
+/* the time left; it waits while the card is hovered (ui.ts removes the card at its end) */
+.notice-timer {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 2px;
+  opacity: 0.55;
+  transform-origin: left;
+  animation-name: notice-timer;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+
+.notice.info .notice-timer {
+  background: var(--accent);
+}
+
+.notice.ok .notice-timer {
+  background: var(--working);
+}
+
+.notice.warn .notice-timer {
+  background: var(--waiting);
+}
+
+.notice:hover .notice-timer {
+  animation-play-state: paused;
+}
+
+@keyframes notice-timer {
+  to {
+    transform: scaleX(0);
+  }
+}
+
+@keyframes notice-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .notice {
+    animation: none;
+  }
+}
+
+/* the bell at the end of the bottom bar: what you may have missed */
+.notice-slot:empty {
+  display: none;
+}
+
+.notice-bell {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 16px;
+  padding: 0 5px 0 4px;
   border-radius: 4px;
+  background: none;
+  color: var(--dim);
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.notice-bell .notice-icon {
+  margin: 0;
+}
+
+.notice-bell:hover,
+.notice-bell.new {
+  color: var(--fg);
+}
+
+.notice-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--danger);
+}
+
+.notice-history {
+  position: fixed;
+  right: 6px;
+  bottom: 26px;
+  z-index: 30;
+  width: 420px;
+  max-height: min(60vh, 440px);
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--line-hi);
+  border-radius: 5px;
+  box-shadow: 0 8px 22px rgb(0 0 0 / 0.4);
+}
+
+.notice-history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px 6px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.notice-history-head button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--dim);
+}
+
+.notice-history-head button:hover {
+  color: var(--fg);
+}
+
+.notice-rows {
+  overflow-y: auto;
+}
+
+.notice-row {
+  display: grid;
+  grid-template-columns: 36px 12px minmax(0, 1fr) auto;
+  column-gap: 8px;
+  align-items: start;
+  padding: 7px 8px 7px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.notice-row:last-child {
+  border-bottom: 0;
+}
+
+.notice-row.error {
+  background: color-mix(in srgb, var(--danger) 6%, var(--panel));
+}
+
+.notice-time {
+  color: var(--dim);
+}
+
+.notice-row .notice-acts {
+  margin: 0;
 }
 
 /* lock: terminals stay visible, input is blocked until Touch ID / password */
