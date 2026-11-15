@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-thermal-resume"
+description = "Enables the thermal_resume command without any pre-configured scope."
+commands.allow = ["thermal_resume"]
+
+[[permission]]
+identifier = "deny-thermal-resume"
+description = "Denies the thermal_resume command without any pre-configured scope."
+commands.deny = ["thermal_resume"]

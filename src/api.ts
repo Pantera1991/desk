@@ -86,6 +86,13 @@ export interface Layout {
   fanMargin: number;
   /** …and no sooner than this many seconds after the last change. */
   fanWait: number;
+  /** Emergency stop: from `emergencyAt` °C the work in every session freezes until resumed by hand (thermal.rs Halt). */
+  emergencyOn: boolean;
+  emergencyAt: number;
+  /** The temperature chip's colours; null: from the slowing limit or the first fan step (thermal.ts). */
+  thermalColors: ThermalColors | null;
+  /** Parts of the temperature chip's panel hidden in Options (cpu-view.ts CpuPart); empty: all shown. */
+  cpuHidden: string[];
   /** The usage popover: one view at a time, or everything at once (usage-popover.ts). */
   usageLayout: UsageLayout;
   /** How a session's share of the 5-hour window is worked out (usage_share.rs). */
@@ -94,6 +101,12 @@ export interface Layout {
 
 /** What desk does when hot: nothing, slow its sessions, the fan steps, or both. */
 export type ThermalMode = "off" | "slow" | "together" | "fans";
+
+/** The temperature chip is yellow from `warm` and red from `hot`, °C. */
+export interface ThermalColors {
+  warm: number;
+  hot: number;
+}
 
 /** From `celsius` (the average reading) the fans run at `percent` of their maximum. */
 export interface FanStep {
@@ -245,6 +258,60 @@ export interface ThermalStatus {
   cannotSlow: string | null;
   /** The fans, when the mode uses them. */
   fans: FanStatus | null;
+  /** The emergency stop's limit, °C; 0: off. */
+  emergency: number;
+  /** The emergency stop tripped: the sessions' work is frozen until resumed. */
+  halted: boolean;
+  /** Processes frozen. */
+  frozen: number;
+  /** Programs typed at a shell prompt left running (freezing would hand the terminal to the shell); what they started is frozen. */
+  jobs: number;
+}
+
+/** The session working the CPU hardest now (busiest.rs). */
+export interface Busiest {
+  path: string;
+  agent: string;
+  instance: number;
+  /** % of one core (400: four cores' worth). */
+  percent: number;
+  /** The program in it using the most. */
+  program: string;
+}
+
+/** A desk session, as tiles are keyed (sessions.ts Spec). */
+export interface SessionRef {
+  path: string;
+  agent: string;
+  instance: number;
+}
+
+/** One point of the CPU history: when (Unix seconds) and how busy, % of all cores. */
+export interface CpuSample {
+  at: number;
+  user: number;
+  system: number;
+}
+
+export interface TopProcess {
+  pid: number;
+  name: string;
+  /** % of one core, as top counts. */
+  percent: number;
+  /** The desk session it runs in; null: not desk's. */
+  session: SessionRef | null;
+}
+
+/** The temperature chip's panel (cpu.rs). */
+export interface CpuDetails {
+  cores: number;
+  /** 1, 5 and 15 minutes; null on Windows. */
+  load: [number, number, number] | null;
+  /** The last 10 minutes, a point every 5 s, oldest first. */
+  history: CpuSample[];
+  /** null: not read (the panel hides its top processes). */
+  top: TopProcess[] | null;
+  busiest: Busiest | null;
 }
 
 /** The fans while a mode uses them (fans.rs). */
@@ -439,6 +506,11 @@ export const api = {
   ptyResize: (id: number, cols: number, rows: number) => invoke<void>("pty_resize", { id, cols, rows }),
   ptyClose: (id: number) => invoke<void>("pty_close", { id }),
   thermalStatus: () => invoke<ThermalStatus>("thermal_status"),
+  /** After an emergency stop; rejected, with the reason, while the CPU is still too hot. */
+  thermalResume: () => invoke<ThermalStatus>("thermal_resume"),
+  /** The temperature chip's panel; the first call takes 0.4 s. */
+  /** Without `processes` no process is read (the panel hides them). */
+  cpuDetails: (processes: boolean) => invoke<CpuDetails>("cpu_details", { processes }),
   fansInfo: () => invoke<FanInfo>("fans_info"),
   /** The one admin password prompt for the fans. */
   fansInstall: () => invoke<FanInfo>("fans_install"),

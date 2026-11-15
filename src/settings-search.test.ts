@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { pl } from "./locales/pl";
 import { normalize, search } from "./settings-search";
 
-const names = { term: "Terminal i linki", look: "Wygląd", power: "Zasilanie" };
+const names = { term: "Terminal i linki", look: "Wygląd", power: "Temperatura i kawa" };
 const items = [
   { group: "term", section: "Linki", text: "Klik w link otwiera" },
   { group: "term", section: "Linki", text: "Przeglądarka poza desk" },
@@ -37,7 +37,7 @@ describe("search", () => {
   });
 
   it("a group name shows the whole group", () => {
-    const r = search(items, names, "zasil");
+    const r = search(items, names, "temper");
     expect(r.show).toEqual([false, false, false, false, true]);
     expect(r.counts).toEqual({ power: 1 });
   });

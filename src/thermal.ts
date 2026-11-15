@@ -1,7 +1,9 @@
 // CPU temperature in the top bar ("72°", "84° ↓" while desk slows its
-// sessions, "78° ≋ 70%" while the fans run at a step desk set). The readings,
-// the slowing and the fans are Rust's (src-tauri/src/thermal.rs, fans.rs).
-import type { FanInfo, FanStep, ThermalMode, ThermalStatus } from "./api";
+// sessions, "78° ≋ 70%" while the fans run at a step desk set, "97° ⏸" and a
+// resume button after an emergency stop). The readings, the slowing, the fans
+// and the stop are Rust's (src-tauri/src/thermal.rs, fans.rs); clicking the
+// chip opens the busiest session (busiest.rs).
+import type { FanInfo, FanStep, ThermalColors, ThermalMode, ThermalStatus } from "./api";
 import { t, tn, type MessageKey } from "./i18n";
 
 export const DEFAULT_LIMIT = 75;
@@ -23,8 +25,41 @@ export function clampFanMargin(c: number): number {
   if (!Number.isFinite(c)) return DEFAULT_FAN_MARGIN;
   return Math.min(MAX_FAN_MARGIN, Math.max(MIN_FAN_MARGIN, Math.round(c)));
 }
-/** The chip turns yellow this close to the limit. */
+/** The chip turns yellow this close to the limit (unless Options chose its colours). */
 const WARM_MARGIN = 10;
+/** The colours Options accepts, °C. */
+export const MIN_COLOR = 30;
+export const MAX_COLOR = 110;
+/** The emergency stop's limit (thermal.rs DEFAULT_EMERGENCY...), °C. */
+export const DEFAULT_EMERGENCY = 95;
+export const MIN_EMERGENCY = 60;
+export const MAX_EMERGENCY = 110;
+/** Resuming waits until the CPU is this far below it (thermal.rs RESUME_MARGIN). */
+export const RESUME_MARGIN = 5;
+
+/** An emergency limit typed in Options: whole degrees within MIN..MAX. */
+export function clampEmergency(n: number): number {
+  if (!Number.isFinite(n)) return DEFAULT_EMERGENCY;
+  return Math.min(MAX_EMERGENCY, Math.max(MIN_EMERGENCY, Math.round(n)));
+}
+
+/** The colours desk picks itself: red from the lowest limit it acts at (slowing, the
+ * first fan step; 75°C with neither), yellow 10°C before. 0 in `limits`: not in use. */
+export function autoColors(limits: number[]): ThermalColors {
+  const active = limits.filter((n) => n > 0);
+  const hot = active.length ? Math.min(...active) : DEFAULT_LIMIT;
+  return { warm: hot - WARM_MARGIN, hot };
+}
+
+/** Colours typed in Options: whole degrees within MIN..MAX_COLOR, and yellow never above
+ * red: the one just typed (`keep`) stays, the other moves to it. */
+export function clampColors(c: ThermalColors, keep: keyof ThermalColors): ThermalColors {
+  const one = (n: number) => Math.min(MAX_COLOR, Math.max(MIN_COLOR, Math.round(n)));
+  const warm = one(c.warm);
+  const hot = one(c.hot);
+  if (warm <= hot) return { warm, hot };
+  return keep === "warm" ? { warm, hot: warm } : { warm: hot, hot };
+}
 /** One step, full speed from 70°C: what the fans did before steps (thermal.rs default_steps). */
 export const DEFAULT_STEPS: FanStep[] = [{ celsius: 70, percent: 100 }];
 /** The speeds a step can have, % of the maximum (fan_control.rs LEVELS). */
@@ -233,21 +268,34 @@ function fanPercent(s: ThermalStatus | null): number | null {
   return s?.fans?.percent ?? null;
 }
 
-export function thermalLevel(s: ThermalStatus): "" | "warm" | "hot" {
-  if (s.slowed || fanPercent(s) !== null) return "hot";
-  const active = [s.limit, s.fanSteps[0]?.celsius ?? 0].filter((n) => n > 0);
-  const limit = active.length ? Math.min(...active) : DEFAULT_LIMIT;
-  if (s.celsius !== null && s.celsius >= limit) return "hot";
-  if (s.celsius !== null && s.celsius >= limit - WARM_MARGIN) return "warm";
+/** The chip's colour. `colors`: chosen in Options, and then only the temperature counts;
+ * null: desk's own, red also while it slows or drives the fans. Red after an emergency stop. */
+export function thermalLevel(s: ThermalStatus, colors: ThermalColors | null = null): "" | "warm" | "hot" {
+  if (s.halted) return "hot";
+  if (!colors && (s.slowed || fanPercent(s) !== null)) return "hot";
+  const { warm, hot } = colors ?? autoColors([s.limit, s.fanSteps[0]?.celsius ?? 0]);
+  if (s.celsius !== null && s.celsius >= hot) return "hot";
+  if (s.celsius !== null && s.celsius >= warm) return "warm";
   return "";
 }
 
 export function thermalTitle(s: ThermalStatus): string {
   const c = s.celsius === null ? "?" : String(s.celsius);
-  if (!s.limit && !s.fanSteps.length) return t("thermal.offTitle", { c });
-  const lines = [slowTitle(s, c)];
-  if (s.fanSteps.length) lines.push(...fanLines(s));
+  const lines =
+    !s.limit && !s.fanSteps.length && !s.emergency
+      ? [t("thermal.offTitle", { c })]
+      : [slowTitle(s, c), ...(s.fanSteps.length ? fanLines(s) : [])];
+  lines.push(...haltLines(s), t("thermal.clickHint"));
   return lines.join("\n");
+}
+
+/** The emergency stop: from where, or what it froze and when the work can resume. */
+function haltLines(s: ThermalStatus): string[] {
+  if (!s.emergency) return [];
+  if (!s.halted) return [t("thermal.emergencyReady", { limit: s.emergency })];
+  const lines = [tn("thermal.haltedTitle", s.frozen, { limit: s.emergency, resume: s.emergency - RESUME_MARGIN })];
+  if (s.jobs) lines.push(tn("thermal.jobsLeft", s.jobs));
+  return lines;
 }
 
 function slowTitle(s: ThermalStatus, c: string): string {
@@ -285,6 +333,9 @@ function fanLines(s: ThermalStatus): string[] {
 /** What changed between two readings, as one toast (or none). */
 export function thermalToast(prev: ThermalStatus | null, next: ThermalStatus): string | null {
   const c = next.celsius ?? "?";
+  // The emergency stop comes before everything else that changed with it.
+  if (next.halted && !prev?.halted) return tn("thermal.halted", next.frozen, { c, limit: next.emergency });
+  if (prev?.halted && !next.halted) return t("thermal.resumed");
   const slowOn = slowing(next) && !slowing(prev);
   // Turned off in Options is not "cooled down".
   const slowOff = slowing(prev) && !next.slowed && next.limit > 0;
@@ -305,13 +356,18 @@ export function thermalToast(prev: ThermalStatus | null, next: ThermalStatus): s
   return null;
 }
 
-/** The chip; nothing on a computer without a readable sensor that is not slowing. */
-export function thermalHtml(s: ThermalStatus | null): string {
+/** The chip, and after an emergency stop the button that resumes the work; nothing on a
+ * computer without a readable sensor where desk does nothing. `colors`: from Options. */
+export function thermalHtml(s: ThermalStatus | null, colors: ThermalColors | null = null): string {
   const percent = fanPercent(s);
-  if (!s || (s.celsius === null && !s.slowed && percent === null)) return "";
-  const text = `${s.celsius === null ? "🌡" : `${s.celsius}°`}${percent !== null ? ` ≋ ${percent}%` : ""}${slowing(s) ? " ↓" : ""}`;
-  const cls = ["top-btn", "thermal", thermalLevel(s)].filter(Boolean).join(" ");
-  return `<button class="${cls}" data-top="thermal" data-thermal title="${escapeHtml(thermalTitle(s))}">${text}</button>`;
+  if (!s || (s.celsius === null && !s.slowed && percent === null && !s.halted)) return "";
+  const text = `${s.celsius === null ? "🌡" : `${s.celsius}°`}${percent !== null ? ` ≋ ${percent}%` : ""}${slowing(s) ? " ↓" : ""}${s.halted ? " ⏸" : ""}`;
+  const cls = ["top-btn", "thermal", thermalLevel(s, colors), s.halted ? "halted" : ""].filter(Boolean).join(" ");
+  const chip = `<button class="${cls}" data-top="thermal" title="${escapeHtml(thermalTitle(s))}">${text}</button>`;
+  const resume = s.halted
+    ? `<button class="top-btn thermal-resume" data-top="thermal-resume" title="${escapeHtml(t("thermal.resumeTitle", { resume: s.emergency - RESUME_MARGIN }))}">${t("thermal.resume")}</button>`
+    : "";
+  return `<span class="thermal-box" data-thermal>${chip}${resume}</span>`;
 }
 
 /** Same as tile.ts's (not imported: that pulls the terminal into tests). */

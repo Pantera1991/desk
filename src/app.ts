@@ -50,7 +50,16 @@ import { setPromptAiOn, type PromptAiStatus } from "./prompt-pill";
 import { setSaved, syncTile } from "./saved";
 import { usageHtml } from "./usage";
 import { UsagePopover } from "./usage-popover";
-import { DEFAULT_FAN_MARGIN, DEFAULT_FAN_WAIT, DEFAULT_LIMIT, DEFAULT_STEPS, thermalHtml, thermalToast } from "./thermal";
+import { CpuPopover } from "./cpu-popover";
+import {
+  DEFAULT_EMERGENCY,
+  DEFAULT_FAN_MARGIN,
+  DEFAULT_FAN_WAIT,
+  DEFAULT_LIMIT,
+  DEFAULT_STEPS,
+  thermalHtml,
+  thermalToast,
+} from "./thermal";
 import { browserHtml, coffeeHtml } from "./topbar";
 import { accountById, accountColor, accountFor, hasAccounts } from "./accounts";
 
@@ -131,6 +140,8 @@ export class App {
   private settings: Settings;
   /** Details of a usage chip (usage-popover.ts), outside .top: renderChrome rewrites the bar. */
   private usagePopover: UsagePopover;
+  /** The temperature chip's panel (cpu-popover.ts). */
+  private cpuPopover: CpuPopover;
 
   constructor(root: HTMLElement) {
     document.documentElement.dataset.platform = PLATFORM; // CSS: room for the macOS traffic lights
@@ -159,6 +170,20 @@ export class App {
         if (!a) return escapeHtml(t("usage.title", { agent: u.agent }));
         return `<i class="acct" style="background:${accountColor(this.layout, a.id)}"></i>${escapeHtml(t("usage.title", { agent: a.name }))}`;
       },
+    });
+    this.cpuPopover = new CpuPopover(root, {
+      status: () => this.thermal,
+      colors: () => this.layout.thermalColors,
+      hidden: () => this.layout.cpuHidden,
+      details: (processes) => api.cpuDetails(processes),
+      focus: (key) => {
+        if (this.settings.isOpen) this.settings.close();
+        void this.openTile(key);
+      },
+      options: () => {
+        if (!this.settings.isOpen) void this.settings.toggle("power");
+      },
+      resume: () => void this.resumeWork(),
     });
     // Opening, closing or resizing the panel changes the grid's width: lay out again.
     this.rail = root.querySelector(".rail")!;
@@ -281,6 +306,13 @@ export class App {
       setThermal: (change) => {
         Object.assign(this.layout, change);
         this.save();
+        // The colours are the chip's own: at once.
+        if ("thermalColors" in change) this.paintThermal();
+      },
+      setCpuHidden: (hidden) => {
+        this.layout.cpuHidden = hidden;
+        this.save();
+        this.cpuPopover.refresh();
       },
       fans: () => this.fanInfo,
       thermal: () => this.thermal,
@@ -362,7 +394,8 @@ export class App {
       if (a === "restore") void this.restoreSleep();
       const t = (e.target as HTMLElement).closest<HTMLElement>("[data-top]")?.dataset.top;
       if (t === "browser") this.side.browse();
-      if (t === "thermal") void this.settings.toggle("power");
+      if (t === "thermal") this.cpuPopover.toggle();
+      if (t === "thermal-resume") void this.resumeWork();
       if (t === "update") void this.installUpdate();
       if (t === "leave") void api.dropdownLeave();
       if (t === "quit") void this.quit();
@@ -425,6 +458,10 @@ export class App {
       fanSteps: boot.layout.fanSteps?.length ? boot.layout.fanSteps : DEFAULT_STEPS,
       fanMargin: boot.layout.fanMargin ?? DEFAULT_FAN_MARGIN,
       fanWait: boot.layout.fanWait ?? DEFAULT_FAN_WAIT,
+      emergencyOn: boot.layout.emergencyOn ?? false,
+      emergencyAt: boot.layout.emergencyAt ?? DEFAULT_EMERGENCY,
+      thermalColors: boot.layout.thermalColors ?? null,
+      cpuHidden: boot.layout.cpuHidden ?? [],
       usageLayout: boot.layout.usageLayout === "all" ? "all" : "tabs",
       usageShare: boot.layout.usageShare === "transcripts" ? "transcripts" : "cost",
       language,
@@ -1694,13 +1731,15 @@ export class App {
     }<span class="spacer"${drag}></span>${this.updateHtml()}${usageHtml(this.usage, Date.now(), (id) => {
       const a = this.layout.claudeAccounts.find((x) => x.id === id);
       return a ? { name: a.name, color: accountColor(this.layout, a.id) } : null;
-    })}${thermalHtml(this.thermal)}${browserHtml(keysIn("⌘W"))}${coffeeHtml(this.coffee, PLATFORM)}${this.quitHtml()}`;
+    })}${thermalHtml(this.thermal, this.layout.thermalColors)}${browserHtml(keysIn("⌘W"))}${coffeeHtml(this.coffee, PLATFORM)}${this.quitHtml()}`;
     this.footer.innerHTML =
       `<span class="here" hidden></span><span class="hints">${hints()
         .map(([k, label]) => `<span><kbd>${k}</kbd> ${escapeHtml(label)}</span>`)
         .join("")}</span><span class="counts"><b>${this.tiles.size}</b> sessions · <span class="c-working">${count("working")} working</span> · <span class="c-waiting">${waiting} waiting</span> · ${count("idle")} idle</span>${this.pinHtml()}`;
     this.renderHere();
     this.usagePopover.refresh();
+    // The bar was drawn anew: the panel finds its chip again (or closes).
+    this.cpuPopover.refresh();
   }
 
   /** The active session at the start of the bottom bar, in its project's color. */
@@ -1811,13 +1850,30 @@ export class App {
   private onThermal(s: ThermalStatus): void {
     const prev = this.thermal;
     this.thermal = s;
-    // Only the chip: the whole bar is not redrawn every 5 s.
-    const chip = this.top.querySelector("[data-thermal]");
-    const html = thermalHtml(s);
-    if (chip) chip.outerHTML = html;
-    else if (html) this.renderChrome();
+    this.paintThermal();
     const msg = thermalToast(prev, s);
-    if (msg) toast(msg);
+    if (!msg) return;
+    toast(msg);
+    // An emergency stop matters even with desk out of sight.
+    if (s.halted && !prev?.halted) sendNotification({ title: "desk", body: msg });
+  }
+
+  /** Only the chip (and its resume button): the whole bar is not redrawn every 5 s. Its panel follows. */
+  private paintThermal(): void {
+    const box = this.top.querySelector("[data-thermal]");
+    const html = thermalHtml(this.thermal, this.layout.thermalColors);
+    if (box) box.outerHTML = html;
+    else if (html) this.renderChrome();
+    this.cpuPopover.refresh();
+  }
+
+  /** The resume button after an emergency stop; Rust refuses while the CPU is still too hot. */
+  private async resumeWork(): Promise<void> {
+    try {
+      this.onThermal(await api.thermalResume());
+    } catch (err) {
+      toast(String(err));
+    }
   }
 
   // ---- coffee ------------------------------------------------------------

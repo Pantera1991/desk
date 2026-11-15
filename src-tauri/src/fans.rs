@@ -331,14 +331,14 @@ impl Fans {
         self.last_attempt = Some(now);
         match (self.ops.consent)() {
             Consent::Missing => {
-                self.problem = Some(tr!("brak zgody (Opcje → Zasilanie)", "no permission (Options → Power)").into());
+                self.problem = Some(tr!("brak zgody (Opcje → Temperatura i kawa)", "no permission (Options → Heat and coffee)").into());
                 return;
             }
             Consent::Outdated => {
                 self.problem = Some(
                     tr!(
-                        "zgoda z poprzedniej wersji desk (Opcje → Zasilanie)",
-                        "permission from an older desk (Options → Power)"
+                        "zgoda z poprzedniej wersji desk (Opcje → Temperatura i kawa)",
+                        "permission from an older desk (Options → Heat and coffee)"
                     )
                     .into(),
                 );

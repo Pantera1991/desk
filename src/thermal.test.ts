@@ -3,6 +3,9 @@ import type { FanStatus, ThermalStatus } from "./api";
 import { setLanguage, t } from "./i18n";
 import {
   addStep,
+  autoColors,
+  clampColors,
+  clampEmergency,
   clampFanMargin,
   clampLimit,
   FAN_WAITS,
@@ -27,6 +30,10 @@ const at = (celsius: number | null, more: Partial<ThermalStatus> = {}): ThermalS
   fanStep: null,
   fanMargin: 7,
   fans: null,
+  emergency: 0,
+  halted: false,
+  frozen: 0,
+  jobs: 0,
   ...more,
 });
 
@@ -302,5 +309,83 @@ describe("modes in Options", () => {
     ]);
     expect(why(null).filter(([, w]) => w === t("fans.unknown")).length).toBe(2);
     expect(why({ unsupported: null, consent: "installed", maxRpm: 6800 }).every(([, w]) => w === null)).toBe(true);
+  });
+});
+
+describe("chip colours", () => {
+  beforeEach(() => setLanguage("pl"));
+
+  it("desk's own: red from the lowest limit it acts at, yellow 10°C before", () => {
+    expect(autoColors([75, 0])).toEqual({ warm: 65, hot: 75 });
+    expect(autoColors([85, 70])).toEqual({ warm: 60, hot: 70 });
+    expect(autoColors([0, 0])).toEqual({ warm: 65, hot: 75 });
+  });
+
+  it("chosen in Options: only the temperature counts", () => {
+    const colors = { warm: 80, hot: 90 };
+    expect(thermalLevel(at(79), colors)).toBe("");
+    expect(thermalLevel(at(80), colors)).toBe("warm");
+    expect(thermalLevel(at(90), colors)).toBe("hot");
+    // Slowing or the fans no longer turn it red below the chosen range.
+    expect(thermalLevel(at(78, { slowed: true, processes: 3 }), colors)).toBe("");
+    expect(thermalLevel(at(78, { fanSteps: ONE, fanStep: 0, fans: forced }), colors)).toBe("");
+    expect(thermalHtml(at(85), colors)).toContain('class="top-btn thermal warm"');
+    // Equal limits: no yellow at all.
+    expect(thermalLevel(at(69), { warm: 70, hot: 70 })).toBe("");
+    expect(thermalLevel(at(70), { warm: 70, hot: 70 })).toBe("hot");
+  });
+
+  it("typed colours stay whole, within range, and yellow never above red", () => {
+    expect(clampColors({ warm: 64.6, hot: 300 }, "hot")).toEqual({ warm: 65, hot: 110 });
+    expect(clampColors({ warm: 10, hot: 50 }, "warm")).toEqual({ warm: 30, hot: 50 });
+    // The one just typed stays, the other follows it.
+    expect(clampColors({ warm: 90, hot: 80 }, "warm")).toEqual({ warm: 90, hot: 90 });
+    expect(clampColors({ warm: 90, hot: 80 }, "hot")).toEqual({ warm: 80, hot: 80 });
+  });
+});
+
+describe("emergency stop", () => {
+  beforeEach(() => setLanguage("pl"));
+  const halted = at(97, { emergency: 95, halted: true, frozen: 12 });
+
+  it("limits typed in Options stay sensible", () => {
+    expect([0, 59.4, 60, 95, 110, 300, NaN].map(clampEmergency)).toEqual([60, 60, 60, 95, 110, 110, 95]);
+  });
+
+  it("the chip pauses, turns red and gets a resume button", () => {
+    const html = thermalHtml(halted, { warm: 100, hot: 105 });
+    expect(html).toContain(">97° ⏸</button>");
+    expect(html).toContain('class="top-btn thermal hot halted"');
+    expect(html).toContain('data-top="thermal-resume"');
+    expect(html).toContain("▶ Wznów");
+    expect(html).toContain("90°C");
+    // Not stopped: no button.
+    expect(thermalHtml(at(97, { emergency: 95 }))).not.toContain("thermal-resume");
+    // Even without a sensor the stop shows.
+    expect(thermalHtml(at(null, { emergency: 95, halted: true }))).toContain(">🌡 ⏸</button>");
+  });
+
+  it("the title says where it stops, what it froze and what still runs", () => {
+    expect(thermalTitle(at(60, { emergency: 95 }))).toContain("Od 95°C desk awaryjnie zatrzyma");
+    const title = thermalTitle({ ...halted, jobs: 2 });
+    expect(title).toContain("stoi 12 procesów");
+    expect(title).toContain("od 90°C");
+    expect(title).toContain("2 programy wpisane w powłoce działają dalej");
+    // Mode off but the stop on: not "desk does nothing".
+    expect(thermalTitle(at(60, { limit: 0, emergency: 95 }))).not.toContain("nic nie robi");
+    expect(thermalTitle(at(60))).not.toContain("awaryjnie");
+  });
+
+  it("every title says what a click does", () => {
+    for (const s of [at(60), at(60, { limit: 0 }), halted]) expect(thermalTitle(s)).toContain(t("thermal.clickHint"));
+  });
+
+  it("a toast when it stops, before anything else that changed, and when it resumes", () => {
+    const before = at(94, { emergency: 95, slowed: true, processes: 3 });
+    expect(thermalToast(before, { ...halted, slowed: true, processes: 3 })).toBe(
+      "Procesor ma 97°C: desk awaryjnie zatrzymał pracę w kartach (12 procesów). Wznów przyciskiem ▶ w górnym pasku.",
+    );
+    expect(thermalToast(halted, halted)).toBeNull();
+    expect(thermalToast(halted, at(88, { emergency: 95 }))).toBe(t("thermal.resumed"));
   });
 });

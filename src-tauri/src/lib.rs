@@ -6,6 +6,8 @@ pub mod admin;
 pub mod agents;
 pub mod backend;
 pub mod browser;
+pub mod busiest;
+pub mod cpu;
 pub mod claude_projects;
 pub mod coffee;
 pub mod conversations;
@@ -585,6 +587,7 @@ fn save_layout(app: State<App>, guard: State<thermal::Guard>, layout: layout::La
         thermal::normalize_steps(layout.fan_steps.clone()),
         thermal::StepDown::new(layout.fan_margin, layout.fan_wait),
     );
+    guard.set_emergency(thermal::emergency_limit(layout.emergency_on, layout.emergency_at));
     if app.tmux_menu.swap(layout.tmux_menu, Ordering::Relaxed) != layout.tmux_menu {
         app.sessions.reload_config(layout.tmux_menu);
     }
@@ -743,6 +746,29 @@ async fn fans_uninstall(guard: State<'_, thermal::Guard>) -> Result<fans::Info, 
 #[tauri::command]
 fn thermal_status(guard: State<thermal::Guard>) -> thermal::Status {
     guard.status()
+}
+
+/// The top bar's "resume" after an emergency stop: refused, with the reason,
+/// until the CPU has cooled down (thermal::RESUME_MARGIN).
+#[tauri::command]
+fn thermal_resume(guard: State<thermal::Guard>) -> Result<thermal::Status, String> {
+    guard.resume().map_err(|avg| {
+        let (c, at) = (avg.round(), guard.status().emergency as f32 - thermal::RESUME_MARGIN);
+        tr!(
+            format!("Procesor ma jeszcze {c}°C: karty wznowisz od {at}°C (albo wyłącz awaryjne zatrzymanie w Opcjach)."),
+            format!("The CPU is still at {c}°C: the tiles can resume from {at}°C (or turn the emergency stop off in Options).")
+        )
+    })
+}
+
+/// The temperature chip's panel, every 2 s while it is open (cpu.rs): CPU
+/// use and its history, the load average, and with `processes` the top
+/// processes and the busiest session (the first such call measures over
+/// 0.4 s). Without: the panel hides them, so no process is read.
+#[tauri::command(async)]
+fn cpu_details(app: State<App>, monitor: State<cpu::Monitor>, processes: bool) -> cpu::Details {
+    let roots = processes.then(|| app.sessions.roots());
+    monitor.details(roots.as_deref())
 }
 
 #[tauri::command]
@@ -910,10 +936,14 @@ pub fn run() {
                 saved.thermal_limit,
                 saved.fan_steps.clone(),
                 thermal::StepDown::new(saved.fan_margin, saved.fan_wait),
+                thermal::emergency_limit(saved.emergency_on, saved.emergency_at),
                 &support,
             ));
+            app.manage(cpu::Monitor::default());
             let handle = app.handle().clone();
             thermal::spawn(move |celsius, pressure| {
+                // The panel's history: one point with each reading.
+                handle.state::<cpu::Monitor>().tick();
                 let roots = || handle.state::<App>().sessions.pids();
                 if let Some(s) = handle.state::<thermal::Guard>().tick(celsius, pressure, roots) {
                     let _ = handle.emit("thermal", s);
@@ -954,6 +984,8 @@ pub fn run() {
             list_projects,
             list_sessions,
             thermal_status,
+            thermal_resume,
+            cpu_details,
             fans_info,
             fans_install,
             fans_uninstall,

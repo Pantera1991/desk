@@ -39,6 +39,8 @@
     "allow-list-projects",
     "allow-list-sessions",
     "allow-thermal-status",
+    "allow-thermal-resume",
+    "allow-cpu-details",
     "allow-fans-info",
     "allow-fans-install",
     "allow-fans-uninstall",
