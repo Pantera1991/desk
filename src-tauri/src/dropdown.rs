@@ -375,6 +375,20 @@ fn float(app: &AppHandle, window: &Window, on: bool) {
     let _ = app.emit("dropdown", on);
 }
 
+/// The lock let go of the screen (lock.rs). Its full screen took the title
+/// bar away and the unlock gave it back with new buttons: the traffic lights
+/// over the docked top bar, and a window that drags. Docked, it gets its look
+/// back.
+pub fn unlocked(app: &AppHandle) {
+    if !app.state::<Dropdown>().docked() {
+        return;
+    }
+    #[cfg(target_os = "macos")]
+    if let Some(window) = crate::main_window(app) {
+        dropdown_window(&window, true);
+    }
+}
+
 /// No traffic lights while docked (like iTerm's hotkey window), free to slide
 /// above the screen's top edge, and allowed on a Space with an app in full
 /// screen.
@@ -386,7 +400,11 @@ fn dropdown_window(window: &Window, on: bool) {
     };
     let ptr = ptr as usize;
     unconstrained::set(on.then_some(ptr));
-    let _ = window.run_on_main_thread(move || {
+    // Behind any title bar change tao queued on GCD's main queue: leaving the
+    // lock's full screen puts the title bar back that way, with new buttons
+    // that would show over the top bar.
+    let main = dispatch2::DispatchQueue::main();
+    let _ = window.run_on_main_thread(move || main.exec_async(move || {
         // SAFETY: the NSWindow of desk's main window, used on the main thread.
         let ns = unsafe { &*(ptr as *const NSWindow) };
         let mut behavior = ns.collectionBehavior();
@@ -404,7 +422,7 @@ fn dropdown_window(window: &Window, on: bool) {
                 b.setHidden(on);
             }
         }
-    });
+    }));
 }
 
 /// macOS keeps a window with a title bar below the menu bar, even when it is

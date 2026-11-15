@@ -59,6 +59,8 @@ windows-future = "0.3"
 # setpriority(PRIO_DARWIN_BG) for sessions slowed when hot (thermal.rs).
 libc = "0.2"
 block2 = "0.6"
+# The main queue, where tao changes the window's title bar (dropdown.rs).
+dispatch2 = "0.3"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSRunningApplication", "NSWindow", "NSGraphics", "NSEvent", "NSView", "NSControl", "NSButton", "NSPasteboard"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSProcessInfo", "NSString", "NSError", "NSGeometry", "NSArray", "NSURL"] }

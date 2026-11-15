@@ -889,6 +889,7 @@ dependencies = [
  "base64 0.21.7",
  "block2",
  "dirs",
+ "dispatch2",
  "libc",
  "libloading",
  "notify",
