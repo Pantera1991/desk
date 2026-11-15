@@ -8,6 +8,7 @@ import {
   clampEmergency,
   clampFanMargin,
   clampLimit,
+  emergencyLines,
   FAN_WAITS,
   fanChart,
   modeOptions,
@@ -34,6 +35,10 @@ const at = (celsius: number | null, more: Partial<ThermalStatus> = {}): ThermalS
   halted: false,
   frozen: 0,
   jobs: 0,
+  hottest: null,
+  cores: null,
+  haltedBy: null,
+  sees: "cpu",
   ...more,
 });
 
@@ -359,7 +364,7 @@ describe("emergency stop", () => {
   const halted = at(97, { emergency: 95, halted: true, frozen: 12 });
 
   it("limits typed in Options stay sensible", () => {
-    expect([0, 59.4, 60, 95, 110, 300, NaN].map(clampEmergency)).toEqual([60, 60, 60, 95, 110, 110, 95]);
+    expect([0, 59.4, 60, 95, 110, 300, NaN].map(clampEmergency)).toEqual([60, 60, 60, 95, 110, 110, 90]);
   });
 
   it("the chip pauses, turns red and gets a resume button", () => {
@@ -400,5 +405,34 @@ describe("emergency stop", () => {
     // The stop is an error that stays; resuming is good news.
     expect(thermalToast(before, { ...halted, slowed: true, processes: 3 })?.kind).toBe("error");
     expect(thermalToast(halted, at(88, { emergency: 95 }))?.kind).toBe("ok");
+  });
+  it("the title shows the cores and desk's sensor, or the CPU alone", () => {
+    expect(thermalTitle(at(54, { emergency: 90, hottest: 68, cores: 68, sees: "cores" }))).toContain(
+      "Awaryjne zatrzymanie od 90°C: rdzenie 68°C, czujnik desk 54°C.",
+    );
+    expect(thermalTitle(at(54, { emergency: 90, hottest: 54, sees: "cpu" }))).toContain("Awaryjne zatrzymanie od 90°C: procesor 54°C.");
+    expect(thermalTitle(at(54, { hottest: null, cores: null }))).not.toContain("Awaryjne");
+  });
+
+  it("the toast names the hottest reading, or macOS", () => {
+    const hot = at(56, { emergency: 90, halted: true, frozen: 12, hottest: 91, cores: 91, haltedBy: "temperature" });
+    expect(thermalToast(at(56, { emergency: 90 }), hot)?.text).toBe(
+      "Procesor ma 91°C: desk awaryjnie zatrzymał pracę w kartach (12 procesów). Wznów przyciskiem ▶ w górnym pasku.",
+    );
+    const sys = { ...hot, haltedBy: "system" as const };
+    expect(thermalToast(at(56, { emergency: 90 }), sys)?.text).toBe(
+      "macOS zgłosił krytyczną temperaturę: desk awaryjnie zatrzymał pracę w kartach (12 procesów). Wznów przyciskiem ▶ w górnym pasku.",
+    );
+    expect(thermalToast(at(56, { emergency: 90 }), sys)?.kind).toBe("error");
+    expect(thermalTitle(sys)).toContain("Wywołał je macOS");
+  });
+
+  it("Options says what the stop watches, and warns when it sees less", () => {
+    expect(emergencyLines("cores")).toEqual(["settings.emergencyWatchesCores"]);
+    expect(emergencyLines("sensor")).toEqual(["settings.emergencySensorOnly"]);
+    expect(emergencyLines("system")).toEqual(["settings.emergencySystemOnly"]);
+    expect(emergencyLines("nothing")).toEqual(["settings.emergencyNothing"]);
+    expect(emergencyLines("cpu")).toEqual([]);
+    expect(emergencyLines(null)).toEqual([]);
   });
 });

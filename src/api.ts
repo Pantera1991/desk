@@ -266,7 +266,20 @@ export interface ThermalStatus {
   frozen: number;
   /** Programs typed at a shell prompt left running (freezing would hand the terminal to the shell); what they started is frozen. */
   jobs: number;
+  /** What the emergency stop compares with its limit (the hottest of celsius and cores), °C; null while it is off. */
+  hottest: number | null;
+  /** The CPU core sensors alone (macOS, as in Stats), °C; null while the stop is off or where desk has none. */
+  cores: number | null;
+  /** Why the stop tripped; null while it has not. */
+  haltedBy: "temperature" | "system" | null;
+  /** What the emergency stop watches here (thermal.rs Sees). */
+  sees: StopSees;
 }
+
+/** What the emergency stop watches on this computer: the cores (and desk's sensor and macOS), desk's
+ * sensor and macOS (a chip desk does not know), only macOS (an Intel Mac), the CPU sensor (Linux,
+ * Windows), or nothing. */
+export type StopSees = "cores" | "sensor" | "system" | "cpu" | "nothing";
 
 /** The session working the CPU hardest now (busiest.rs). */
 export interface Busiest {

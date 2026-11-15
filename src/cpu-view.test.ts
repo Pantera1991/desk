@@ -19,6 +19,10 @@ const status = (more: Partial<ThermalStatus> = {}): ThermalStatus => ({
   halted: false,
   frozen: 0,
   jobs: 0,
+  hottest: null,
+  cores: null,
+  haltedBy: null,
+  sees: "cpu",
   ...more,
 });
 
