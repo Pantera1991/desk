@@ -34,6 +34,7 @@ import {
   autoColors,
   clampColors,
   clampEmergency,
+  emergencyLines,
   clampFanMargin,
   clampLimit,
   DEFAULT_STEPS,
@@ -262,9 +263,13 @@ export class Settings {
   /** The emergency stop: on or off, and from where. */
   private emergencyHtml(layout: Layout): string {
     const on = layout.emergencyOn;
+    // While on: what it watches here, or a warning when it sees less (thermal.ts emergencyLines).
+    const watches = (on ? emergencyLines(this.ctx.thermal()?.sees ?? null) : [])
+      .map((k) => `<p class="${k === "settings.emergencyWatchesCores" ? "dim small" : "error"}" data-row>${t(k)}</p>`)
+      .join("");
     return `<label class="line" data-row><input type="checkbox" data-k="emergency-on" ${on ? "checked" : ""}/> ${t("settings.emergencyOn")}</label>
       <label class="line" data-row>${t("settings.emergencyAt")} <input type="number" min="${MIN_EMERGENCY}" max="${MAX_EMERGENCY}" step="1" value="${layout.emergencyAt}" data-k="emergency-at" ${on ? "" : "disabled"}/> °C</label>
-      <p class="dim small" data-row>${t("settings.emergencyAbout", { margin: RESUME_MARGIN })}</p>`;
+      ${watches}<p class="dim small" data-row>${t("settings.emergencyAbout", { margin: RESUME_MARGIN })}</p>`;
   }
 
   /** The fan steps: a row per step, add, presets, the reason a table is not saved, and the chart. */

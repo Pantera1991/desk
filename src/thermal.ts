@@ -3,7 +3,7 @@
 // resume button after an emergency stop). The readings, the slowing, the fans
 // and the stop are Rust's (src-tauri/src/thermal.rs, fans.rs); clicking the
 // chip opens the busiest session (busiest.rs).
-import type { FanInfo, FanStep, ThermalColors, ThermalMode, ThermalStatus } from "./api";
+import type { FanInfo, FanStep, StopSees, ThermalColors, ThermalMode, ThermalStatus } from "./api";
 import { t, tn, type MessageKey } from "./i18n";
 import type { NoticeKind } from "./notices";
 
@@ -32,7 +32,7 @@ const WARM_MARGIN = 10;
 export const MIN_COLOR = 30;
 export const MAX_COLOR = 110;
 /** The emergency stop's limit (thermal.rs DEFAULT_EMERGENCY...), °C. */
-export const DEFAULT_EMERGENCY = 95;
+export const DEFAULT_EMERGENCY = 90;
 export const MIN_EMERGENCY = 60;
 export const MAX_EMERGENCY = 110;
 /** Resuming waits until the CPU is this far below it (thermal.rs RESUME_MARGIN). */
@@ -293,10 +293,36 @@ export function thermalTitle(s: ThermalStatus): string {
 /** The emergency stop: from where, or what it froze and when the work can resume. */
 function haltLines(s: ThermalStatus): string[] {
   if (!s.emergency) return [];
-  if (!s.halted) return [t("thermal.emergencyReady", { limit: s.emergency })];
+  // What the stop compares with its limit now; while halted, the number Resume waits on.
+  const now =
+    s.cores !== null && s.celsius !== null
+      ? t("thermal.emergencyCores", { limit: s.emergency, cores: s.cores, c: s.celsius })
+      : s.hottest !== null
+        ? t("thermal.emergencyCpu", { limit: s.emergency, c: s.hottest })
+        : null;
+  if (!s.halted) return [now ?? t("thermal.emergencyReady", { limit: s.emergency })];
   const lines = [tn("thermal.haltedTitle", s.frozen, { limit: s.emergency, resume: s.emergency - RESUME_MARGIN })];
+  if (now) lines.push(now);
+  if (s.haltedBy === "system") lines.push(t("thermal.haltedSystem"));
   if (s.jobs) lines.push(tn("thermal.jobsLeft", s.jobs));
   return lines;
+}
+
+/** Options' lines on what the emergency stop watches here: what it watches when that is the cores,
+ * a warning when it sees less; nothing for a CPU sensor (Linux, Windows) or before the first reading. */
+export function emergencyLines(sees: StopSees | null): MessageKey[] {
+  switch (sees) {
+    case "cores":
+      return ["settings.emergencyWatchesCores"];
+    case "sensor":
+      return ["settings.emergencySensorOnly"];
+    case "system":
+      return ["settings.emergencySystemOnly"];
+    case "nothing":
+      return ["settings.emergencyNothing"];
+    default:
+      return [];
+  }
 }
 
 function slowTitle(s: ThermalStatus, c: string): string {
@@ -337,7 +363,13 @@ export function thermalToast(prev: ThermalStatus | null, next: ThermalStatus): {
   const warn = (text: string) => ({ text, kind: "warn" as const });
   const ok = (text: string) => ({ text, kind: "ok" as const });
   // The emergency stop comes before everything else that changed with it.
-  if (next.halted && !prev?.halted) return { text: tn("thermal.halted", next.frozen, { c, limit: next.emergency }), kind: "error" };
+  if (next.halted && !prev?.halted) {
+    const text =
+      next.haltedBy === "system"
+        ? tn("thermal.haltedSystemToast", next.frozen)
+        : tn("thermal.halted", next.frozen, { c: next.hottest ?? c, limit: next.emergency });
+    return { text, kind: "error" };
+  }
   if (prev?.halted && !next.halted) return ok(t("thermal.resumed"));
   const slowOn = slowing(next) && !slowing(prev);
   // Turned off in Options is not "cooled down".
