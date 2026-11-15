@@ -3,7 +3,7 @@
 import { Channel } from "@tauri-apps/api/core";
 import { ClipboardAddon } from "@xterm/addon-clipboard";
 import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { mayWrite } from "./clip";
+import { ClipGate } from "./clip";
 import { t, type MessageKey } from "./i18n";
 import { toast } from "./ui";
 import { FitAddon } from "@xterm/addon-fit";
@@ -114,8 +114,8 @@ export class Tile {
 
   private term: Terminal;
   private fit = new FitAddon();
-  /** Your last real click or key in this tile (clipboard writes: clip.ts). */
-  private lastInput = 0;
+  /** Clipboard writes from programs here, allowed after your click or key (clip.ts). */
+  private clip = new ClipGate();
   private released: (e: MouseEvent) => void = () => undefined;
   private body: HTMLElement;
   private title: HTMLElement;
@@ -218,7 +218,9 @@ export class Tile {
       new ClipboardAddon(undefined, {
         readText: () => "",
         writeText: (_sel, text) => {
-          if (!mayWrite(text, this.lastInput, Date.now())) {
+          const verdict = this.clip.ask(text, Date.now());
+          if (verdict === "repeat") return;
+          if (verdict === "block") {
             if (text) toast(t("tile.clipboardBlocked", { name: this.name }), { kind: "warn" });
             return;
           }
@@ -235,14 +237,14 @@ export class Tile {
       (e) => {
         if (!e.isTrusted) return;
         pressed = true;
-        this.lastInput = Date.now();
+        this.clip.input(Date.now());
       },
       true,
     );
     this.released = (e: MouseEvent) => {
       if (!e.isTrusted || !pressed) return;
       pressed = false;
-      this.lastInput = Date.now();
+      this.clip.input(Date.now());
     };
     window.addEventListener("mouseup", this.released, true);
     // A clicked link opens in desk's panel or outside desk (Brave / Chrome /
@@ -292,7 +294,7 @@ export class Tile {
     });
     this.term.attachCustomKeyEventHandler((e) => {
       if (e.type === "keydown" && e.isTrusted) {
-        this.lastInput = Date.now();
+        this.clip.input(Date.now());
         if (typesText(e)) this.pill.typed();
         // Ctrl+G typed as it is (⌘G on macOS goes through rewritePrompt).
         if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && e.code === "KeyG") this.beginRewrite();
