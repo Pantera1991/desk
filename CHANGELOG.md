@@ -1,5 +1,19 @@
 # Zmiany
 
+## 0.2.5 (2026-11-15)
+
+- **Przewijanie w kafelku Claude już się nie zawiesza.** Po przełączeniu kart (⌘1–9) rozmowa
+  potrafiła sama jechać w górę, a kółko działało tylko w dół, aż do samego dołu. Terminal gubił
+  puszczenie przycisku myszy, a Claude Code myślał, że wciąż ciągniesz zaznaczenie. Teraz desk
+  sam dosyła to puszczenie, więc przewijanie działa w obie strony.
+- **Filtr w panelu „Komunikaty”.** Nad listą są przyciski tematów z liczbą przy każdym (Sesje,
+  Projekty, Temperatura, Kawa, Aktualizacje, Schowek, Inne). Wybrany pokazuje tylko swoje
+  komunikaty, a „Wyczyść widoczne” usuwa tylko je, np. same „Skopiowano do schowka”.
+- **Światła okna nie wracają po odblokowaniu.** W desk wysuniętym przez ⌘` czerwone, żółte
+  i zielone kółko wracało po blokadzie (⌘B) i zasłaniało przycisk „▭ okno”, a okno dawało się
+  przesuwać. Teraz po odblokowaniu wszystko jest jak przed blokadą.
+- **Wersja przy nazwie.** Górny pasek pokazuje obok „desk” numer wersji małą czcionką.
+
 ## 0.2.4 (2026-11-15)
 
 - **Nowa wersja widoczna szybciej i w Opcjach.** desk sprawdza, czy jest nowsza wersja, zaraz po
