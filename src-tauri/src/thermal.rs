@@ -140,6 +140,58 @@ pub struct Status {
     /// Programs typed at a shell prompt left running (`freeze_plan`); what
     /// they started is frozen.
     pub jobs: usize,
+    /// What the emergency stop compares with its limit: the hottest of
+    /// `celsius` and `cores`, °C; None while the stop is off.
+    pub hottest: Option<i32>,
+    /// The CPU core sensors alone (macOS, core_temps), °C; None while the
+    /// stop is off or where desk has none.
+    pub cores: Option<i32>,
+    /// Why the stop tripped; None while it has not.
+    pub halted_by: Option<HaltCause>,
+    /// What the emergency stop watches on this computer.
+    pub sees: Sees,
+}
+
+/// One reading of the sensor thread, every 5 s.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Reading {
+    /// desk's sensor (the chip, slowing, the fans): PMU tdie on macOS, the
+    /// CPU drivers or zones on Linux, the ACPI zones on Windows.
+    pub celsius: Option<f32>,
+    /// The hottest SMC CPU core key for this chip (core_temps); macOS only.
+    pub cores: Option<f32>,
+    /// The system's thermal state is serious or worse (slowing and fans).
+    pub pressure: bool,
+    /// The system's thermal state is critical (the emergency stop).
+    pub critical: bool,
+}
+
+/// What the emergency stop watches on this computer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Sees {
+    /// The CPU cores, desk's sensor and macOS's critical state.
+    Cores,
+    /// desk's sensor and macOS's critical state (a chip core_temps does not know).
+    Sensor,
+    /// Only macOS's critical state (an Intel Mac).
+    System,
+    /// The CPU sensor (Linux, Windows): already the cores.
+    Cpu,
+    /// Nothing: the stop cannot trip here.
+    Nothing,
+}
+
+/// What the stop watches, from what this reading has; `macos`: the system
+/// reports a critical state.
+pub fn sees(r: &Reading, macos: bool) -> Sees {
+    match (macos, r.cores, r.celsius) {
+        (true, Some(_), _) => Sees::Cores,
+        (true, None, Some(_)) => Sees::Sensor,
+        (true, None, None) => Sees::System,
+        (false, _, Some(_)) => Sees::Cpu,
+        (false, _, None) => Sees::Nothing,
+    }
 }
 
 /// What desk does when hot (Options, layout `thermalMode`).
@@ -773,6 +825,10 @@ impl Guard {
                     halted: false,
                     frozen: 0,
                     jobs: 0,
+                    hottest: None,
+                    cores: None,
+                    halted_by: None,
+                    sees: sees(&Reading::default(), cfg!(target_os = "macos")),
                 },
                 policy: Policy::default(),
                 fan_policy: StepPolicy::default(),
@@ -809,6 +865,7 @@ impl Guard {
         g.status.halted = false;
         g.status.frozen = 0;
         g.status.jobs = 0;
+        g.status.halted_by = None;
         Ok(g.status.clone())
     }
 
@@ -834,13 +891,15 @@ impl Guard {
     }
 
     /// One reading: decide, then slow the sessions' processes or give them
-    /// their speed back. `roots`: the processes the sessions run. Returns the
-    /// new status when it changed.
-    pub fn tick(&self, celsius: Option<f32>, pressure: bool, roots: impl FnOnce() -> Vec<u32>) -> Option<Status> {
+    /// their speed back. Slowing and the fans go by desk's sensor, the
+    /// emergency stop by the hottest of it and the cores. `roots`: the
+    /// processes the sessions run. Returns the new status when it changed.
+    pub fn tick(&self, r: Reading, roots: impl FnOnce() -> Vec<u32>) -> Option<Status> {
         let mut g = self.inner.lock().unwrap();
         if g.stopped {
             return None;
         }
+        let Reading { celsius, pressure, .. } = r;
         let (mode, limit, steps, down) = self.config.lock().unwrap().clone();
         let emergency = self.emergency.load(Ordering::Relaxed);
         let limit = mode.slow_limit(limit);
@@ -848,7 +907,10 @@ impl Guard {
         let now = Instant::now();
         let was = g.status.slowed;
         let slow = g.policy.step(celsius, pressure, limit, now);
-        let halt = g.halt.step(celsius, false, emergency);
+        let hot = hottest(r.celsius.into_iter().chain(r.cores));
+        let halt = g.halt.step(hot, r.critical, emergency);
+        // Only while the stop is on does the status show what it watches.
+        let shown = |c: Option<f32>| c.filter(|_| emergency > 0).map(|c| c.round() as i32);
         g.fan_policy.set_down(down);
         let fan_step = g.fan_policy.step(celsius, pressure, &steps, now);
         if g.first {
@@ -871,6 +933,10 @@ impl Guard {
             halted: halt,
             frozen: 0,
             jobs: 0,
+            hottest: shown(hot),
+            cores: shown(hottest(r.cores)),
+            halted_by: g.halt.cause(),
+            sees: sees(&r, cfg!(target_os = "macos")),
         };
         // The sessions and the process table, read once and only when needed.
         let need = slow || was || g.first || halt || !g.frozen.is_empty();
@@ -933,13 +999,18 @@ pub fn processes() -> Vec<Proc> {
     os::processes()
 }
 
-/// Reads every 5 s on its own thread; `tick` gets the reading and the
-/// system's own "too hot".
-pub fn spawn(mut tick: impl FnMut(Option<f32>, bool) + Send + 'static) {
+/// Reads every 5 s on its own thread; `tick` gets desk's sensor, the CPU
+/// cores and the system's own "too hot" and "critical".
+pub fn spawn(mut tick: impl FnMut(Reading) + Send + 'static) {
     std::thread::spawn(move || {
         let mut sensor = os::Sensor::new();
         loop {
-            tick(sensor.read(), os::pressure());
+            tick(Reading {
+                celsius: sensor.read(),
+                cores: sensor.cores(),
+                pressure: os::pressure(),
+                critical: os::critical(),
+            });
             std::thread::sleep(TICK);
         }
     });
@@ -1061,10 +1132,13 @@ mod os {
         unsafe { CStr::from_ptr(buf.as_ptr()) }.to_string_lossy().into_owned()
     }
 
-    /// The CPU die sensors, found once and read every tick.
+    /// The CPU die sensors, found once and read every tick, and the SMC with
+    /// this chip's core keys (core_temps), opened at the first `cores`.
     pub struct Sensor {
         client: CFRef,
         dies: Vec<CFRef>,
+        /// None: not tried yet; Some(None): no SMC or a chip without a list.
+        smc: Option<Option<(crate::smc::IoSmc, &'static [&'static str])>>,
     }
 
     impl Sensor {
@@ -1075,7 +1149,7 @@ mod os {
             unsafe {
                 let client = IOHIDEventSystemClientCreate(null());
                 if client.is_null() {
-                    return Self { client, dies };
+                    return Self { client, dies, smc: None };
                 }
                 // Apple's vendor page (0xff00), usage 5: temperature sensors.
                 let keys = [cf_str(c"PrimaryUsagePage"), cf_str(c"PrimaryUsage")];
@@ -1109,8 +1183,20 @@ mod os {
                     CFRelease(product);
                     CFRelease(services);
                 }
-                Self { client, dies }
+                Self { client, dies, smc: None }
             }
+        }
+
+        /// The hottest of this chip's CPU core keys in the SMC (only read, no
+        /// rights); None on a chip core_temps does not know, an Intel Mac,
+        /// or when the SMC does not open.
+        pub fn cores(&mut self) -> Option<f32> {
+            let smc = self.smc.get_or_insert_with(|| {
+                let keys = crate::core_temps::keys(crate::core_temps::chip(&brand())?);
+                Some((crate::smc::IoSmc::open().ok()?, keys))
+            });
+            let (smc, keys) = smc.as_mut()?;
+            crate::core_temps::hottest_core(smc, keys)
         }
 
         pub fn read(&mut self) -> Option<f32> {
@@ -1143,10 +1229,38 @@ mod os {
         }
     }
 
+    /// "Apple M3 Pro": `machdep.cpu.brand_string`; empty if it does not read.
+    fn brand() -> String {
+        let mut buf = [0u8; 128];
+        let mut len = buf.len();
+        // SAFETY: the buffer and its length are ours; sysctl writes at most `len` bytes.
+        let ok = unsafe {
+            libc::sysctlbyname(
+                c"machdep.cpu.brand_string".as_ptr(),
+                buf.as_mut_ptr().cast(),
+                &mut len,
+                std::ptr::null_mut(),
+                0,
+            )
+        } == 0;
+        if !ok {
+            return String::new();
+        }
+        CStr::from_bytes_until_nul(&buf[..len.min(buf.len())])
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    }
+
     /// The system's thermal state is serious or critical.
     pub fn pressure() -> bool {
         use objc2_foundation::{NSProcessInfo, NSProcessInfoThermalState};
         NSProcessInfo::processInfo().thermalState().0 >= NSProcessInfoThermalState::Serious.0
+    }
+
+    /// The system's thermal state is critical (the emergency stop trips at once).
+    pub fn critical() -> bool {
+        use objc2_foundation::{NSProcessInfo, NSProcessInfoThermalState};
+        NSProcessInfo::processInfo().thermalState().0 >= NSProcessInfoThermalState::Critical.0
     }
 
     pub fn processes() -> Vec<super::Proc> {
@@ -1206,6 +1320,11 @@ mod os {
             Self
         }
 
+        /// No SMC here: desk's sensor already reads the CPU.
+        pub fn cores(&mut self) -> Option<f32> {
+            None
+        }
+
         pub fn read(&mut self) -> Option<f32> {
             let read = |p: std::path::PathBuf| fs::read_to_string(p).ok().map(|s| s.trim().to_string());
             let hwmon: Vec<(String, Vec<i64>)> = fs::read_dir("/sys/class/hwmon")
@@ -1243,6 +1362,11 @@ mod os {
     }
 
     pub fn pressure() -> bool {
+        false
+    }
+
+    /// No critical thermal state to read here.
+    pub fn critical() -> bool {
         false
     }
 
@@ -1354,6 +1478,11 @@ mod os {
             }
         }
 
+        /// No SMC here: desk's sensor already reads the CPU.
+        pub fn cores(&mut self) -> Option<f32> {
+            None
+        }
+
         pub fn read(&mut self) -> Option<f32> {
             let counter = self.counter?;
             // SAFETY: the buffer is sized by PDH's first call and outlives the second.
@@ -1391,6 +1520,11 @@ mod os {
     }
 
     pub fn pressure() -> bool {
+        false
+    }
+
+    /// No critical thermal state to read here.
+    pub fn critical() -> bool {
         false
     }
 
@@ -1784,8 +1918,14 @@ mod tests {
     #[test]
     #[ignore = "reads this computer's sensors"]
     fn reads_this_computer() {
-        let c = os::Sensor::new().read();
-        println!("CPU: {c:?} °C, pressure: {}", os::pressure());
+        let mut sensor = os::Sensor::new();
+        let c = sensor.read();
+        let cores = sensor.cores();
+        println!(
+            "CPU: {c:?} °C, cores: {cores:?} °C, pressure: {}, critical: {}",
+            os::pressure(),
+            os::critical()
+        );
         assert!(c.is_some());
     }
 
@@ -2156,6 +2296,49 @@ mod tests {
     }
 
     #[test]
+    fn the_stop_sees_what_this_computer_has() {
+        let r = |celsius: Option<f32>, cores: Option<f32>| Reading { celsius, cores, ..Default::default() };
+        assert_eq!(sees(&r(Some(54.0), Some(68.0)), true), Sees::Cores);
+        assert_eq!(sees(&r(Some(54.0), None), true), Sees::Sensor);
+        assert_eq!(sees(&r(None, None), true), Sees::System);
+        assert_eq!(sees(&r(Some(54.0), None), false), Sees::Cpu);
+        assert_eq!(sees(&r(None, None), false), Sees::Nothing);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_stop_watches_the_hottest_sensor_and_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let guard = Guard::new(Mode::Off, 75, Vec::new(), StepDown::default(), 90, dir.path());
+        let read = |celsius: f32, cores: Option<f32>| Reading { celsius: Some(celsius), cores, ..Default::default() };
+        let s = guard.tick(read(54.0, Some(68.0)), Vec::new).unwrap();
+        assert_eq!((s.celsius, s.hottest, s.cores), (Some(54), Some(68), Some(68)));
+        // The SMC stops answering: desk's own sensor carries on.
+        let s = guard.tick(read(55.0, None), Vec::new).unwrap();
+        assert_eq!((s.hottest, s.cores), (Some(55), None));
+        // Cores hot, desk's sensor cool: it stops on the average of the hottest.
+        for _ in 0..3 {
+            guard.tick(read(56.0, Some(91.0)), Vec::new);
+        }
+        let s = guard.status();
+        assert!(s.halted && s.halted_by == Some(HaltCause::Temperature), "{s:?}");
+        // Off: nothing of the stop in the status.
+        guard.set_emergency(0);
+        let s = guard.tick(read(56.0, Some(91.0)), Vec::new).unwrap();
+        assert_eq!((s.hottest, s.cores, s.halted, s.halted_by), (None, None, false, None));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_critical_macos_stops_the_guard_until_it_passes() {
+        let dir = tempfile::tempdir().unwrap();
+        let guard = Guard::new(Mode::Off, 75, Vec::new(), StepDown::default(), 90, dir.path());
+        let s = guard.tick(Reading { celsius: Some(50.0), critical: true, ..Default::default() }, Vec::new).unwrap();
+        assert_eq!(s.halted_by, Some(HaltCause::System));
+        assert_eq!(guard.resume().unwrap_err(), Refusal::Critical);
+    }
+
+    #[test]
     fn the_emergency_stop_freezes_everything_an_agent_runs() {
         // A Claude tile as desk starts it: zsh -lc 'claude ...; exec zsh -l',
         // no job control, so all in the pane's process group.
@@ -2248,7 +2431,7 @@ mod tests {
         let stopped = |pid: u32| os::processes().iter().any(|p| p.pid == pid && p.stopped);
         let marker = dir.path().join("halted-pids");
         let guard = Guard::new(Mode::Off, 75, Vec::new(), StepDown::default(), 95, dir.path());
-        let tick = |c: f32| guard.tick(Some(c), false, || vec![root]);
+        let tick = |c: f32| guard.tick(Reading { celsius: Some(c), ..Default::default() }, || vec![root]);
 
         tick(97.0);
         tick(97.0);

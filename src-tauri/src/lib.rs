@@ -949,11 +949,11 @@ pub fn run() {
             ));
             app.manage(cpu::Monitor::default());
             let handle = app.handle().clone();
-            thermal::spawn(move |celsius, pressure| {
+            thermal::spawn(move |reading| {
                 // The panel's history: one point with each reading.
                 handle.state::<cpu::Monitor>().tick();
                 let roots = || handle.state::<App>().sessions.pids();
-                if let Some(s) = handle.state::<thermal::Guard>().tick(celsius, pressure, roots) {
+                if let Some(s) = handle.state::<thermal::Guard>().tick(reading, roots) {
                     let _ = handle.emit("thermal", s);
                 }
             });
