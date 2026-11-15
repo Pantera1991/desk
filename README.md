@@ -285,8 +285,10 @@ a kliknięcie pobiera ją, podmienia aplikację i uruchamia ponownie:
   Code, bez modelu i bez tokenów), używając loginu Claude Code: na macOS z pęku kluczy
   (`Claude Code-credentials`), gdzie indziej z `~/.claude/.credentials.json`. Token idzie tylko do
   `api.anthropic.com`; desk go nie odświeża ani nie zapisuje. Do tego dochodzą odczyty ze status line
-  sesji desk (świeże po każdej turze), a wygrywa najświeższy. Bez loginu zostają same sesje. Twoja
-  własna status line działa dalej: desk ją wywołuje.
+  sesji desk (świeże po każdej turze), a wygrywa najświeższy: sesja liczy się dopiero wtedy, gdy
+  odpowiedziała po ostatniej odpowiedzi Anthropic, więc bezczynna sesja nie trzyma starej liczby,
+  np. po resecie limitu kupionym na claude.ai. Bez loginu zostają same sesje. Twoja własna status
+  line działa dalej: desk ją wywołuje.
 - **Udział sesji z transkryptów** (Opcje → Statystyki AI) desk liczy lokalnie: czyta tokeny
   z `~/.claude/projects` i wycenia je według cennika API z 14.11.2026. Treści rozmów nie zapisuje
   ani nigdzie nie wysyła.
