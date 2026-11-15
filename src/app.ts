@@ -346,7 +346,7 @@ export class App {
           this.fanInfo = await api.fansInstall();
           return this.fanInfo.consent === "installed";
         } catch (err) {
-          toast(t("fans.error", { err: String(err) }), { kind: "error" });
+          toast(t("fans.error", { err: String(err) }), { kind: "error", topic: "thermal" });
           return false;
         }
       },
@@ -354,7 +354,7 @@ export class App {
         try {
           this.fanInfo = await api.fansUninstall();
         } catch (err) {
-          toast(t("fans.error", { err: String(err) }), { kind: "error" });
+          toast(t("fans.error", { err: String(err) }), { kind: "error", topic: "thermal" });
           return;
         }
         // Without the permission the fan modes fall back to what they did besides.
@@ -366,7 +366,7 @@ export class App {
       coffee: () => this.coffee,
       uninstallCoffee: async () => {
         this.coffee = await api.coffeeUninstall().catch((err) => {
-          toast(t("coffee.error", { err: String(err) }), { kind: "error" });
+          toast(t("coffee.error", { err: String(err) }), { kind: "error", topic: "coffee" });
           return this.coffee;
         });
         this.renderChrome();
@@ -455,7 +455,7 @@ export class App {
     this.tmuxMissing = boot.tmuxMissing;
     if (boot.tmuxMissing) {
       const install = PLATFORM === "mac" ? "brew install tmux" : "sudo apt install tmux";
-      toast(t("app.noTmux", { install }), { kind: "warn", ms: 15000 });
+      toast(t("app.noTmux", { install }), { kind: "warn", ms: 15000, topic: "sessions" });
     }
 
     this.layout = {
@@ -549,7 +549,7 @@ export class App {
       this.layout.lanes = L.remove(this.layout.lanes, k);
     });
     this.render();
-    await Promise.all([...this.tiles.values()].map((t) => t.start().catch((err) => toast(`${t.name}: ${err}`, { kind: "error" }))));
+    await Promise.all([...this.tiles.values()].map((t) => t.start().catch((err) => toast(`${t.name}: ${err}`, { kind: "error", topic: "sessions" }))));
     // Tiles named before desk saved conversations save theirs now.
     for (const tile of this.tiles.values()) this.syncSaved(tile);
     this.focusIndex(0);
@@ -615,7 +615,7 @@ export class App {
       this.tiles.set(key, tile);
       return tile;
     } catch (err) {
-      toast(t("app.openFailed", { agent: spec.agent, path: spec.path, err: String(err) }), { kind: "error" });
+      toast(t("app.openFailed", { agent: spec.agent, path: spec.path, err: String(err) }), { kind: "error", topic: "sessions" });
       return null;
     }
   }
@@ -642,7 +642,7 @@ export class App {
     try {
       await tile.start();
     } catch (err) {
-      toast(`${tile.name}: ${err}`, { kind: "error" });
+      toast(`${tile.name}: ${err}`, { kind: "error", topic: "sessions" });
     }
     this.setActive(key, true);
     this.save();
@@ -666,7 +666,7 @@ export class App {
     try {
       branches = await api.gitBranches(path);
     } catch (err) {
-      return toast(`${name}: ${err}`, { kind: "error" });
+      return toast(`${name}: ${err}`, { kind: "error", topic: "projects" });
     }
     const current = tiles[0]?.branch ?? null;
     const choice = (await pickBox(`Branch · ${name}`, branches, { current }))?.value;
@@ -677,9 +677,9 @@ export class App {
     }
     try {
       await api.gitSwitch(path, choice);
-      toast(`${name}: ${choice}`, { kind: "ok" });
+      toast(`${name}: ${choice}`, { kind: "ok", topic: "projects" });
     } catch (err) {
-      toast(`${name}: ${err}`, { kind: "error" });
+      toast(`${name}: ${err}`, { kind: "error", topic: "projects" });
     }
     void this.poll();
   }
@@ -688,7 +688,7 @@ export class App {
   private async runInProject(path: string): Promise<void> {
     const name = path.split(/[\\/]/).filter(Boolean).pop() ?? path;
     const targets = await api.runTargets(path);
-    if (!targets.length) return toast(t("app.nothingToRun", { name }));
+    if (!targets.length) return toast(t("app.nothingToRun", { name }), { topic: "projects" });
     const source = new Map(targets.map((t) => [t.command, t.source]));
     const picked = await pickBox(t("common.runPick", { name }), [...source.keys()], { note: (c) => source.get(c) ?? "" });
     if (!picked) return;
@@ -714,9 +714,9 @@ export class App {
     try {
       found = await api.recentConversations(path, Object.keys(names));
     } catch (err) {
-      return toast(t("app.conversationsFailed", { err: String(err) }), { kind: "error" });
+      return toast(t("app.conversationsFailed", { err: String(err) }), { kind: "error", topic: "sessions" });
     }
-    if (!found.length) return toast(t("app.noConversations", { name }));
+    if (!found.length) return toast(t("app.noConversations", { name }), { topic: "sessions" });
     const c = await conversationBox(t("app.conversations", { name }), found, {
       names,
       isOpen: (id) => this.tileOfConversation(path, id) !== undefined,
@@ -811,8 +811,8 @@ export class App {
 
   /** Click on a tile's account label or ⌘⇧A: run its Claude on another account. */
   private async switchAccount(tile: Tile): Promise<void> {
-    if (tile.agent !== "claude") return toast(t("app.accountOnlyClaude"));
-    if (!hasAccounts(this.layout)) return toast(t("app.accountNone"));
+    if (tile.agent !== "claude") return toast(t("app.accountOnlyClaude"), { topic: "sessions" });
+    if (!hasAccounts(this.layout)) return toast(t("app.accountNone"), { topic: "sessions" });
     const from = accountById(this.layout, accountFor(this.layout, tile.key, tile.path))!;
     const to = accountById(this.layout, await this.askAccount(t("app.accountPick", { name: tile.name }), from.id));
     if (!to || to.id === from.id) return;
@@ -832,7 +832,7 @@ export class App {
     try {
       await api.openSession(tile.path, tile.agent, tile.instance, undefined, undefined, false, to.id);
     } catch (err) {
-      return toast(t("app.openFailed", { agent: tile.agent, path: tile.path, err: String(err) }), { kind: "error" });
+      return toast(t("app.openFailed", { agent: tile.agent, path: tile.path, err: String(err) }), { kind: "error", topic: "sessions" });
     }
     this.running.add(tile.key);
     tile.update({ state: "starting" });
@@ -841,7 +841,7 @@ export class App {
     if (old !== null) this.earlyExits.delete(old);
     this.usageAt = 0;
     this.renderChrome();
-    toast(t("app.accountSwitched", { name: tile.name, account: to.name }), { kind: "ok" });
+    toast(t("app.accountSwitched", { name: tile.name, account: to.name }), { kind: "ok", topic: "sessions" });
   }
 
   /** Options changed the accounts: tiles and the top bar show them anew. */
@@ -887,7 +887,7 @@ export class App {
   private async reopenClosed(): Promise<void> {
     let last = this.closed.pop();
     while (last && this.tiles.has(last.key)) last = this.closed.pop(); // opened again meanwhile
-    if (!last) return toast(t("app.nothingToReopen"));
+    if (!last) return toast(t("app.nothingToReopen"), { topic: "sessions" });
     await this.reopen(last.key, last.sessionId);
   }
 
@@ -914,7 +914,7 @@ export class App {
     const tile = this.tiles.get(key);
     if (tile) this.closeTile(key);
     const slug = tile?.slug ?? (await api.listSessions()).find((s) => keyOf(s) === key)?.slug;
-    if (slug) await api.killSession(slug).catch((err) => toast(String(err), { kind: "error" }));
+    if (slug) await api.killSession(slug).catch((err) => toast(String(err), { kind: "error", topic: "sessions" }));
     this.running.delete(key);
     this.closed = this.closed.filter((c) => c.key !== key); // killed: nothing to reopen
     const forgotten = [this.layout.runs, this.layout.cards, this.layout.titles, this.layout.sizes, this.layout.tileAccounts].some((m) => key in m);
@@ -1001,6 +1001,7 @@ export class App {
       this.closeTile(tile.key);
       this.sessionEnded(tile.key, lane);
       toast(t("app.sessionEnded", { name: tile.name }), {
+        topic: "sessions",
         action: { label: t("notice.restore"), run: () => void this.reopen(tile.key, sessionId) },
       });
     }
@@ -1299,7 +1300,7 @@ export class App {
     this.layout.widths = this.layout.lanes.map(() => 1);
     this.layout.heights = {};
     this.changed();
-    toast(t("app.arranged", { n: this.layout.lanes.length }), { kind: "ok" });
+    toast(t("app.arranged", { n: this.layout.lanes.length }), { kind: "ok", topic: "projects" });
   }
 
   private setMode(project: string, mode: CardMode): void {
@@ -1640,7 +1641,7 @@ export class App {
     const isLocal = (folder: string) => local.has(folder.toLowerCase());
     const req = await newProjectBox(parent, pick, agent, { name, repos: this.repos(), isLocal });
     if (!req) return;
-    if (req.repo) toast(t("app.cloning", { repo: req.repo }));
+    if (req.repo) toast(t("app.cloning", { repo: req.repo }), { topic: "projects" });
     await this.adoptProject(req.parent, agent, () =>
       req.repo ? api.cloneProject(req.parent, req.name, req.repo) : api.createProject(req.parent, req.name, req.git),
     );
@@ -1649,7 +1650,7 @@ export class App {
   /** ⌘P on a GitHub repo: clone it into the projects folder and open it. */
   private async cloneRepo(repo: GithubRepo, agent: string): Promise<void> {
     const parent = this.layout.projectsDir ?? this.projectsDir;
-    toast(t("app.cloning", { repo: repo.fullName }));
+    toast(t("app.cloning", { repo: repo.fullName }), { topic: "projects" });
     await this.adoptProject(parent, agent, () => api.cloneProject(parent, repoName(repo), repo.fullName));
   }
 
@@ -1663,7 +1664,7 @@ export class App {
       this.save();
       await this.openTile(keyOf({ path, agent, instance: 0 }));
     } catch (err) {
-      toast(t("app.newProjectError", { err: String(err) }), { kind: "error" });
+      toast(t("app.newProjectError", { err: String(err) }), { kind: "error", topic: "projects" });
     }
   }
 
@@ -1679,7 +1680,7 @@ export class App {
   private projects(): Promise<Project[]> {
     if (!this.projectCache) {
       this.projectCache = api.listProjects(this.layout.extraFolders).catch((err) => {
-        toast(t("app.discoveryError", { err: String(err) }), { kind: "error" });
+        toast(t("app.discoveryError", { err: String(err) }), { kind: "error", topic: "projects" });
         this.projectCache = null;
         return [];
       });
@@ -1847,12 +1848,12 @@ export class App {
   private async sayUpdate(o: UpdateOutcome, manual: boolean): Promise<void> {
     if (o.kind === "news") {
       const label = t(o.update.installable ? "update.install" : "update.openPage");
-      return toast(t("update.news", { version: o.update.version }), { action: { label, run: () => void this.installUpdate() } });
+      return toast(t("update.news", { version: o.update.version }), { topic: "updates", action: { label, run: () => void this.installUpdate() } });
     }
     if (!manual) return;
-    if (o.kind === "failed") toast(t("update.checkError", { err: o.error }), { kind: "error" });
-    else if (o.kind === "known") toast(t("update.waiting", { version: o.update.version }));
-    else toast(t("update.latest", { version: await getVersion() }));
+    if (o.kind === "failed") toast(t("update.checkError", { err: o.error }), { kind: "error", topic: "updates" });
+    else if (o.kind === "known") toast(t("update.waiting", { version: o.update.version }), { topic: "updates" });
+    else toast(t("update.latest", { version: await getVersion() }), { topic: "updates" });
   }
 
   private updateHtml(): string {
@@ -1866,17 +1867,17 @@ export class App {
     const u = this.updater.status.update;
     if (!u) return;
     if (!u.installable) {
-      return void api.openExternal(u.url, this.layout.browser).catch((err) => toast(t("update.error", { err: String(err) }), { kind: "error" }));
+      return void api.openExternal(u.url, this.layout.browser).catch((err) => toast(t("update.error", { err: String(err) }), { kind: "error", topic: "updates" }));
     }
     const sessions =
       PLATFORM === "windows" ? t("update.sessionsEnd") : t("update.sessionsStay");
     if (!(await confirmBox(t("update.confirm", { version: u.version, sessions }), t("update.install"))))
       return;
-    toast(t("update.downloading", { version: u.version }));
+    toast(t("update.downloading", { version: u.version }), { topic: "updates" });
     try {
       await api.updateInstall(u.version);
     } catch (err) {
-      toast(t("update.error", { err: String(err) }), { kind: "error" });
+      toast(t("update.error", { err: String(err) }), { kind: "error", topic: "updates" });
     }
   }
 
@@ -1888,7 +1889,7 @@ export class App {
     this.paintThermal();
     const msg = thermalToast(prev, s);
     if (!msg) return;
-    toast(msg.text, { kind: msg.kind });
+    toast(msg.text, { kind: msg.kind, topic: "thermal" });
     // An emergency stop matters even with desk out of sight.
     if (s.halted && !prev?.halted) sendNotification({ title: "desk", body: msg.text });
   }
@@ -1907,7 +1908,7 @@ export class App {
     try {
       this.onThermal(await api.thermalResume());
     } catch (err) {
-      toast(String(err), { kind: "error" });
+      toast(String(err), { kind: "error", topic: "thermal" });
     }
   }
 
@@ -1918,7 +1919,7 @@ export class App {
     try {
       this.coffee = await api.coffeeSet(next[this.coffee.level]);
     } catch (err) {
-      toast(t("coffee.error", { err: String(err) }), { kind: "error" });
+      toast(t("coffee.error", { err: String(err) }), { kind: "error", topic: "coffee" });
       if (next[this.coffee.level] === "lid") this.coffee = await api.coffeeSet("off").catch(() => this.coffee);
     }
     this.renderChrome();
@@ -1928,7 +1929,7 @@ export class App {
     try {
       this.coffee = await api.coffeeRestore();
     } catch (err) {
-      toast(t("coffee.sleepError", { err: String(err) }), { kind: "error" });
+      toast(t("coffee.sleepError", { err: String(err) }), { kind: "error", topic: "coffee" });
     }
     this.renderChrome();
   }
@@ -1938,7 +1939,7 @@ export class App {
     this.renderChrome();
     if (s.stoppedBecause) {
       const msg = t("coffee.stopped", { reason: s.stoppedBecause });
-      toast(msg, { kind: "warn" });
+      toast(msg, { kind: "warn", topic: "coffee" });
       sendNotification({ title: "desk", body: msg });
     }
   }

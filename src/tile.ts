@@ -221,10 +221,10 @@ export class Tile {
           const verdict = this.clip.ask(text, Date.now());
           if (verdict === "repeat") return;
           if (verdict === "block") {
-            if (text) toast(t("tile.clipboardBlocked", { name: this.name }), { kind: "warn" });
+            if (text) toast(t("tile.clipboardBlocked", { name: this.name }), { kind: "warn", topic: "clipboard" });
             return;
           }
-          return writeText(text).then(() => toast(t("tile.copied"), { kind: "ok" }));
+          return writeText(text).then(() => toast(t("tile.copied"), { kind: "ok", topic: "clipboard" }));
         },
       }),
     );
@@ -533,7 +533,7 @@ export class Tile {
         this.beginRewrite();
         return api.ptyWrite(pty, "\x07");
       })
-      .catch((err) => toast(String(err), { kind: "error" }));
+      .catch((err) => toast(String(err), { kind: "error", topic: "sessions" }));
     this.focus();
   }
 
