@@ -18,7 +18,6 @@ import {
   type SessionState,
   type FanInfo,
   type ThermalStatus,
-  type Update,
   type Usage,
 } from "./api";
 import { detectLanguage, isLanguage, setLanguage, t, type Language } from "./i18n";
@@ -62,12 +61,12 @@ import {
   thermalToast,
 } from "./thermal";
 import { browserHtml, coffeeHtml } from "./topbar";
+import { UpdateChecker, type UpdateOutcome } from "./updates";
 import { accountById, accountColor, accountFor, hasAccounts } from "./accounts";
 
 const POLL_MS = 3000;
-/** desk asks GitHub for a newer release once a day (and from Options on demand). */
-const UPDATE_CHECK_MS = 24 * 60 * 60 * 1000;
-const UPDATE_KEY = "desk.updateCheckedAt";
+/** The last new version a notice announced: each one once, also after a restart. */
+const ANNOUNCED_KEY = "desk.updateAnnounced";
 const USAGE_MS = 30_000;
 /** Room of a shell or ⌘U command in its card, next to an agent's 1. */
 const AUX_SIZE = 0.4;
@@ -115,8 +114,29 @@ export class App {
   /** The card a session belongs to: its project, or for a conversation the card it was opened in. */
   private projectOf = (key: string): string => this.layout.cards[key] ?? parseKey(key).path;
   private usage: Usage[] = [];
-  /** A newer desk release, shown as a chip in the top bar. */
-  private update: Update | null = null;
+  /** A newer desk release (a chip in the top bar, a line in Options), asked for every half hour (updates.ts). */
+  private updater = new UpdateChecker({
+    ask: () => api.updateCheck(),
+    now: () => Date.now(),
+    load: () => {
+      try {
+        return localStorage.getItem(ANNOUNCED_KEY);
+      } catch {
+        return null;
+      }
+    },
+    save: (version) => {
+      try {
+        localStorage.setItem(ANNOUNCED_KEY, version);
+      } catch {
+        // announced again after a restart
+      }
+    },
+    changed: () => {
+      this.renderChrome();
+      if (this.settings.isOpen) this.settings.showUpdate();
+    },
+  });
   private usageAt = 0;
   private coffee: CoffeeStatus = { level: "off", helperInstalled: false, sleepDisabled: false, stoppedBecause: null };
   /** Can desk drive the fans here (Options); null until known. */
@@ -240,7 +260,9 @@ export class App {
         this.applyTheme();
         this.save();
       },
-      checkUpdate: () => this.checkUpdate(true),
+      checkUpdate: () => this.checkUpdateNow(),
+      updates: () => this.updater.status,
+      installUpdate: () => this.installUpdate(),
       setFontSize: (px) => this.setFontSize(px),
       setLanguage: (id) => {
         this.layout.language = id;
@@ -529,9 +551,10 @@ export class App {
     void this.poll();
     setInterval(() => void this.poll(), POLL_MS);
     void this.side.browserChanged();
-    // Hourly look at the clock, so a laptop that slept still checks once a day.
-    window.setTimeout(() => void this.checkUpdateDaily(), 10_000);
-    setInterval(() => void this.checkUpdateDaily(), 60 * 60 * 1000);
+    // Shortly after start, then every half hour (updates.ts). A look at the
+    // clock each minute: a laptop that slept asks as soon as it wakes.
+    window.setTimeout(() => void this.checkUpdateIfDue(), 10_000);
+    setInterval(() => void this.checkUpdateIfDue(), 60_000);
     if (this.layout.notifications) void ensureNotificationPermission();
     if (!this.tiles.size) void this.palette.show();
   }
@@ -1803,50 +1826,38 @@ export class App {
 
   // ---- updates -----------------------------------------------------------
 
-  private async checkUpdateDaily(): Promise<void> {
-    let last = 0;
-    try {
-      last = Number(localStorage.getItem(UPDATE_KEY)) || 0;
-    } catch {
-      // not remembered: check now
-    }
-    if (Date.now() - last < UPDATE_CHECK_MS) return;
-    try {
-      localStorage.setItem(UPDATE_KEY, String(Date.now()));
-    } catch {
-      // checked again next hour
-    }
-    await this.checkUpdate(false);
+  private async checkUpdateIfDue(): Promise<void> {
+    const outcome = await this.updater.tick();
+    if (outcome) await this.sayUpdate(outcome, false);
   }
 
-  /** `manual` (Options): say what came out, errors included; else quiet unless there is news. */
-  private async checkUpdate(manual: boolean): Promise<void> {
-    let u: Update | null;
-    try {
-      u = await api.updateCheck();
-    } catch (err) {
-      if (manual) toast(t("update.checkError", { err: String(err) }), { kind: "error" });
-      return;
+  /** "Check now" in Options: says what came out, errors included. */
+  private async checkUpdateNow(): Promise<void> {
+    await this.sayUpdate(await this.updater.check(), true);
+  }
+
+  /** A notice for a version not announced yet; after "Check now" also for the
+   *  rest. Options and the top bar show the outcome either way. */
+  private async sayUpdate(o: UpdateOutcome, manual: boolean): Promise<void> {
+    if (o.kind === "news") {
+      const label = t(o.update.installable ? "update.install" : "update.openPage");
+      return toast(t("update.news", { version: o.update.version }), { action: { label, run: () => void this.installUpdate() } });
     }
-    const news = u !== null && u.version !== this.update?.version;
-    this.update = u;
-    this.renderChrome();
-    if (news) {
-      const label = t(u!.installable ? "update.install" : "update.openPage");
-      toast(t("update.news", { version: u!.version }), { action: { label, run: () => void this.installUpdate() } });
-    }
-    else if (manual) toast(u ? t("update.waiting", { version: u.version }) : t("update.latest", { version: await getVersion() }));
+    if (!manual) return;
+    if (o.kind === "failed") toast(t("update.checkError", { err: o.error }), { kind: "error" });
+    else if (o.kind === "known") toast(t("update.waiting", { version: o.update.version }));
+    else toast(t("update.latest", { version: await getVersion() }));
   }
 
   private updateHtml(): string {
-    const u = this.update;
+    const u = this.updater.status.update;
     if (!u) return "";
     const title = u.installable ? t("update.installTitle") : t("update.openTitle");
     return `<button class="top-btn update" data-top="update" title="${title}">↑ ${escapeHtml(u.version)}</button>`;
   }
 
   private async installUpdate(): Promise<void> {
-    const u = this.update;
+    const u = this.updater.status.update;
     if (!u) return;
     if (!u.installable) {
       return void api.openExternal(u.url, this.layout.browser).catch((err) => toast(t("update.error", { err: String(err) }), { kind: "error" }));

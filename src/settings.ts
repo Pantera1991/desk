@@ -60,6 +60,7 @@ import {
   usesFans,
 } from "./thermal";
 import { toast } from "./ui";
+import { UPDATE_EVERY_MS, updateStatusHtml, type UpdateStatus } from "./updates";
 
 export interface SettingsContext {
   home: () => string;
@@ -84,6 +85,10 @@ export interface SettingsContext {
   setKey: (id: string, accelerator: string | null) => void;
   /** Ask GitHub for a newer desk now. */
   checkUpdate: () => Promise<void>;
+  /** A newer desk found, and how the last check went (updates.ts). */
+  updates: () => UpdateStatus;
+  /** Install the newer desk, or open its release page. */
+  installUpdate: () => Promise<void>;
   setNotifications: (on: boolean) => void;
   setTmuxMenu: (on: boolean) => void;
   setPromptAi: (change: Partial<PromptAi>) => void;
@@ -534,6 +539,19 @@ export class Settings {
     this.render();
   }
 
+  /** The line about a newer desk again, alone: a check every half hour must
+   *  not rebuild Options under what you type. */
+  showUpdate(): void {
+    const line = this.el?.querySelector<HTMLElement>('[data-k="update-status"]');
+    if (!line) return;
+    line.innerHTML = updateStatusHtml(this.ctx.updates());
+    this.bindUpdate(line);
+  }
+
+  private bindUpdate(box: HTMLElement): void {
+    box.querySelector<HTMLButtonElement>('[data-k="update-install"]')?.addEventListener("click", () => void this.ctx.installUpdate());
+  }
+
   close(): void {
     window.removeEventListener("keydown", this.onKey, true);
     this.recording = null;
@@ -675,7 +693,8 @@ export class Settings {
         ) +
           section(
             t("settings.updates"),
-            `<div class="line" data-row><span class="dim">desk <span data-k="version"></span> · ${t("settings.updatesHow")}</span> <button data-k="update">${t("settings.checkNow")}</button></div>`,
+            `<div class="line" data-row><span class="dim">desk <span data-k="version"></span> · ${t("settings.updatesHow", { minutes: UPDATE_EVERY_MS / 60_000 })}</span> <button data-k="update">${t("settings.checkNow")}</button></div>
+      <div class="line" data-row data-k="update-status">${updateStatusHtml(this.ctx.updates())}</div>`,
           ),
       ],
       [
@@ -961,6 +980,7 @@ export class Settings {
       b.disabled = false;
       b.textContent = t("settings.checkNow");
     });
+    this.bindUpdate(box);
     box.querySelector<HTMLInputElement>('[data-k="font"]')!.addEventListener("change", (e) => {
       const px = Number((e.target as HTMLInputElement).value);
       if (px > 0) this.ctx.setFontSize(px);

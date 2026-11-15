@@ -1806,6 +1806,12 @@ html.dragging-card .tile .term {
   color: var(--danger);
 }
 
+/* A newer desk to install, in the colour of the ↑ chip in the top bar. */
+.settings .update-ready {
+  color: var(--accent);
+  font-weight: 600;
+}
+
 .settings .fan-chart {
   display: block;
   width: 100%;

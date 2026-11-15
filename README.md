@@ -203,10 +203,12 @@ xattr -dr com.apple.quarantine /Applications/desk.app
 
 ### Aktualizacje
 
-desk raz dziennie sprawdza, czy w Releases jest nowsza wersja (Opcje → Aktualizacje → „Sprawdź teraz”
-sprawdza od razu). Repozytorium jest prywatne, więc pyta przez GitHub CLI (`gh`, zalogowane kontem
-z dostępem); bez `gh` po prostu nie ma powiadomień. Nowa wersja pojawia się u góry jako `↑ 0.1.x`,
-a kliknięcie pobiera ją, podmienia aplikację i uruchamia ponownie:
+desk sprawdza, czy w Releases jest nowsza wersja, zaraz po starcie i potem co 30 minut (Opcje →
+Aktualizacje → „Sprawdź teraz” sprawdza od razu). Repozytorium jest prywatne, więc pyta przez GitHub
+CLI (`gh`, zalogowane kontem z dostępem); bez `gh` nie ma powiadomień, a Opcje mówią dlaczego. Nowa
+wersja pojawia się u góry jako `↑ 0.1.x` i w Opcje → Aktualizacje z przyciskiem „Zainstaluj”, a komunikat
+o niej wyskakuje raz na wersję. Gdy nowej wersji nie ma, Opcje mówią, kiedy ostatnio sprawdzono.
+Kliknięcie pobiera nową wersję, podmienia aplikację i uruchamia ponownie:
 
 - macOS: podmienia `desk.app` tam, gdzie leży; sesje w tmux działają dalej,
 - Windows: uruchamia nowy instalator; sesje w oknie desk się kończą,
