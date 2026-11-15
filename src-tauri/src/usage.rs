@@ -379,22 +379,86 @@ pub fn iso_seconds(s: &str) -> Option<u64> {
     u64::try_from(days * 86_400 + h * 3600 + min * 60 + sec - offset).ok()
 }
 
-/// The account's usage answer, asked for at most every 5 minutes (also after a
-/// failure), each account on its own.
-fn account_answer(dir: &str, home: &Path, now: u64) -> Option<Value> {
+/// The account's usage answer and when it came (Unix seconds), asked for at
+/// most every 5 minutes (also after a failure), each account on its own.
+fn account_answer(dir: &str, home: &Path, now: u64) -> Option<(u64, Value)> {
     use std::collections::HashMap;
     use std::sync::Mutex;
     use std::time::Instant;
-    type Asked = HashMap<PathBuf, (Instant, Option<Value>)>;
+    type Asked = HashMap<PathBuf, (Instant, u64, Option<Value>)>;
     static LAST: Mutex<Option<Asked>> = Mutex::new(None);
     let key = crate::accounts::config_dir(dir, home);
     let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
     let last = last.get_or_insert_with(HashMap::new);
-    if last.get(&key).is_none_or(|(at, _)| at.elapsed() >= ACCOUNT_EVERY) {
+    if last.get(&key).is_none_or(|(at, _, _)| at.elapsed() >= ACCOUNT_EVERY) {
         let got = crate::accounts::token(dir, home, now).and_then(|t| fetch_account(&t));
-        last.insert(key.clone(), (Instant::now(), got));
+        last.insert(key.clone(), (Instant::now(), now, got));
     }
-    last.get(&key)?.1.clone()
+    let (_, at, answer) = last.get(&key)?;
+    answer.clone().map(|v| (*at, v))
+}
+
+/// Since when desk knows each session's limits are current (Unix seconds, 0:
+/// not known). Claude Code refreshes them with every reply, but also redraws
+/// the status line with the ones it has (a session reattached, a mode
+/// switched), and writes to the transcript without asking Anthropic, so
+/// neither file's time says it. The API time the session spent
+/// (`cost.total_api_duration_ms`) grows with each reply only: a session is
+/// current from the moment desk sees that time or its limits change. A file
+/// as desk first finds it is of unknown age.
+#[derive(Default)]
+pub struct Seen(std::collections::HashMap<PathBuf, (String, u64)>);
+
+impl Seen {
+    pub fn at(&mut self, file: &Path, status: &Value, now: u64) -> u64 {
+        let part = |v: Option<&Value>| v.map_or(String::new(), Value::to_string);
+        let mark = format!(
+            "{} {}",
+            part(status.pointer("/cost/total_api_duration_ms")),
+            part(status.get("rate_limits"))
+        );
+        match self.0.get_mut(file) {
+            Some((m, at)) if *m == mark => *at,
+            Some(e) => {
+                *e = (mark, now);
+                now
+            }
+            None => {
+                self.0.insert(file.to_path_buf(), (mark, 0));
+                0
+            }
+        }
+    }
+}
+
+/// One source's windows and since when desk knows they are current (Unix
+/// seconds, 0: not known).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Reading {
+    pub windows: Vec<Window>,
+    pub at: u64,
+}
+
+/// The plan's windows now. A reset bought on claude.ai lowers the use within
+/// the same window, so a session that has not replied since holds an old
+/// share, not a higher one. Per window only readings at least as new as the
+/// newest source that knows it count: Anthropic's answer when it has the
+/// window, else the session that replied last. Of those, `freshest` picks.
+pub fn current(api: Option<Reading>, sessions: Vec<Reading>) -> Vec<Window> {
+    let since = |label: &str| match &api {
+        Some(a) if a.windows.iter().any(|w| w.label == label) => a.at,
+        _ => sessions
+            .iter()
+            .filter(|r| r.windows.iter().any(|w| w.label == label))
+            .map(|r| r.at)
+            .max()
+            .unwrap_or(0),
+    };
+    let from_sessions: Vec<Vec<Window>> = sessions
+        .iter()
+        .map(|r| r.windows.iter().filter(|w| r.at >= since(&w.label)).cloned().collect())
+        .collect();
+    freshest(from_sessions.into_iter().chain(api.map(|a| a.windows)))
 }
 
 /// What desk knows of one Claude account's limits.
@@ -430,33 +494,44 @@ fn freshest_models(readings: impl IntoIterator<Item = ModelLimit>) -> Vec<ModelL
 /// The plan's limits of each Claude account, from the status line input of
 /// its sessions (by where their transcript is, see `accounts::owner_of`) and
 /// from Anthropic. Each Claude Code session keeps the limits it last fetched,
-/// so an idle one shows old numbers: per window, the freshest reading wins
-/// (see `freshest`). Accounts with nothing known are left out.
+/// so an idle one shows old numbers: per window, the current readings win
+/// (see `current`). Accounts with nothing known are left out.
 fn claude(state_dir: &Path, accounts: &[ClaudeAccount], home: &Path, now: u64) -> Vec<AccountLimits> {
-    let statuses: Vec<Value> = std::fs::read_dir(state_dir)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter(|e| e.path().extension().is_some_and(|x| x == "status"))
-        .filter_map(|e| serde_json::from_str(&std::fs::read_to_string(e.path()).ok()?).ok())
-        .collect();
+    static SEEN: std::sync::Mutex<Option<Seen>> = std::sync::Mutex::new(None);
+    let statuses: Vec<(u64, Value)> = {
+        let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+        let seen = seen.get_or_insert_with(Seen::default);
+        std::fs::read_dir(state_dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|e| e.path().extension().is_some_and(|x| x == "status"))
+            .filter_map(|e| {
+                let v: Value = serde_json::from_str(&std::fs::read_to_string(e.path()).ok()?).ok()?;
+                Some((seen.at(&e.path(), &v, now), v))
+            })
+            .collect()
+    };
     accounts
         .iter()
         .filter_map(|a| {
-            let own: Vec<&Value> = statuses
+            let own: Vec<&(u64, Value)> = statuses
                 .iter()
-                .filter(|v| {
+                .filter(|(_, v)| {
                     let transcript = v.get("transcript_path").and_then(Value::as_str).unwrap_or_default();
                     crate::accounts::owner_of(accounts, Path::new(transcript), home).is_some_and(|o| o.id == a.id)
                 })
                 .collect();
-            let answer = account_answer(&a.dir, home, now);
+            let (answered, answer) = account_answer(&a.dir, home, now).unzip();
             let from_api = answer.as_ref().and_then(|v| account_windows(v, now)).unwrap_or_default();
-            let readings = own
+            let sessions = own
                 .iter()
-                .filter_map(|v| claude_windows(v, now))
-                .chain((!from_api.is_empty()).then(|| from_api.clone()));
-            let mut windows = freshest(readings);
+                .filter_map(|(at, v)| Some(Reading { windows: claude_windows(v, now)?, at: *at }))
+                .collect();
+            let api = answered
+                .filter(|_| !from_api.is_empty())
+                .map(|at| Reading { windows: from_api.clone(), at });
+            let mut windows = current(api, sessions);
             // Anthropic's grading holds for the same window, whichever reading won.
             for w in &mut windows {
                 w.severity = from_api
@@ -466,7 +541,7 @@ fn claude(state_dir: &Path, accounts: &[ClaudeAccount], home: &Path, now: u64) -
             }
             let api_models = answer.as_ref().map(|v| account_models(v, now)).unwrap_or_default();
             let models = if api_models.is_empty() {
-                freshest_models(own.iter().flat_map(|v| status_models(v, now)))
+                freshest_models(own.iter().flat_map(|(_, v)| status_models(v, now)))
             } else {
                 api_models
             };
@@ -481,10 +556,10 @@ fn claude(state_dir: &Path, accounts: &[ClaudeAccount], home: &Path, now: u64) -
         .collect()
 }
 
-/// Per window label, the latest reading: within a window usage only grows, and
-/// a reset moves `resets_at` on by hours. So the later window wins, and in the
-/// same one (reset times differ by rounding only) the higher share.
-/// 5h comes before 7d.
+/// Per window label, the latest of current readings (see `current`): their use
+/// only grows within a window, and the window's end moves on by hours when it
+/// resets. So the later window wins, and in the same one (reset times differ
+/// by rounding only) the higher share. 5h comes before 7d.
 pub fn freshest(readings: impl IntoIterator<Item = Vec<Window>>) -> Vec<Window> {
     let mut out: Vec<Window> = Vec::new();
     for w in readings.into_iter().flatten() {
@@ -652,14 +727,20 @@ mod tests {
         .unwrap();
         let state = tmp.path().join("state");
         std::fs::create_dir_all(&state).unwrap();
+        let transcript = tmp.path().join(".claude-solo/projects/-p/a.jsonl").display().to_string();
         std::fs::write(
             state.join("p-1.status"),
-            json!({"rate_limits": {"five_hour": {"used_percentage": 50, "resets_at": u64::MAX / 2}}}).to_string(),
+            json!({"transcript_path": transcript,
+                   "rate_limits": {"five_hour": {"used_percentage": 50, "resets_at": u64::MAX / 2}}})
+            .to_string(),
         )
         .unwrap();
+        // A folder of its own: the default one would ask Anthropic with this
+        // Mac's Keychain login, and its answer beats a reading of unknown age.
+        let solo = [ClaudeAccount { id: "solo".into(), name: "Solo".into(), dir: "~/.claude-solo".into() }];
         let u = usage(
             &["claude".into(), "codex".into(), "shell".into()],
-            &[],
+            &solo,
             &state,
             tmp.path(),
         );
@@ -710,6 +791,76 @@ mod tests {
         // Same window, reset times rounded differently: the higher share wins.
         let got = freshest([vec![w("7d", 80.0, 9000)], vec![w("7d", 84.0, 8999)]]);
         assert_eq!(got, vec![w("7d", 84.0, 8999)]);
+    }
+
+    #[test]
+    fn after_a_reset_idle_sessions_do_not_hold_the_old_share() {
+        let w = |label: &str, used: f64, resets_at: u64| Window { label: label.into(), used_percent: used, resets_at, severity: None };
+        let r = |windows: Vec<Window>, at: u64| Reading { windows, at };
+        // A reset bought on claude.ai: the same week, its use down from 100% to 1%.
+        let api = || Some(r(vec![w("5h", 2.0, 30_000), w("7d", 1.0, 8999)], 1000));
+        let got = current(
+            api(),
+            vec![
+                r(vec![w("7d", 100.0, 9000)], 0),                   // idle since the night, redrawn
+                r(vec![w("7d", 97.0, 9000)], 400),                  // replied before Anthropic's answer
+                r(vec![w("5h", 3.0, 30_000), w("7d", 1.0, 9000)], 1030), // replied after it
+            ],
+        );
+        assert_eq!(got, vec![w("5h", 3.0, 30_000), w("7d", 1.0, 9000)]);
+        // Anthropic's answer reads a point higher than the status line and stays
+        // until the next one.
+        let got = current(api(), vec![r(vec![w("7d", 0.0, 9000)], 1030)]);
+        assert_eq!(got, vec![w("5h", 2.0, 30_000), w("7d", 1.0, 8999)]);
+        // Without it, the session that replied last.
+        let got = current(None, vec![r(vec![w("7d", 100.0, 9000)], 0), r(vec![w("7d", 1.0, 9000)], 1030)]);
+        assert_eq!(got, vec![w("7d", 1.0, 9000)]);
+        // Nothing known to be current (desk just started, no answer): as before.
+        let got = current(None, vec![r(vec![w("7d", 75.0, 9000)], 0), r(vec![w("7d", 80.0, 9000)], 0)]);
+        assert_eq!(got, vec![w("7d", 80.0, 9000)]);
+        // A window the answer lacks still comes from the sessions.
+        let got = current(Some(r(vec![w("7d", 1.0, 8999)], 1000)), vec![r(vec![w("5h", 13.0, 30_000)], 0)]);
+        assert_eq!(got, vec![w("5h", 13.0, 30_000), w("7d", 1.0, 8999)]);
+    }
+
+    #[test]
+    fn a_session_is_current_once_it_talked_to_anthropic() {
+        let mut seen = Seen::default();
+        let f = Path::new("/state/a.status");
+        let status = |api_ms: u64, used: u32| {
+            json!({"cost": {"total_api_duration_ms": api_ms},
+                   "rate_limits": {"seven_day": {"used_percentage": used, "resets_at": 9000}}})
+        };
+        assert_eq!(seen.at(f, &status(10, 100), 100), 0, "there before desk looked: age unknown");
+        assert_eq!(seen.at(f, &status(10, 100), 200), 0, "redrawn with the limits it had");
+        assert_eq!(seen.at(f, &status(15, 1), 300), 300, "a reply");
+        assert_eq!(seen.at(f, &status(15, 1), 400), 300);
+        assert_eq!(seen.at(f, &status(20, 1), 500), 500, "a reply, the same limits");
+        assert_eq!(seen.at(Path::new("/state/b.status"), &status(20, 1), 600), 0, "each file on its own");
+    }
+
+    #[test]
+    fn a_reply_after_a_reset_beats_idle_sessions() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        let state = home.join("state");
+        std::fs::create_dir_all(&state).unwrap();
+        let later = u64::MAX / 2;
+        let transcript = home.join(".claude-reset/projects/-p/a.jsonl").display().to_string();
+        let status = |api_ms: u64, used: u32| {
+            json!({"transcript_path": transcript, "cost": {"total_api_duration_ms": api_ms},
+                   "rate_limits": {"seven_day": {"used_percentage": used, "resets_at": later}}})
+            .to_string()
+        };
+        std::fs::write(state.join("idle.status"), status(500, 100)).unwrap();
+        std::fs::write(state.join("busy.status"), status(70, 99)).unwrap();
+        // A folder of its own: no Keychain item, no login file, no request.
+        let accounts = [ClaudeAccount { id: "a".into(), name: "A".into(), dir: "~/.claude-reset".into() }];
+        let week = || usage(&["claude".into()], &accounts, &state, home)[0].windows[0].used_percent;
+        assert_eq!(week(), 100.0, "nothing known to be current yet");
+        std::fs::write(state.join("idle.status"), status(500, 100)).unwrap(); // redrawn
+        std::fs::write(state.join("busy.status"), status(90, 1)).unwrap(); // replied after the reset
+        assert_eq!(week(), 1.0);
     }
 
     /// The usage answer of 2026-11-14 (fields desk does not read left out).
