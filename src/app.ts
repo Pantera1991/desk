@@ -60,7 +60,7 @@ import {
   thermalHtml,
   thermalToast,
 } from "./thermal";
-import { browserHtml, coffeeHtml } from "./topbar";
+import { brandHtml, browserHtml, coffeeHtml } from "./topbar";
 import { UpdateChecker, type UpdateOutcome } from "./updates";
 import { accountById, accountColor, accountFor, hasAccounts } from "./accounts";
 
@@ -147,6 +147,8 @@ export class App {
   private locked = false;
   /** Docked at the top of the screen (⌘`, dropdown.rs). */
   private docked = false;
+  /** This desk's version, next to its name in the top bar; null until asked. */
+  private version: string | null = null;
   private lockEl: HTMLElement | null = null;
 
   private grid: HTMLElement;
@@ -397,6 +399,10 @@ export class App {
     await listen<boolean>("dropdown", (e) => {
       this.docked = e.payload;
       document.documentElement.toggleAttribute("data-dropdown", e.payload);
+      this.renderChrome();
+    });
+    void getVersion().then((v) => {
+      this.version = v;
       this.renderChrome();
     });
     // You dragged the dropdown's edge: the next one comes down this tall.
@@ -1764,7 +1770,7 @@ export class App {
     const hide = this.docked
       ? `<span class="dim"> · </span><span class="dropdown-hint" title="${t("top.hideTitle")}"><kbd>${hotkey}</kbd> ${t("top.hide")}</span>`
       : "";
-    this.top.innerHTML = `${leave}<span class="brand"${drag}>desk</span>${hide}<span class="dim"${drag}> · ${this.tiles.size} sessions</span>${this.backgroundHtml()}${
+    this.top.innerHTML = `${leave}${brandHtml(this.version, drag)}${hide}<span class="dim"${drag}> · ${this.tiles.size} sessions</span>${this.backgroundHtml()}${
       waiting ? `<span class="waiting-pill"${drag}>${t("top.waiting", { n: waiting })}</span>` : ""
     }<span class="spacer"${drag}></span>${this.updateHtml()}${usageHtml(this.usage, Date.now(), (id) => {
       const a = this.layout.claudeAccounts.find((x) => x.id === id);

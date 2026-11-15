@@ -89,6 +89,12 @@ button:hover {
   color: var(--fg);
 }
 
+.brand-version {
+  margin-left: -3px; /* closer to the name than the bar's gap */
+  font-size: 9px;
+  color: var(--dim);
+}
+
 .dropdown-hint {
   color: var(--dim);
 }
