@@ -1,5 +1,13 @@
 # Zmiany
 
+## 0.2.4 (2026-11-15)
+
+- **Nowa wersja widoczna szybciej i w Opcjach.** desk sprawdza, czy jest nowsza wersja, zaraz po
+  starcie i potem co 30 minut, a nie raz dziennie. Opcje → Aktualizacje pokazują nową wersję
+  z przyciskiem „Zainstaluj”, a gdy jej nie ma, mówią, że masz najnowszą i kiedy sprawdzono, albo
+  dlaczego sprawdzenie się nie udało (np. brak `gh`). Powiadomienie o danej wersji pojawia się
+  raz, także po ponownym uruchomieniu; przycisk ↑ u góry i Opcje pokazują ją dalej.
+
 ## 0.2.3 (2026-11-15)
 
 - **Limit tygodniowy po resecie pokazuje prawdę.** Po resecie kupionym na claude.ai (np. „Fable
