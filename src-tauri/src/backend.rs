@@ -165,6 +165,15 @@ impl Backend {
         }
     }
 
+    /// Each session with the processes it runs (tmux: its panes'), for the
+    /// busiest session (busiest.rs).
+    pub fn roots(&self) -> Vec<(SessionInfo, Vec<u32>)> {
+        match self {
+            Self::Tmux { tmux, .. } => tmux.session_roots(),
+            Self::Native(n) => n.roots(),
+        }
+    }
+
     /// desk is quitting: tmux sessions stay, native ones end.
     pub fn shutdown(&self) {
         match self {

@@ -157,6 +157,15 @@ impl Tmux {
             .unwrap_or_default()
     }
 
+    /// Each session with the processes in its panes; none without a server.
+    pub fn session_roots(&self) -> Vec<(SessionInfo, Vec<u32>)> {
+        let panes = self
+            .run(&["list-panes", "-a", "-F", "#{session_name}\t#{pane_pid}"])
+            .map(|s| parse_panes(&s))
+            .unwrap_or_default();
+        with_panes(self.list_sessions(), &panes)
+    }
+
     /// Write the config, with tmux's right-click menus when `menu` (Options),
     /// and give it to the running server: one from an older desk (sessions
     /// outlive it) keeps the config it started with.
@@ -324,6 +333,27 @@ pub fn origin_of<'a>(slug: &str, path: &Path, agents: &'a [String]) -> Option<(&
 /// Stable tmux-safe session name: sanitized folder name + 8 hex chars of a
 /// hash of the full path (two `app` folders in different places do not clash;
 /// `open_session` still checks the path, so a hash collision cannot mix them up).
+/// `list-panes -a -F "#{session_name}\t#{pane_pid}"` output.
+pub fn parse_panes(out: &str) -> Vec<(String, u32)> {
+    out.lines()
+        .filter_map(|l| {
+            let (name, pid) = l.split_once('\t')?;
+            Some((name.to_string(), pid.trim().parse().ok()?))
+        })
+        .collect()
+}
+
+/// Each session with the pane processes of the same name, in its order.
+pub fn with_panes(sessions: Vec<SessionInfo>, panes: &[(String, u32)]) -> Vec<(SessionInfo, Vec<u32>)> {
+    sessions
+        .into_iter()
+        .map(|s| {
+            let pids = panes.iter().filter(|(name, _)| *name == s.slug).map(|&(_, pid)| pid).collect();
+            (s, pids)
+        })
+        .collect()
+}
+
 pub fn slug(path: &Path) -> String {
     let name = path
         .file_name()
@@ -445,6 +475,18 @@ bind-key -T root M-MouseDown3Status        display-menu -O -T y
         assert_eq!(s[1].path, "/Users/k/old");
         assert_eq!(s[1].agent, "claude");
         assert_eq!(s[1].instance, 0);
+    }
+
+    #[test]
+    fn pairs_sessions_with_their_panes() {
+        let panes = parse_panes("shop-1a2b\t412\ncrm-3c4d\t500\nshop-1a2b\t413\nbad\nx\tnot-a-pid\n");
+        assert_eq!(panes, [("shop-1a2b".to_string(), 412), ("crm-3c4d".to_string(), 500), ("shop-1a2b".to_string(), 413)]);
+        let sessions = parse_sessions("shop-1a2b\t/p/shop\t/p/shop\tclaude\t0\nidle-0000\t/p/idle\t/p/idle\tshell\t1\n");
+        let roots = with_panes(sessions, &panes);
+        assert_eq!(roots.iter().map(|(s, p)| (s.slug.as_str(), p.clone())).collect::<Vec<_>>(), [
+            ("shop-1a2b", vec![412, 413]),
+            ("idle-0000", vec![]),
+        ]);
     }
 
     #[test]

@@ -29,6 +29,8 @@ const COMMANDS: &[&str] = &[
     "list_projects",
     "list_sessions",
     "thermal_status",
+    "thermal_resume",
+    "cpu_details",
     "fans_info",
     "fans_install",
     "fans_uninstall",

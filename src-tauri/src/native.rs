@@ -217,6 +217,17 @@ impl Native {
         all.iter().filter_map(|s| s.child.lock().unwrap().process_id()).collect()
     }
 
+    /// Each session with its process.
+    pub fn roots(&self) -> Vec<(SessionInfo, Vec<u32>)> {
+        let all: Vec<Arc<Session>> = self.sessions.lock().unwrap().values().cloned().collect();
+        let mut v: Vec<(SessionInfo, Vec<u32>)> = all
+            .iter()
+            .map(|s| (s.info.clone(), s.child.lock().unwrap().process_id().into_iter().collect()))
+            .collect();
+        v.sort_by(|a, b| a.0.slug.cmp(&b.0.slug));
+        v
+    }
+
     pub fn kill_all(&self) {
         let all: Vec<Arc<Session>> = self.sessions.lock().unwrap().values().cloned().collect();
         for s in all {

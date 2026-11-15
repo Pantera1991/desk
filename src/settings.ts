@@ -13,6 +13,7 @@ import {
   type Layout,
   type Project,
   type PromptAi,
+  type ThermalColors,
   type ThermalMode,
   type ThermalStatus,
   type UsageLayout,
@@ -20,7 +21,8 @@ import {
 } from "./api";
 import { accountColor, withAccount, withoutAccount } from "./accounts";
 import type { LinkClick } from "./links";
-import { shortcut } from "./platform";
+import { partsHtml, withPart } from "./cpu-parts";
+import { PLATFORM, shortcut } from "./platform";
 import { rows, shortPath } from "./projects";
 import { search, type SearchItem } from "./settings-search";
 import { escapeHtml } from "./tile";
@@ -29,6 +31,9 @@ import { LANGUAGES, language, t, type Language, type MessageKey } from "./i18n";
 import { acceleratorsOf, bindingLabel, BINDINGS, clashWith, FIXED, groupLabel, GROUPS, keyText } from "./keys";
 import {
   addStep,
+  autoColors,
+  clampColors,
+  clampEmergency,
   clampFanMargin,
   clampLimit,
   DEFAULT_STEPS,
@@ -36,13 +41,18 @@ import {
   FAN_PRESETS,
   FAN_WAITS,
   fanChart,
+  MAX_COLOR,
+  MAX_EMERGENCY,
   MAX_FAN_MARGIN,
   MAX_LIMIT,
   MAX_STEPS,
+  MIN_COLOR,
+  MIN_EMERGENCY,
   MIN_FAN_MARGIN,
   MIN_LIMIT,
   MODE_LABELS,
   modeOptions,
+  RESUME_MARGIN,
   slows,
   stepRpm,
   stepsProblem,
@@ -80,7 +90,13 @@ export interface SettingsContext {
   addFolder: () => Promise<void>;
   removeFolder: (path: string) => void;
   /** What desk does when hot, and its limits (thermal.ts); saved at once. */
-  setThermal: (change: Partial<Pick<Layout, "thermalMode" | "thermalLimit" | "fanSteps" | "fanMargin" | "fanWait">>) => void;
+  setThermal: (
+    change: Partial<
+      Pick<Layout, "thermalMode" | "thermalLimit" | "fanSteps" | "fanMargin" | "fanWait" | "emergencyOn" | "emergencyAt" | "thermalColors">
+    >,
+  ) => void;
+  /** Parts of the temperature chip's panel to hide (cpu-view.ts); saved at once. */
+  setCpuHidden: (hidden: string[]) => void;
   /** The last temperature reading and fan step (thermal.rs); null before the first. */
   thermal: () => ThermalStatus | null;
   /** Can desk drive the fans here, and is the permission installed; null: unknown. */
@@ -180,7 +196,7 @@ export class Settings {
   }
 
   /** Names, removal, a new account, and who is logged in on each. */
-  /** Options → Power → Temperature: what desk does when hot. */
+  /** Options → Heat and coffee → Temperature: what desk does when hot. */
   private thermalHtml(layout: Layout): string {
     const mode = layout.thermalMode;
     const info = this.ctx.fans();
@@ -204,11 +220,51 @@ export class Settings {
             : t("settings.fansAsk");
       html += `<div class="line dim" data-row>${consent}</div>`;
     }
+    html += this.thermalColorsHtml(layout) + this.emergencyHtml(layout);
     const about: MessageKey[] =
       mode === "off"
         ? ["settings.thermalAboutOff"]
         : [...(slows(mode) ? (["settings.thermalAbout"] as const) : []), ...(usesFans(mode) ? (["settings.thermalAboutFans"] as const) : [])];
     return html + about.map((k) => `<p class="dim small" data-row>${t(k)}</p>`).join("");
+  }
+
+  /** desk's own chip colours for this mode: from the slowing limit or the first fan step. */
+  private autoColors(layout: Layout): ThermalColors {
+    const mode = layout.thermalMode;
+    return autoColors([slows(mode) ? layout.thermalLimit : 0, usesFans(mode) ? (layout.fanSteps[0]?.celsius ?? 0) : 0]);
+  }
+
+  /** The temperature chip's colours: yellow from, red from, and the chip as it looks in each. */
+  private thermalColorsHtml(layout: Layout): string {
+    const c = layout.thermalColors ?? this.autoColors(layout);
+    const input = (k: keyof ThermalColors, label: MessageKey) =>
+      `<input type="number" min="${MIN_COLOR}" max="${MAX_COLOR}" step="1" value="${c[k]}" data-k="color-${k}" aria-label="${escapeHtml(t(label))}"/>`;
+    const follow = layout.thermalColors
+      ? `<button class="reset" data-k="colors-auto" title="${escapeHtml(t("settings.thermalColorsAuto"))}">↺</button>`
+      : `<span class="dim">${t("settings.thermalColorsFollow")}</span>`;
+    const chip = (level: string, celsius: number) => `<span class="top-btn thermal${level}">${celsius}°</span>`;
+    const samples = [chip("", c.warm - 1), ...(c.warm < c.hot ? [chip(" warm", c.warm)] : []), chip(" hot", c.hot)].join("");
+    return `<div class="line wrap" data-row><span>${t("settings.thermalColors")}</span>
+      ${t("settings.thermalColorsWarm")} ${input("warm", "settings.thermalColorsWarm")} °C
+      ${t("settings.thermalColorsHot")} ${input("hot", "settings.thermalColorsHot")} °C ${follow}
+      <span class="thermal-sample" aria-hidden="true">${samples}</span></div>`;
+  }
+
+  /** Options → Heat and coffee → CPU panel: a box per part, ticked = shown (cpu-parts.ts). */
+  private bindCpuPanel(box: HTMLElement): void {
+    box.querySelectorAll<HTMLInputElement>("[data-cpu-part]").forEach((input) =>
+      input.addEventListener("change", () =>
+        this.ctx.setCpuHidden(withPart(this.ctx.layout().cpuHidden, input.dataset.cpuPart!, input.checked)),
+      ),
+    );
+  }
+
+  /** The emergency stop: on or off, and from where. */
+  private emergencyHtml(layout: Layout): string {
+    const on = layout.emergencyOn;
+    return `<label class="line" data-row><input type="checkbox" data-k="emergency-on" ${on ? "checked" : ""}/> ${t("settings.emergencyOn")}</label>
+      <label class="line" data-row>${t("settings.emergencyAt")} <input type="number" min="${MIN_EMERGENCY}" max="${MAX_EMERGENCY}" step="1" value="${layout.emergencyAt}" data-k="emergency-at" ${on ? "" : "disabled"}/> °C</label>
+      <p class="dim small" data-row>${t("settings.emergencyAbout", { margin: RESUME_MARGIN })}</p>`;
   }
 
   /** The fan steps: a row per step, add, presets, the reason a table is not saved, and the chart. */
@@ -240,6 +296,7 @@ export class Settings {
     const chart = this.fanChartSvg(steps, layout, {
       now: thermal?.celsius ?? null,
       slow: slows(layout.thermalMode) ? layout.thermalLimit : 0,
+      emergency: layout.emergencyOn ? layout.emergencyAt : 0,
     });
     return `<div class="fan-steps" data-row>
       <span>${t("settings.fanSteps")}</span>
@@ -352,6 +409,34 @@ export class Settings {
     box.querySelectorAll<HTMLButtonElement>("[data-preset]").forEach((b) =>
       b.addEventListener("click", () => save(FAN_PRESETS[Number(b.dataset.preset)].steps.map((s) => ({ ...s })))),
     );
+    // Colours: whole degrees, yellow never above red (the one just typed wins); an empty box keeps its value.
+    const colors = (keep: keyof ThermalColors) => {
+      const layout = this.ctx.layout();
+      const was = layout.thermalColors ?? this.autoColors(layout);
+      const typed = (k: keyof ThermalColors) => {
+        const v = box.querySelector<HTMLInputElement>(`[data-k="color-${k}"]`)?.value ?? "";
+        return v === "" || !Number.isFinite(Number(v)) ? was[k] : Number(v);
+      };
+      this.ctx.setThermal({ thermalColors: clampColors({ warm: typed("warm"), hot: typed("hot") }, keep) });
+      this.render();
+    };
+    box.querySelector('[data-k="color-warm"]')?.addEventListener("change", () => colors("warm"));
+    box.querySelector('[data-k="color-hot"]')?.addEventListener("change", () => colors("hot"));
+    box.querySelector('[data-k="colors-auto"]')?.addEventListener("click", () => {
+      this.ctx.setThermal({ thermalColors: null });
+      this.render();
+    });
+    box.querySelector<HTMLInputElement>('[data-k="emergency-on"]')?.addEventListener("change", (e) => {
+      this.ctx.setThermal({ emergencyOn: (e.target as HTMLInputElement).checked });
+      this.render();
+    });
+    const emergency = box.querySelector<HTMLInputElement>('[data-k="emergency-at"]');
+    emergency?.addEventListener("change", () => {
+      const celsius = clampEmergency(emergency.value === "" ? this.ctx.layout().emergencyAt : Number(emergency.value));
+      emergency.value = String(celsius);
+      this.ctx.setThermal({ emergencyAt: celsius });
+      this.render();
+    });
     box.querySelector<HTMLButtonElement>('[data-k="fans-rm"]')?.addEventListener("click", async () => {
       await this.ctx.uninstallFans();
       this.render();
@@ -758,7 +843,8 @@ export class Settings {
               : t("settings.coffeeAsk")
           }</div>`,
         ) +
-          section(t("settings.thermal"), this.thermalHtml(layout)),
+          section(t("settings.thermal"), this.thermalHtml(layout)) +
+          section(t("settings.cpuPanel"), partsHtml(layout.cpuHidden, PLATFORM)),
       ],
       [
         "keys",
@@ -937,6 +1023,7 @@ export class Settings {
       this.ctx.setNotifications((e.target as HTMLInputElement).checked);
     });
     this.bindThermal(box);
+    this.bindCpuPanel(box);
     box.querySelector<HTMLInputElement>('[data-k="tmux-menu"]')!.addEventListener("change", (e) => {
       this.ctx.setTmuxMenu((e.target as HTMLInputElement).checked);
     });

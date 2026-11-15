@@ -108,11 +108,31 @@ pub struct Layout {
     /// "fansFirst". Read for the migration in `load`, never written.
     #[serde(skip_serializing)]
     pub fan_limit: Option<u32>,
+    /// Emergency stop: from `emergency_at` °C the work in every session is
+    /// frozen until resumed by hand (thermal::Halt). Off unless turned on in
+    /// Options.
+    pub emergency_on: bool,
+    /// Clamped to thermal::MIN_EMERGENCY..=MAX_EMERGENCY where it is used.
+    pub emergency_at: u32,
+    /// The temperature chip's colours, chosen in Options; None: from the
+    /// slowing limit or the first fan step (src/thermal.ts).
+    pub thermal_colors: Option<ThermalColors>,
+    /// Parts of the temperature chip's panel hidden in Options, by id
+    /// ("gauges", "state", "history", "details", "load", "top"; see
+    /// src/cpu-view.ts). Empty: all shown, and so is any part added later.
+    pub cpu_hidden: Vec<String>,
     /// The usage popover: "tabs" (one view at a time) or "all" (everything at once).
     pub usage_layout: String,
     /// How a session's share of the 5-hour window is worked out: "cost" (its
     /// cost in desk's history) or "transcripts" (Claude Code's transcripts).
     pub usage_share: String,
+}
+
+/// The temperature chip is yellow from `warm` and red from `hot`, °C.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThermalColors {
+    pub warm: u32,
+    pub hot: u32,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -171,6 +191,10 @@ impl Default for Layout {
             fan_margin: crate::thermal::DEFAULT_FAN_MARGIN,
             fan_wait: crate::thermal::DEFAULT_FAN_WAIT,
             fan_limit: None,
+            emergency_on: false,
+            emergency_at: crate::thermal::DEFAULT_EMERGENCY,
+            thermal_colors: None,
+            cpu_hidden: Vec::new(),
             usage_layout: "tabs".into(),
             usage_share: "cost".into(),
         }
@@ -285,11 +309,38 @@ mod tests {
             tabs: [("/a".to_string(), "shell#0:/a".to_string())].into(),
             thermal_mode: "together".into(),
             fan_steps: vec![st(65, 50), st(80, 100)],
+            emergency_on: true,
+            emergency_at: 98,
+            thermal_colors: Some(ThermalColors { warm: 60, hot: 85 }),
+            cpu_hidden: vec!["details".into(), "top".into()],
             ..Layout::default()
         };
         save(&p, &l).unwrap();
         assert_eq!(load(&p), l);
         assert!(!p.with_extension("json.tmp").exists());
+    }
+
+    #[test]
+    fn files_from_before_the_emergency_stop_have_it_off_and_the_old_colours() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("layout.json");
+        std::fs::write(&p, r#"{"version":1,"thermalLimit":80}"#).unwrap();
+        let l = load(&p);
+        assert_eq!((l.emergency_on, l.emergency_at, l.thermal_colors), (false, 95, None));
+        std::fs::write(&p, r#"{"thermalColors":{"warm":55,"hot":70},"emergencyOn":true,"emergencyAt":90}"#).unwrap();
+        let l = load(&p);
+        assert_eq!((l.emergency_on, l.emergency_at), (true, 90));
+        assert_eq!(l.thermal_colors, Some(ThermalColors { warm: 55, hot: 70 }));
+    }
+
+    #[test]
+    fn files_from_before_the_cpu_panel_options_show_all_of_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("layout.json");
+        std::fs::write(&p, r#"{"version":1}"#).unwrap();
+        assert!(load(&p).cpu_hidden.is_empty());
+        std::fs::write(&p, r#"{"cpuHidden":["history"]}"#).unwrap();
+        assert_eq!(load(&p).cpu_hidden, ["history"]);
     }
 
     #[test]

@@ -33,12 +33,23 @@
 //!   picks the step from the same average as slowing, independent of it, and
 //!   fans.rs sets every fan to that step's percent (macOS on Apple Silicon
 //!   only). Below the first step the fans are macOS's again.
+//!
+//! Emergency stop
+//! - Only when turned on in Options (off by default): once the same average
+//!   reaches its limit (95 °C by default), desk freezes the work in all its
+//!   sessions, tiles open or not (`Halt`, `freeze_plan`). Nothing is killed:
+//!   macOS and Linux stop the processes (SIGSTOP), Windows suspends their
+//!   threads. It stays so until the user resumes it from the top bar, which
+//!   waits until the CPU is `RESUME_MARGIN` below the limit, or turns it off
+//!   in Options. Quitting desk resumes everything; after a crash the next
+//!   start does (the pids are kept in `halted-pids`).
 
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use crate::fans::{FanStatus, Fans};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 pub const DEFAULT_LIMIT: u32 = 75;
@@ -52,6 +63,20 @@ const TICK: Duration = Duration::from_secs(5);
 const WINDOW: usize = 3;
 /// Slowed at least this long, so the sessions do not flap at the limit.
 const MIN_SLOW: Duration = Duration::from_secs(60);
+
+/// The emergency stop's limit (Options, layout `emergencyAt`), °C.
+pub const DEFAULT_EMERGENCY: u32 = 95;
+pub const MIN_EMERGENCY: u32 = 60;
+pub const MAX_EMERGENCY: u32 = 110;
+/// Resuming after an emergency stop waits until the average is this far
+/// below its limit, so the work does not freeze again at once.
+pub const RESUME_MARGIN: f32 = 5.0;
+
+/// The emergency limit the guard uses: 0 when the stop is off, else the
+/// layout's within MIN_EMERGENCY..=MAX_EMERGENCY.
+pub fn emergency_limit(on: bool, celsius: u32) -> u32 {
+    if on { celsius.clamp(MIN_EMERGENCY, MAX_EMERGENCY) } else { 0 }
+}
 
 /// How a fan step comes down (Options, layout `fanMargin` and `fanWait`):
 /// `margin` °C below its threshold, and no sooner than `wait` seconds after
@@ -105,6 +130,16 @@ pub struct Status {
     pub cannot_slow: Option<String>,
     /// The fans, when the mode uses them.
     pub fans: Option<FanStatus>,
+    /// The emergency stop's limit, °C; 0: off.
+    pub emergency: u32,
+    /// The emergency stop tripped: the sessions' work is frozen until the
+    /// user resumes it.
+    pub halted: bool,
+    /// Processes frozen.
+    pub frozen: usize,
+    /// Programs typed at a shell prompt left running (`freeze_plan`); what
+    /// they started is frozen.
+    pub jobs: usize,
 }
 
 /// What desk does when hot (Options, layout `thermalMode`).
@@ -187,6 +222,55 @@ impl Policy {
             None => {}
         }
         self.since.is_some()
+    }
+}
+
+/// When to freeze the sessions' work: the average of the last readings at or
+/// over the emergency limit. It holds until the user resumes (`resume`); the
+/// temperature dropping does not undo it.
+#[derive(Debug, Default)]
+pub struct Halt {
+    readings: VecDeque<f32>,
+    tripped: bool,
+}
+
+impl Halt {
+    /// Takes a reading (None: no sensor, nothing changes); says whether the
+    /// work should be frozen now. `limit` 0: the stop is off and lets go.
+    pub fn step(&mut self, celsius: Option<f32>, limit: u32) -> bool {
+        if let Some(c) = celsius {
+            if self.readings.len() == WINDOW {
+                self.readings.pop_front();
+            }
+            self.readings.push_back(c);
+        }
+        if limit == 0 {
+            self.tripped = false;
+        } else if self.average().is_some_and(|a| a >= limit as f32) {
+            self.tripped = true;
+        }
+        self.tripped
+    }
+
+    pub fn tripped(&self) -> bool {
+        self.tripped
+    }
+
+    /// The user's "resume": refused with the average while it is not yet
+    /// RESUME_MARGIN below `limit` (0: off, always allowed).
+    pub fn resume(&mut self, limit: u32) -> Result<(), f32> {
+        if let Some(a) = self.average()
+            && limit > 0
+            && a > limit as f32 - RESUME_MARGIN
+        {
+            return Err(a);
+        }
+        self.tripped = false;
+        Ok(())
+    }
+
+    fn average(&self) -> Option<f32> {
+        (self.readings.len() == WINDOW).then(|| self.readings.iter().sum::<f32>() / WINDOW as f32)
     }
 }
 
@@ -321,6 +405,10 @@ pub struct Proc {
     /// Its terminal ("ttys004", "pts/3"); None without one or where desk
     /// cannot tell (Windows).
     pub tty: Option<String>,
+    /// Its process group; None where there are none (Windows).
+    pub group: Option<u32>,
+    /// Stopped (Ctrl+Z, or waiting to read a terminal it does not own).
+    pub stopped: bool,
 }
 
 /// The given processes still running and everything they started.
@@ -396,13 +484,51 @@ pub fn split(roots: &[u32], table: &[Proc], typing: impl Fn(Option<&str>) -> boo
     }
 }
 
-/// `ps -A -o pid=,ppid=,tty=,comm=` output.
+/// What the emergency stop freezes, and the jobs it leaves running.
+#[derive(Debug, Default, PartialEq)]
+pub struct FreezePlan {
+    pub freeze: Vec<u32>,
+    pub jobs: Vec<u32>,
+}
+
+/// What the emergency stop freezes among the sessions' processes (`roots`
+/// and everything they started): all of it, except
+/// - the sessions' own processes: tmux wakes a pane's process that stops,
+///   and they only wait for what they started anyway;
+/// - a job a shell runs with job control (`pnpm test` typed at a prompt: its
+///   own process group). The shell would see it stop, take the terminal back
+///   and, once it runs again, leave it in the background. What the job
+///   started (the test workers, the compiler) is frozen;
+/// - what is stopped already (Ctrl+Z): resuming must not start it.
+pub fn freeze_plan(roots: &[u32], table: &[Proc]) -> FreezePlan {
+    let by_pid: HashMap<u32, &Proc> = table.iter().map(|p| (p.pid, p)).collect();
+    let mut plan = FreezePlan::default();
+    for pid in descendants(roots, table) {
+        let Some(p) = by_pid.get(&pid) else { continue };
+        if roots.contains(&pid) || p.stopped {
+            continue;
+        }
+        let job = by_pid
+            .get(&p.parent)
+            .is_some_and(|sh| SHELLS.contains(&sh.name.as_str()) && p.group.is_some() && p.group != sh.group);
+        if job {
+            plan.jobs.push(pid);
+        } else {
+            plan.freeze.push(pid);
+        }
+    }
+    plan
+}
+
+/// `ps -A -o pid=,ppid=,pgid=,stat=,tty=,comm=` output.
 pub fn parse_ps(out: &str) -> Vec<Proc> {
     out.lines()
         .filter_map(|l| {
             let mut it = l.split_whitespace();
             let pid = it.next()?.parse().ok()?;
             let parent = it.next()?.parse().ok()?;
+            let group = it.next()?.parse().ok()?;
+            let stat = it.next()?;
             let tty = it.next()?;
             // The rest is the program, a path with spaces at times.
             let comm = it.collect::<Vec<_>>().join(" ");
@@ -411,6 +537,8 @@ pub fn parse_ps(out: &str) -> Vec<Proc> {
                 parent,
                 name: program_name(&comm),
                 tty: (!tty.starts_with('?')).then(|| tty.to_string()),
+                group: Some(group),
+                stopped: stat.starts_with('T'),
             })
         })
         .collect()
@@ -511,23 +639,88 @@ struct Inner {
     fan_policy: StepPolicy,
     fans: Fans,
     os: os::Slower,
+    halt: Halt,
+    /// Processes the emergency stop froze, to resume exactly those.
+    frozen: BTreeSet<u32>,
+    /// The sessions when the stop tripped: what they start later is frozen
+    /// too, sessions opened since are not.
+    halt_roots: Option<Vec<u32>>,
+    /// `frozen`, kept on disk so the next start resumes them after a crash.
+    marker: PathBuf,
     /// The first reading after start: put back what a crashed desk left slowed.
     first: bool,
     /// desk is quitting: nothing more is slowed.
     stopped: bool,
 }
 
+impl Inner {
+    /// Freezes what is not frozen yet, forgets what has ended, and keeps the
+    /// marker in step.
+    fn freeze(&mut self, pids: &[u32], table: &[Proc]) {
+        let alive: HashSet<u32> = table.iter().map(|p| p.pid).collect();
+        let before = self.frozen.len();
+        self.frozen.retain(|p| alive.contains(p));
+        let new: Vec<u32> = pids.iter().copied().filter(|p| !self.frozen.contains(p)).collect();
+        let done = os::freeze(&new);
+        let changed = self.frozen.len() != before || !done.is_empty();
+        self.frozen.extend(done);
+        if changed {
+            self.write_marker();
+        }
+    }
+
+    /// Everything frozen runs again.
+    fn thaw(&mut self) {
+        let pids: Vec<u32> = std::mem::take(&mut self.frozen).into_iter().collect();
+        os::thaw(&pids);
+        self.halt_roots = None;
+        self.write_marker();
+    }
+
+    fn write_marker(&self) {
+        if self.frozen.is_empty() {
+            let _ = std::fs::remove_file(&self.marker);
+        } else {
+            let pids: Vec<String> = self.frozen.iter().map(u32::to_string).collect();
+            let _ = std::fs::write(&self.marker, pids.join("\n"));
+        }
+    }
+
+    /// What a crashed desk left frozen in the sessions runs again.
+    fn recover_frozen(&mut self, roots: &[u32], table: &[Proc]) {
+        let Ok(text) = std::fs::read_to_string(&self.marker) else { return };
+        let _ = std::fs::remove_file(&self.marker);
+        let pids = to_thaw(&text, roots, table);
+        os::thaw(&pids);
+    }
+}
+
+/// The pids in a crashed desk's marker that are still in the sessions and
+/// stopped (Windows does not say: every one still in the sessions).
+pub fn to_thaw(marker: &str, roots: &[u32], table: &[Proc]) -> Vec<u32> {
+    let listed: HashSet<u32> = marker.split_whitespace().filter_map(|p| p.parse().ok()).collect();
+    let ours: HashSet<u32> = descendants(roots, table).into_iter().collect();
+    table
+        .iter()
+        .filter(|p| listed.contains(&p.pid) && ours.contains(&p.pid) && (p.stopped || p.group.is_none()))
+        .map(|p| p.pid)
+        .collect()
+}
+
 pub struct Guard {
     /// From Options: the mode, the slowing limit, the fan steps and their way down.
     config: Mutex<(Mode, u32, Vec<Step>, StepDown)>,
+    /// The emergency stop's limit (`emergency_limit`); 0: off.
+    emergency: AtomicU32,
     inner: Mutex<Inner>,
 }
 
 impl Guard {
-    pub fn new(mode: Mode, limit: u32, steps: Vec<Step>, down: StepDown, support_dir: &Path) -> Self {
+    pub fn new(mode: Mode, limit: u32, steps: Vec<Step>, down: StepDown, emergency: u32, support_dir: &Path) -> Self {
         let fan_steps = if mode.uses_fans() { steps.clone() } else { Vec::new() };
         Self {
             config: Mutex::new((mode, limit, steps, down)),
+            emergency: AtomicU32::new(emergency),
             inner: Mutex::new(Inner {
                 status: Status {
                     celsius: None,
@@ -539,6 +732,10 @@ impl Guard {
                     processes: 0,
                     cannot_slow: None,
                     fans: None,
+                    emergency,
+                    halted: false,
+                    frozen: 0,
+                    jobs: 0,
                 },
                 policy: Policy::default(),
                 fan_policy: StepPolicy::default(),
@@ -546,6 +743,10 @@ impl Guard {
                 // A unit struct on macOS and Windows, with state on Linux.
                 #[allow(clippy::default_constructed_unit_structs)]
                 os: os::Slower::default(),
+                halt: Halt::default(),
+                frozen: BTreeSet::new(),
+                halt_roots: None,
+                marker: support_dir.join("halted-pids"),
                 first: true,
                 stopped: false,
             }),
@@ -554,6 +755,24 @@ impl Guard {
 
     pub fn configure(&self, mode: Mode, limit: u32, steps: Vec<Step>, down: StepDown) {
         *self.config.lock().unwrap() = (mode, limit, steps, down);
+    }
+
+    /// The emergency stop's limit from Options (`emergency_limit`); 0 turns
+    /// it off, which resumes the work at the next reading.
+    pub fn set_emergency(&self, limit: u32) {
+        self.emergency.store(limit, Ordering::Relaxed);
+    }
+
+    /// The user's "resume" after an emergency stop. Refused, with the
+    /// average, while the CPU is not yet RESUME_MARGIN below the limit.
+    pub fn resume(&self) -> Result<Status, f32> {
+        let mut g = self.inner.lock().unwrap();
+        g.halt.resume(self.emergency.load(Ordering::Relaxed))?;
+        g.thaw();
+        g.status.halted = false;
+        g.status.frozen = 0;
+        g.status.jobs = 0;
+        Ok(g.status.clone())
     }
 
     /// Before removing the permission: the fans back to auto now, if desk set
@@ -586,11 +805,13 @@ impl Guard {
             return None;
         }
         let (mode, limit, steps, down) = self.config.lock().unwrap().clone();
+        let emergency = self.emergency.load(Ordering::Relaxed);
         let limit = mode.slow_limit(limit);
         let steps = if mode.uses_fans() { steps } else { Vec::new() };
         let now = Instant::now();
         let was = g.status.slowed;
         let slow = g.policy.step(celsius, pressure, limit, now);
+        let halt = g.halt.step(celsius, emergency);
         g.fan_policy.set_down(down);
         let fan_step = g.fan_policy.step(celsius, pressure, &steps, now);
         if g.first {
@@ -609,9 +830,16 @@ impl Guard {
             slowed: slow,
             processes: 0,
             cannot_slow: g.status.cannot_slow.clone(),
+            emergency,
+            halted: halt,
+            frozen: 0,
+            jobs: 0,
         };
+        // The sessions and the process table, read once and only when needed.
+        let need = slow || was || g.first || halt || !g.frozen.is_empty();
+        let (roots, table) = if need { (roots(), os::processes()) } else { (Vec::new(), Vec::new()) };
         if slow {
-            let parts = split(&roots(), &os::processes(), os::typing);
+            let parts = split(&roots, &table, os::typing);
             g.os.spare(&parts.spare);
             match g.os.slow(&parts.slow) {
                 Ok(n) => {
@@ -621,8 +849,21 @@ impl Guard {
                 Err(e) => next.cannot_slow = Some(e),
             }
         } else if was || g.first {
-            let pids = descendants(&roots(), &os::processes());
+            let pids = descendants(&roots, &table);
             g.os.release(&pids);
+        }
+        if g.first {
+            g.recover_frozen(&roots, &table);
+        }
+        if halt {
+            let halt_roots = g.halt_roots.get_or_insert_with(|| roots.clone()).clone();
+            let plan = freeze_plan(&halt_roots, &table);
+            g.freeze(&plan.freeze, &table);
+            next.frozen = g.frozen.len();
+            next.jobs = plan.jobs.len();
+        } else if !g.frozen.is_empty() {
+            // The stop was turned off in Options.
+            g.thaw();
         }
         g.first = false;
         if next == g.status {
@@ -632,17 +873,27 @@ impl Guard {
         Some(next)
     }
 
-    /// desk quits: the sessions (tmux keeps them running) get full speed back
-    /// and the fans go back to auto.
+    /// desk quits: the sessions (tmux keeps them running) get full speed back,
+    /// what the emergency stop froze runs again (nothing would be left to
+    /// resume it), and the fans go back to auto.
     pub fn shutdown(&self, roots: &[u32]) {
         let mut g = self.inner.lock().unwrap();
         g.stopped = true;
         g.fans.release();
+        if !g.frozen.is_empty() {
+            g.thaw();
+        }
         if g.status.slowed {
             let pids = descendants(roots, &os::processes());
             g.os.release(&pids);
         }
     }
+}
+
+/// Every process running now (thermal's table): the CPU panel's on Windows
+/// (cpu.rs).
+pub fn processes() -> Vec<Proc> {
+    os::processes()
 }
 
 /// Reads every 5 s on its own thread; `tick` gets the reading and the
@@ -684,10 +935,35 @@ fn tty_takes_keys(tty: Option<&str>) -> bool {
 #[cfg(unix)]
 fn ps_processes() -> Vec<Proc> {
     std::process::Command::new("ps")
-        .args(["-A", "-o", "pid=,ppid=,tty=,comm="])
+        .args(["-A", "-o", "pid=,ppid=,pgid=,stat=,tty=,comm="])
         .output()
         .map(|o| parse_ps(&String::from_utf8_lossy(&o.stdout)))
         .unwrap_or_default()
+}
+
+/// The emergency stop on macOS and Linux: SIGSTOP, which nothing can catch,
+/// and SIGCONT. Returns the pids stopped.
+#[cfg(unix)]
+fn signal_freeze(pids: &[u32]) -> Vec<u32> {
+    pids.iter().copied().filter(|&p| signal(p, libc::SIGSTOP)).collect()
+}
+
+#[cfg(unix)]
+fn signal_thaw(pids: &[u32]) {
+    for &p in pids {
+        signal(p, libc::SIGCONT);
+    }
+}
+
+#[cfg(unix)]
+fn signal(pid: u32, sig: libc::c_int) -> bool {
+    // Never the kernel, init, a process group (0 or negative) nor desk.
+    let Ok(pid) = libc::pid_t::try_from(pid) else { return false };
+    if pid <= 1 || pid as u32 == std::process::id() {
+        return false;
+    }
+    // SAFETY: plain syscall on one pid; a gone or foreign process just fails.
+    unsafe { libc::kill(pid, sig) == 0 }
 }
 
 #[cfg(target_os = "macos")]
@@ -844,6 +1120,14 @@ mod os {
         super::tty_takes_keys(tty)
     }
 
+    pub fn freeze(pids: &[u32]) -> Vec<u32> {
+        super::signal_freeze(pids)
+    }
+
+    pub fn thaw(pids: &[u32]) {
+        super::signal_thaw(pids)
+    }
+
     #[derive(Default)]
     pub struct Slower;
 
@@ -933,6 +1217,14 @@ mod os {
         super::tty_takes_keys(tty)
     }
 
+    pub fn freeze(pids: &[u32]) -> Vec<u32> {
+        super::signal_freeze(pids)
+    }
+
+    pub fn thaw(pids: &[u32]) {
+        super::signal_thaw(pids)
+    }
+
     fn busctl(args: &[String]) -> Result<(), String> {
         let out = Command::new("busctl")
             .args(args)
@@ -989,16 +1281,19 @@ mod os {
     use super::hottest;
     use std::ffi::c_void;
     use windows::Win32::Foundation::CloseHandle;
+    use std::collections::HashSet;
     use windows::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
+        TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
     };
     use windows::Win32::System::Performance::{
         PDH_FMT_COUNTERVALUE_ITEM_W, PDH_FMT_DOUBLE, PDH_HCOUNTER, PDH_HQUERY, PdhAddEnglishCounterW,
         PdhCloseQuery, PdhCollectQueryData, PdhGetFormattedCounterArrayW, PdhOpenQueryW,
     };
     use windows::Win32::System::Threading::{
-        OpenProcess, PROCESS_POWER_THROTTLING_CURRENT_VERSION, PROCESS_POWER_THROTTLING_EXECUTION_SPEED,
-        PROCESS_POWER_THROTTLING_STATE, PROCESS_SET_INFORMATION, ProcessPowerThrottling, SetProcessInformation,
+        OpenProcess, OpenThread, PROCESS_POWER_THROTTLING_CURRENT_VERSION, PROCESS_POWER_THROTTLING_EXECUTION_SPEED,
+        PROCESS_POWER_THROTTLING_STATE, PROCESS_SET_INFORMATION, ProcessPowerThrottling, ResumeThread,
+        SetProcessInformation, SuspendThread, THREAD_SUSPEND_RESUME,
     };
     use windows::core::{PCWSTR, w};
 
@@ -1081,6 +1376,8 @@ mod os {
                         parent: e.th32ParentProcessID,
                         name: super::program_name(&String::from_utf16_lossy(&e.szExeFile[..len])),
                         tty: None,
+                        group: None,
+                        stopped: false,
                     });
                     if Process32NextW(snap, &mut e).is_err() {
                         break;
@@ -1096,6 +1393,73 @@ mod os {
     /// runs always counts as typed into, only what it starts is slowed.
     pub fn typing(_tty: Option<&str>) -> bool {
         true
+    }
+
+    /// The emergency stop on Windows: every thread of each process suspended,
+    /// as Resource Monitor's "Suspend process" does. Twice over, so a thread
+    /// started meanwhile by one not yet suspended is caught too. Returns the
+    /// pids with a thread suspended.
+    pub fn freeze(pids: &[u32]) -> Vec<u32> {
+        let want: HashSet<u32> = pids.iter().copied().collect();
+        let (mut done, mut seen) = (HashSet::new(), HashSet::new());
+        for _ in 0..2 {
+            for (pid, tid) in threads(&want) {
+                if seen.insert(tid) && suspend(tid, true) {
+                    done.insert(pid);
+                }
+            }
+        }
+        pids.iter().copied().filter(|p| done.contains(p)).collect()
+    }
+
+    /// Each thread resumed once: back to where it was before `freeze`.
+    pub fn thaw(pids: &[u32]) {
+        let want: HashSet<u32> = pids.iter().copied().collect();
+        for (_, tid) in threads(&want) {
+            suspend(tid, false);
+        }
+    }
+
+    /// (process, thread) for every thread of `pids`.
+    fn threads(pids: &HashSet<u32>) -> Vec<(u32, u32)> {
+        let mut out = Vec::new();
+        if pids.is_empty() {
+            return out;
+        }
+        // SAFETY: the snapshot handle is closed below; the entry is sized.
+        unsafe {
+            let Ok(snap) = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) else {
+                return out;
+            };
+            let mut e = THREADENTRY32 {
+                dwSize: size_of::<THREADENTRY32>() as u32,
+                ..Default::default()
+            };
+            if Thread32First(snap, &mut e).is_ok() {
+                loop {
+                    if pids.contains(&e.th32OwnerProcessID) {
+                        out.push((e.th32OwnerProcessID, e.th32ThreadID));
+                    }
+                    if Thread32Next(snap, &mut e).is_err() {
+                        break;
+                    }
+                }
+            }
+            let _ = CloseHandle(snap);
+        }
+        out
+    }
+
+    fn suspend(tid: u32, on: bool) -> bool {
+        // SAFETY: the handle is closed; a gone or foreign thread just fails.
+        unsafe {
+            let Ok(h) = OpenThread(THREAD_SUSPEND_RESUME, false, tid) else {
+                return false;
+            };
+            let count = if on { SuspendThread(h) } else { ResumeThread(h) };
+            let _ = CloseHandle(h);
+            count != u32::MAX
+        }
     }
 
     #[derive(Default)]
@@ -1248,6 +1612,17 @@ mod tests {
             parent,
             name: name.into(),
             tty: tty.map(String::from),
+            group: None,
+            stopped: false,
+        }
+    }
+
+    /// A process in process group `group`, stopped or not.
+    fn in_group(pid: u32, parent: u32, name: &str, group: u32, stopped: bool) -> Proc {
+        Proc {
+            group: Some(group),
+            stopped,
+            ..proc(pid, parent, name, Some("ttys009"))
         }
     }
 
@@ -1331,15 +1706,16 @@ mod tests {
 
     #[test]
     fn reads_ps() {
-        let out = "    1     0 ??       /sbin/launchd\n 2299  2297 ttys000  -zsh\nbad line\n 2319  2299 ttys000  /Users/x/Application Support/bin/claude\n   77     1 ?        kworker\n  900   412 pts/3    bash\n";
+        let out = "    1     0     1 Ss   ??       /sbin/launchd\n 2299  2297  2299 Ss   ttys000  -zsh\nbad line\n 2319  2299  2299 S+   ttys000  /Users/x/Application Support/bin/claude\n   77     1     0 I    ?        kworker\n  900   412   900 T    pts/3    bash\n";
+        let with = |p: Proc, group: u32, stopped: bool| Proc { group: Some(group), stopped, ..p };
         assert_eq!(
             parse_ps(out),
             [
-                proc(1, 0, "launchd", None),
-                proc(2299, 2297, "zsh", Some("ttys000")),
-                proc(2319, 2299, "claude", Some("ttys000")),
-                proc(77, 1, "kworker", None),
-                proc(900, 412, "bash", Some("pts/3")),
+                with(proc(1, 0, "launchd", None), 1, false),
+                with(proc(2299, 2297, "zsh", Some("ttys000")), 2299, false),
+                with(proc(2319, 2299, "claude", Some("ttys000")), 2299, false),
+                with(proc(77, 1, "kworker", None), 0, false),
+                with(proc(900, 412, "bash", Some("pts/3")), 900, true),
             ]
         );
         assert_eq!(program_name("C:\\Program Files\\PowerShell\\7\\pwsh.exe"), "pwsh");
@@ -1638,5 +2014,196 @@ mod tests {
         assert_eq!(hold(&mut p, 85.0, &s3(), t), Some(2));
         assert_eq!(hold(&mut p, 85.0, &[st(65, 50)], t + Duration::from_secs(5)), Some(0));
         assert_eq!(p.step(Some(85.0), false, &[], t + Duration::from_secs(10)), None);
+    }
+
+    fn halt_run(h: &mut Halt, readings: &[f32], limit: u32) -> Vec<bool> {
+        readings.iter().map(|&c| h.step(Some(c), limit)).collect()
+    }
+
+    #[test]
+    fn the_emergency_stop_trips_on_the_average_not_on_one_spike() {
+        let mut h = Halt::default();
+        assert_eq!(halt_run(&mut h, &[80.0, 110.0, 80.0, 80.0], 95), [false; 4]);
+        let mut h = Halt::default();
+        assert_eq!(halt_run(&mut h, &[94.0, 96.0, 96.0], 95), [false, false, true]);
+    }
+
+    #[test]
+    fn the_emergency_stop_holds_until_resumed_by_hand() {
+        let mut h = Halt::default();
+        assert_eq!(halt_run(&mut h, &[97.0, 97.0, 97.0], 95), [false, false, true]);
+        // Cold again: still frozen, only the user resumes.
+        assert_eq!(halt_run(&mut h, &[50.0, 50.0, 50.0], 95), [true; 3]);
+        assert_eq!(h.resume(95), Ok(()));
+        assert!(!h.tripped());
+        assert!(!h.step(Some(50.0), 95));
+        // Hot again: frozen again.
+        assert_eq!(halt_run(&mut h, &[99.0, 99.0, 99.0], 95), [false, false, true]);
+    }
+
+    #[test]
+    fn resuming_waits_until_the_cpu_is_five_degrees_below_the_limit() {
+        let mut h = Halt::default();
+        halt_run(&mut h, &[96.0, 96.0, 96.0], 95);
+        halt_run(&mut h, &[91.0, 91.0, 91.0], 95);
+        assert_eq!(h.resume(95), Err(91.0));
+        assert!(h.tripped());
+        halt_run(&mut h, &[90.0, 90.0, 90.0], 95);
+        assert_eq!(h.resume(95), Ok(()));
+        // No reading to go by: allowed.
+        let mut h = Halt::default();
+        assert_eq!(h.resume(95), Ok(()));
+    }
+
+    #[test]
+    fn turning_the_emergency_stop_off_lets_go_and_it_never_trips_off() {
+        let mut h = Halt::default();
+        assert_eq!(halt_run(&mut h, &[99.0, 99.0, 99.0], 0), [false; 3]);
+        assert!(h.step(Some(99.0), 95));
+        assert!(!h.step(Some(99.0), 0));
+        assert_eq!(h.resume(0), Ok(()));
+        assert!(h.step(None, 95), "the readings are kept: the average is still over");
+    }
+
+    #[test]
+    fn emergency_limits() {
+        assert_eq!(emergency_limit(false, 95), 0);
+        assert_eq!([0, 59, 60, 95, 110, 200].map(|c| emergency_limit(true, c)), [60, 60, 60, 95, 110, 110]);
+    }
+
+    #[test]
+    fn the_emergency_stop_freezes_everything_an_agent_runs() {
+        // A Claude tile as desk starts it: zsh -lc 'claude ...; exec zsh -l',
+        // no job control, so all in the pane's process group.
+        let table = [
+            in_group(100, 1, "tmux", 100, false),
+            in_group(200, 100, "zsh", 200, false),
+            in_group(210, 200, "claude", 200, false),
+            in_group(220, 210, "node", 200, false),
+            in_group(230, 210, "bash", 200, false),
+            in_group(231, 230, "cargo", 200, false),
+            in_group(232, 231, "rustc", 200, false),
+        ];
+        let plan = freeze_plan(&[200], &table);
+        assert_eq!(plan.freeze, [210, 220, 230, 231, 232]);
+        assert!(plan.jobs.is_empty());
+    }
+
+    #[test]
+    fn a_job_typed_at_a_prompt_keeps_its_terminal_and_what_it_runs_freezes() {
+        let table = [
+            in_group(300, 1, "zsh", 300, false),
+            // `pnpm test | tee log`: a job of two, its own process group.
+            in_group(310, 300, "node", 310, false),
+            in_group(311, 300, "tee", 310, false),
+            in_group(312, 310, "node", 310, false), // a vitest worker
+            // A job stopped with Ctrl+Z, and what it started: left as they are.
+            in_group(320, 300, "vim", 320, true),
+            in_group(321, 320, "node", 320, true),
+        ];
+        let plan = freeze_plan(&[300], &table);
+        assert_eq!(plan.freeze, [312]);
+        assert_eq!(plan.jobs, [310, 311]);
+        // Windows: no process groups, so no jobs; the session's own process never.
+        let flat: Vec<Proc> = table[..4].iter().map(|p| Proc { group: None, ..p.clone() }).collect();
+        assert_eq!(freeze_plan(&[300], &flat), FreezePlan { freeze: vec![310, 311, 312], jobs: vec![] });
+    }
+
+    #[test]
+    fn after_a_crash_only_what_is_still_frozen_in_the_sessions_runs_again() {
+        let table = [
+            in_group(200, 1, "zsh", 200, false),
+            in_group(210, 200, "claude", 200, true),
+            in_group(211, 210, "node", 200, false), // running: someone resumed it
+            in_group(400, 1, "node", 400, true),    // stopped, but not in a session
+        ];
+        assert_eq!(to_thaw("210\n211\n400\n999\nbad", &[200], &table), [210]);
+        let windows = [proc(200, 1, "pwsh", None), proc(210, 200, "claude", None)];
+        assert_eq!(to_thaw("210", &[200], &windows), [210]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn freezes_a_process_and_lets_it_run_again() {
+        let mut child = std::process::Command::new("sleep").arg("30").spawn().unwrap();
+        let pid = child.id();
+        let state = || {
+            let out = std::process::Command::new("ps")
+                .args(["-o", "stat=", "-p", &pid.to_string()])
+                .output()
+                .unwrap();
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+        assert!(!state().starts_with('T'));
+        assert_eq!(os::freeze(&[pid]), [pid]);
+        assert!(state().starts_with('T'), "{}", state());
+        os::thaw(&[pid]);
+        assert!(!state().starts_with('T'), "{}", state());
+        // Never desk itself nor init.
+        assert!(os::freeze(&[std::process::id(), 1, 0]).is_empty());
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_guard_freezes_a_sessions_work_and_only_the_user_resumes_it() {
+        let dir = tempfile::tempdir().unwrap();
+        // A session as desk starts it: a shell running a program, no job control.
+        let mut session = std::process::Command::new("sh").args(["-c", "sleep 30; true"]).spawn().unwrap();
+        let root = session.id();
+        let mut work = None;
+        for _ in 0..50 {
+            work = descendants(&[root], &os::processes()).into_iter().find(|&p| p != root);
+            if work.is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let work = work.expect("sh started sleep");
+        let stopped = |pid: u32| os::processes().iter().any(|p| p.pid == pid && p.stopped);
+        let marker = dir.path().join("halted-pids");
+        let guard = Guard::new(Mode::Off, 75, Vec::new(), StepDown::default(), 95, dir.path());
+        let tick = |c: f32| guard.tick(Some(c), false, || vec![root]);
+
+        tick(97.0);
+        tick(97.0);
+        assert!(!stopped(work), "one hot reading is not enough");
+        let s = tick(97.0).unwrap();
+        assert!(s.halted && s.frozen == 1 && s.jobs == 0, "{s:?}");
+        assert!(stopped(work) && !stopped(root));
+        assert_eq!(std::fs::read_to_string(&marker).unwrap(), work.to_string());
+
+        // Still hot: refused. Cooled down: frozen all the same until resumed.
+        assert_eq!(guard.resume().unwrap_err(), 97.0);
+        for _ in 0..3 {
+            tick(85.0);
+        }
+        assert!(guard.status().halted && stopped(work));
+        let s = guard.resume().unwrap();
+        assert!(!s.halted && s.frozen == 0, "{s:?}");
+        assert!(!stopped(work) && !marker.exists());
+
+        // Hot again, then turned off in Options: running again at the next reading.
+        for _ in 0..3 {
+            tick(99.0);
+        }
+        assert!(stopped(work));
+        guard.set_emergency(0);
+        let s = tick(99.0).unwrap();
+        assert!(!s.halted && s.emergency == 0, "{s:?}");
+        assert!(!stopped(work));
+
+        // On again while still hot: frozen at once; quitting desk lets it run.
+        guard.set_emergency(95);
+        assert!(tick(99.0).unwrap().halted);
+        assert!(stopped(work));
+        guard.shutdown(&[root]);
+        assert!(!stopped(work) && !marker.exists());
+
+        // SAFETY: plain syscall on our own child.
+        unsafe { libc::kill(work as libc::pid_t, libc::SIGKILL) };
+        let _ = session.kill();
+        let _ = session.wait();
     }
 }
