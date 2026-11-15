@@ -1,11 +1,29 @@
 // What desk tells you in its window: a card in the top right corner for each
 // message (ui.ts toast), and the bell in the bottom bar with the ones you may
 // have missed. Kinds: ok confirms what you did, info tells, warn asks for
-// attention, error stays until you close it. Everything here is plain data and
-// HTML, so it is tested without a window.
-import { t } from "./i18n";
+// attention, error stays until you close it. A topic says what a notice is
+// about (a copy, the CPU, a session), and the history shows one topic at a
+// time when asked. Everything here is plain data and HTML, so it is tested
+// without a window.
+import { t, type MessageKey } from "./i18n";
 
 export type NoticeKind = "info" | "ok" | "warn" | "error";
+
+/** What a notice is about; one not told its topic is "other". */
+export type NoticeTopic = "sessions" | "projects" | "thermal" | "coffee" | "updates" | "clipboard" | "other";
+
+/** The order of the history's filter buttons. */
+export const TOPICS: readonly NoticeTopic[] = ["sessions", "projects", "thermal", "coffee", "updates", "clipboard", "other"];
+
+const TOPIC_LABEL: Record<NoticeTopic, MessageKey> = {
+  sessions: "notice.topicSessions",
+  projects: "notice.topicProjects",
+  thermal: "notice.topicThermal",
+  coffee: "notice.topicCoffee",
+  updates: "notice.topicUpdates",
+  clipboard: "notice.topicClipboard",
+  other: "notice.topicOther",
+};
 
 export interface NoticeAction {
   label: string;
@@ -18,11 +36,14 @@ export interface NoticeOptions {
   ms?: number;
   /** One button on the card and in the history ("Przywróć", "Zainstaluj"). */
   action?: NoticeAction;
+  /** What it is about, for the history's filter; "other" when left out. */
+  topic?: NoticeTopic;
 }
 
 export interface Notice {
   id: number;
   kind: NoticeKind;
+  topic: NoticeTopic;
   text: string;
   at: number;
   /** null: stays until closed. */
@@ -59,6 +80,7 @@ export class Notices {
     const n: Notice = {
       id: this.next++,
       kind,
+      topic: o.topic ?? "other",
       text,
       at,
       ms: kind === "error" ? null : (o.ms ?? NOTICE_MS[kind]),
@@ -99,8 +121,9 @@ export class Notices {
     this.changed();
   }
 
-  clear(): void {
-    this.list = [];
+  /** All of them, or only those about `topic` (the history's filter). */
+  clear(topic?: NoticeTopic): void {
+    this.list = topic ? this.list.filter((n) => n.topic !== topic) : [];
     this.changed();
   }
 
@@ -149,16 +172,36 @@ export function noticeHtml(n: Notice): string {
   );
 }
 
-/** The bell's list, newest first. */
-export function historyHtml(list: readonly Notice[]): string {
+/** The topics in `list` with how many notices each, in TOPICS order. */
+export function topicCounts(list: readonly Notice[]): [NoticeTopic, number][] {
+  return TOPICS.map((topic): [NoticeTopic, number] => [topic, list.filter((n) => n.topic === topic).length]).filter(
+    ([, count]) => count > 0,
+  );
+}
+
+/** The bell's list, newest first: only the notices about `topic` when it is
+ *  still there, with a button per topic once there are two to choose from. */
+export function historyHtml(list: readonly Notice[], topic: NoticeTopic | null = null): string {
+  const counts = topicCounts(list);
+  const chosen = counts.length > 1 && counts.some(([x]) => x === topic) ? topic : null;
+  const chip = (value: NoticeTopic | null, label: string, count: number) =>
+    `<button class="notice-filter" data-notice-topic="${value ?? ""}" aria-pressed="${value === chosen}">${label} <span>${count}</span></button>`;
+  const filters =
+    counts.length > 1
+      ? `<div class="notice-filters" role="group" aria-label="${escapeHtml(t("notice.filter"))}">${chip(null, t("notice.all"), list.length)}${counts
+          .map(([x, count]) => chip(x, t(TOPIC_LABEL[x]), count))
+          .join("")}</div>`
+      : "";
   const rows = list
+    .filter((n) => !chosen || n.topic === chosen)
     .map(
       (n) =>
         `<div class="notice-row ${n.kind}${n.seen ? "" : " new"}" data-notice="${n.id}"><span class="notice-time">${clock(n.at)}</span>` +
         `${ICON[n.kind]}<div class="notice-text">${escapeHtml(n.text)}</div><span class="notice-acts">${buttons(n)}</span></div>`,
     )
     .join("");
-  return `<div class="notice-history-head"><b>${t("notice.history")}</b><button data-notice-clear>${t("notice.clear")}</button></div><div class="notice-rows">${rows}</div>`;
+  const clear = t(chosen ? "notice.clearShown" : "notice.clear");
+  return `<div class="notice-history-head"><b>${t("notice.history")}</b><button data-notice-clear>${clear}</button></div>${filters}<div class="notice-rows">${rows}</div>`;
 }
 
 /** The bell in the bottom bar: nothing before the first notice. */

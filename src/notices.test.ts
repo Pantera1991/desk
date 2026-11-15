@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { setLanguage } from "./i18n";
-import { bellHtml, clock, historyHtml, noticeHtml, Notices, NOTICE_MS, KEPT } from "./notices";
+import { bellHtml, clock, historyHtml, noticeHtml, Notices, NOTICE_MS, KEPT, topicCounts } from "./notices";
 
 const AT = new Date(2026, 10, 15, 21, 14).getTime();
 
@@ -111,5 +111,94 @@ describe("notices", () => {
     const n = new Notices().add("boom", { kind: "error" }, AT);
     expect(noticeHtml(n)).toContain("data-notice-copy>Copy error</button>");
     expect(historyHtml([n])).toContain("<b>Messages</b>");
+  });
+});
+
+describe("filtering the history by topic", () => {
+  beforeEach(() => setLanguage("pl"));
+
+  const MIN = 60_000;
+
+  /** Copies with the CPU's ups and downs between them. */
+  function mixed(): Notices {
+    const n = new Notices();
+    n.add("Skopiowano do schowka", { kind: "ok", topic: "clipboard" }, AT - 3 * MIN);
+    n.add("Procesor ma 61°C: wiatraki na 60%", { kind: "warn", topic: "thermal" }, AT - 2 * MIN);
+    n.add("Procesor ostygł (51°C): wiatraki wracają do auto", { kind: "ok", topic: "thermal" }, AT - MIN);
+    n.add("Skopiowano do schowka", { kind: "ok", topic: "clipboard" }, AT);
+    n.add("Skopiowano do schowka", { kind: "ok", topic: "clipboard" }, AT);
+    return n;
+  }
+  /** The rows' texts, top to bottom. */
+  const texts = (html: string) => [...html.matchAll(/<div class="notice-text">([^<]*)<\/div>/g)].map((m) => m[1]);
+  /** The filter buttons: topic (all: ""), pressed, label, count. */
+  const chips = (html: string) =>
+    [...html.matchAll(/<button class="notice-filter" data-notice-topic="(\w*)" aria-pressed="(true|false)">([^<]*)<span>(\d+)<\/span><\/button>/g)].map(
+      (m) => `${m[1] || "all"} ${m[2]} ${m[3].trim()} ${m[4]}`,
+    );
+
+  it("files a notice under other unless told what it is about", () => {
+    const n = new Notices();
+    expect(n.add("x", undefined, AT).topic).toBe("other");
+    expect(n.add("y", 15000, AT).topic).toBe("other");
+    expect(n.add("z", { kind: "ok", topic: "clipboard" }, AT).topic).toBe("clipboard");
+  });
+
+  it("counts the topics in the history, always in the same order", () => {
+    expect(topicCounts(mixed().all())).toEqual([
+      ["thermal", 2],
+      ["clipboard", 3],
+    ]);
+  });
+
+  it("offers all of them first, then a button per topic with its count", () => {
+    const html = historyHtml(mixed().all());
+    expect(chips(html)).toEqual(["all true Wszystkie 5", "thermal false Temperatura 2", "clipboard false Schowek 3"]);
+    expect(texts(html)).toHaveLength(5);
+    expect(html).toContain("data-notice-clear>Wyczyść</button>");
+  });
+
+  it("shows only the chosen topic, and Clear says it clears what is shown", () => {
+    const html = historyHtml(mixed().all(), "thermal");
+    expect(texts(html)).toEqual(["Procesor ostygł (51°C): wiatraki wracają do auto", "Procesor ma 61°C: wiatraki na 60%"]);
+    expect(chips(html)).toEqual(["all false Wszystkie 5", "thermal true Temperatura 2", "clipboard false Schowek 3"]);
+    expect(html).toContain("data-notice-clear>Wyczyść widoczne</button>");
+  });
+
+  it("has no buttons while every notice is about the same thing", () => {
+    const n = new Notices();
+    n.add("Skopiowano do schowka", { kind: "ok", topic: "clipboard" }, AT);
+    n.add("Skopiowano do schowka", { kind: "ok", topic: "clipboard" }, AT);
+    const html = historyHtml(n.all(), "clipboard");
+    expect(html).not.toContain("notice-filter");
+    expect(texts(html)).toHaveLength(2);
+    expect(html).toContain("data-notice-clear>Wyczyść</button>");
+  });
+
+  it("shows everything once the chosen topic is gone", () => {
+    const n = mixed();
+    n.add("Brak tmux", { kind: "warn" }, AT);
+    n.clear("thermal");
+    const html = historyHtml(n.all(), "thermal");
+    expect(texts(html)).toHaveLength(4);
+    expect(chips(html)).toEqual(["all true Wszystkie 4", "clipboard false Schowek 3", "other false Inne 1"]);
+  });
+
+  it("clears only the chosen topic, and tells its listeners", () => {
+    const n = mixed();
+    let calls = 0;
+    n.onChange(() => calls++);
+    n.clear("clipboard");
+    expect(n.all().map((x) => x.topic)).toEqual(["thermal", "thermal"]);
+    n.clear();
+    expect(n.all()).toEqual([]);
+    expect(calls).toBe(2);
+  });
+
+  it("speaks English too", () => {
+    setLanguage("en");
+    const html = historyHtml(mixed().all(), "clipboard");
+    expect(chips(html)).toEqual(["all false All 5", "thermal false Temperature 2", "clipboard true Clipboard 3"]);
+    expect(html).toContain("data-notice-clear>Clear shown</button>");
   });
 });

@@ -2206,6 +2206,37 @@ button.danger {
   color: var(--fg);
 }
 
+/* one topic at a time: the copies, the CPU, the sessions... */
+.notice-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px 8px 6px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.notice-filter {
+  padding: 1px 7px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: none;
+  color: var(--dim);
+}
+
+.notice-filter span {
+  opacity: 0.7;
+}
+
+.notice-filter:hover {
+  color: var(--fg);
+}
+
+.notice-filter[aria-pressed="true"] {
+  border-color: var(--line-hi);
+  background: var(--line);
+  color: var(--fg);
+}
+
 .notice-rows {
   overflow-y: auto;
 }

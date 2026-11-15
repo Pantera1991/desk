@@ -3,7 +3,7 @@ import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import type { GithubRepo } from "./api";
 import { matchRepos, repoName } from "./github";
 import { t } from "./i18n";
-import { historyHtml, noticeHtml, notices, type NoticeOptions } from "./notices";
+import { historyHtml, noticeHtml, notices, type NoticeOptions, type NoticeTopic } from "./notices";
 import { escapeHtml } from "./tile";
 
 export function confirmBox(message: string, okLabel = t("common.yes")): Promise<boolean> {
@@ -102,7 +102,7 @@ export function backgroundBox(load: () => Promise<BackgroundRow[]>, kill: (keys:
       if (busy || !keys.length) return;
       busy = true;
       sure = false;
-      await kill(keys).catch((err) => toast(String(err)));
+      await kill(keys).catch((err) => toast(String(err), { topic: "sessions" }));
       await reload();
       busy = false;
     };
@@ -282,25 +282,41 @@ function noticeClick(e: MouseEvent): void {
 }
 
 let history: HTMLElement | null = null;
+/** The topic the open history shows; null: all. It opens showing all. */
+let historyTopic: NoticeTopic | null = null;
 
 /** The bell's list over the bottom bar; the bell again, Esc or a click elsewhere closes it. */
 export function toggleNoticeHistory(): void {
   if (history) return closeNoticeHistory();
   notices.seenAll();
+  historyTopic = null;
   history = document.createElement("div");
   history.className = "notice-history";
   history.setAttribute("role", "dialog");
   history.setAttribute("aria-label", t("notice.history"));
-  history.innerHTML = historyHtml(notices.all());
+  drawHistory();
   history.addEventListener("click", (e) => {
-    if (!(e.target as HTMLElement).closest("[data-notice-clear]")) return noticeClick(e);
-    notices.clear();
-    closeNoticeHistory();
+    const target = e.target as HTMLElement;
+    const filter = target.closest<HTMLElement>("[data-notice-topic]");
+    if (filter) {
+      historyTopic = (filter.dataset.noticeTopic as NoticeTopic) || null;
+      return drawHistory();
+    }
+    if (!target.closest("[data-notice-clear]")) return noticeClick(e);
+    // What is shown: one topic, or all of them.
+    notices.clear(historyTopic ?? undefined);
+    historyTopic = null;
+    if (notices.all().length) drawHistory();
+    else closeNoticeHistory();
   });
   document.body.appendChild(history);
   document.addEventListener("mousedown", leaveHistory, true);
   window.addEventListener("keydown", escHistory, true);
   window.addEventListener("blur", closeNoticeHistory);
+}
+
+function drawHistory(): void {
+  if (history) history.innerHTML = historyHtml(notices.all(), historyTopic);
 }
 
 function closeNoticeHistory(): void {
