@@ -293,13 +293,16 @@ export function thermalTitle(s: ThermalStatus): string {
 /** The emergency stop: from where, or what it froze and when the work can resume. */
 function haltLines(s: ThermalStatus): string[] {
   if (!s.emergency) return [];
-  if (!s.halted) {
-    if (s.cores !== null && s.celsius !== null)
-      return [t("thermal.emergencyCores", { limit: s.emergency, cores: s.cores, c: s.celsius })];
-    if (s.hottest !== null) return [t("thermal.emergencyCpu", { limit: s.emergency, c: s.hottest })];
-    return [t("thermal.emergencyReady", { limit: s.emergency })];
-  }
+  // What the stop compares with its limit now; while halted, the number Resume waits on.
+  const now =
+    s.cores !== null && s.celsius !== null
+      ? t("thermal.emergencyCores", { limit: s.emergency, cores: s.cores, c: s.celsius })
+      : s.hottest !== null
+        ? t("thermal.emergencyCpu", { limit: s.emergency, c: s.hottest })
+        : null;
+  if (!s.halted) return [now ?? t("thermal.emergencyReady", { limit: s.emergency })];
   const lines = [tn("thermal.haltedTitle", s.frozen, { limit: s.emergency, resume: s.emergency - RESUME_MARGIN })];
+  if (now) lines.push(now);
   if (s.haltedBy === "system") lines.push(t("thermal.haltedSystem"));
   if (s.jobs) lines.push(tn("thermal.jobsLeft", s.jobs));
   return lines;

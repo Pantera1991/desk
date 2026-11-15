@@ -435,4 +435,11 @@ describe("emergency stop", () => {
     expect(emergencyLines("cpu")).toEqual([]);
     expect(emergencyLines(null)).toEqual([]);
   });
+  it("while halted the title shows the reading Resume waits on", () => {
+    const halted = at(56, { emergency: 90, halted: true, frozen: 12, hottest: 88, cores: 88, sees: "cores", haltedBy: "temperature" });
+    const title = thermalTitle(halted);
+    expect(title).toContain("Ruszą po kliknięciu ▶ Wznów, od 85°C.");
+    expect(title).toContain("rdzenie 88°C, czujnik desk 56°C");
+    expect(thermalTitle({ ...halted, cores: null, sees: "cpu" })).toContain("procesor 88°C");
+  });
 });
