@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { CoffeeStatus } from "./api";
 import { setLanguage } from "./i18n";
-import { browserHtml, coffeeHtml } from "./topbar";
+import { brandHtml, browserHtml, coffeeHtml } from "./topbar";
 
 const coffee = (more: Partial<CoffeeStatus> = {}): CoffeeStatus => ({
   level: "off",
@@ -61,5 +61,26 @@ describe("top bar tools", () => {
     expect(browserHtml("Ctrl+W")).toContain('aria-label="Browser"');
     expect(coffeeHtml(coffee(), "linux")).toContain('aria-label="Coffee"');
     expect(coffeeHtml(coffee({ level: "lid" }), "linux")).toMatch(/<\/svg>coffee · lid<\/button>$/);
+  });
+});
+
+describe("the name in the top bar", () => {
+  it("shows the version next to it, in small print", () => {
+    expect(brandHtml("0.2.4", "")).toBe('<span class="brand">desk</span><span class="brand-version">0.2.4</span>');
+  });
+
+  it("shows the name alone until the version is known", () => {
+    expect(brandHtml(null, "")).toBe('<span class="brand">desk</span>');
+  });
+
+  it("drags the window by the version too, unless docked", () => {
+    const drag = " data-tauri-drag-region";
+    expect(brandHtml("0.2.4", drag)).toBe(
+      `<span class="brand"${drag}>desk</span><span class="brand-version"${drag}>0.2.4</span>`,
+    );
+  });
+
+  it("escapes the version", () => {
+    expect(brandHtml("<1>", "")).toContain('<span class="brand-version">&#60;1&#62;</span>');
   });
 });

@@ -87,6 +87,7 @@ impl Lock {
             cover_screens(app, false);
         }
         kiosk(app, false);
+        crate::dropdown::unlocked(app);
         if cfg!(target_os = "macos") {
             let _ = crate::menu(app, false).and_then(|m| app.set_menu(m));
         }

@@ -1,6 +1,7 @@
-// The tools at the end of the top bar: the browser panel and coffee. They wear
-// the frame of the usage and temperature chips, with line icons drawn in the
-// text's color, so they follow the theme and the hover like the rest of the bar.
+// The top bar's name, and the tools at its end: the browser panel and coffee.
+// The tools wear the frame of the usage and temperature chips, with line icons
+// drawn in the text's color, so they follow the theme and the hover like the
+// rest of the bar.
 import type { CoffeeStatus } from "./api";
 import { t } from "./i18n";
 import type { Platform } from "./platform";
@@ -10,6 +11,13 @@ const GLOBE =
 
 const CUP =
   '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M1.8 5.2h6.6v2.4a2.6 2.6 0 0 1-2.6 2.6H4.4a2.6 2.6 0 0 1-2.6-2.6z"/><path d="M8.4 5.9h.6a1.35 1.35 0 0 1 0 2.7h-.75"/><path d="M4.1 1.6c-.45.5.45 1 0 1.6M6.3 1.6c-.45.5.45 1 0 1.6"/></svg>';
+
+/** "desk" and, once the app said it, its version in small print. `drag` is
+ *  the attribute that drags the window by them (none while docked). */
+export function brandHtml(version: string | null, drag: string): string {
+  const v = version ? `<span class="brand-version"${drag}>${escapeHtml(version)}</span>` : "";
+  return `<span class="brand"${drag}>desk</span>${v}`;
+}
 
 /** 🌐 in the side panel: `keys` is the shortcut that opens it. */
 export function browserHtml(keys: string): string {
