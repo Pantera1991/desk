@@ -219,10 +219,10 @@ export class Tile {
         readText: () => "",
         writeText: (_sel, text) => {
           if (!mayWrite(text, this.lastInput, Date.now())) {
-            if (text) toast(t("tile.clipboardBlocked", { name: this.name }));
+            if (text) toast(t("tile.clipboardBlocked", { name: this.name }), { kind: "warn" });
             return;
           }
-          return writeText(text).then(() => toast(t("tile.copied")));
+          return writeText(text).then(() => toast(t("tile.copied"), { kind: "ok" }));
         },
       }),
     );
@@ -531,7 +531,7 @@ export class Tile {
         this.beginRewrite();
         return api.ptyWrite(pty, "\x07");
       })
-      .catch((err) => toast(String(err)));
+      .catch((err) => toast(String(err), { kind: "error" }));
     this.focus();
   }
 

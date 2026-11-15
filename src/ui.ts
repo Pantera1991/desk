@@ -1,7 +1,9 @@
 // Small UI helpers: confirm dialog and toasts (window.confirm is not available in the webview).
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import type { GithubRepo } from "./api";
 import { matchRepos, repoName } from "./github";
 import { t } from "./i18n";
+import { historyHtml, noticeHtml, notices, type NoticeOptions } from "./notices";
 import { escapeHtml } from "./tile";
 
 export function confirmBox(message: string, okLabel = t("common.yes")): Promise<boolean> {
@@ -226,12 +228,101 @@ export function pickBox(title: string, items: string[], opts: PickOptions = {}):
   });
 }
 
-export function toast(message: string, ms = 4000): void {
+/** Cards shown at once; older ones live on in the bell's history. */
+const CARDS = 4;
+
+/** A card in the top right corner, newest on top, and a line in the history
+ *  (notices.ts). `opts` as a number: how long it stays, as before. */
+export function toast(message: string, opts?: number | NoticeOptions): void {
+  const n = notices.add(message, opts);
+  const stack = noticeStack();
+  stack.insertAdjacentHTML("afterbegin", noticeHtml(n));
+  for (const old of [...stack.children].slice(CARDS)) old.remove();
+}
+
+function noticeStack(): HTMLElement {
+  const found = document.querySelector<HTMLElement>(".notices");
+  if (found) return found;
   const el = document.createElement("div");
-  el.className = "toast";
-  el.textContent = message;
+  el.className = "notices";
+  el.setAttribute("aria-live", "polite");
+  // The thin bar at the bottom runs out (it waits while hovered): the card goes.
+  el.addEventListener("animationend", (e) => {
+    const bar = e.target as HTMLElement;
+    if (bar.classList.contains("notice-timer")) bar.closest(".notice")?.remove();
+  });
+  el.addEventListener("click", (e) => noticeClick(e));
   document.body.appendChild(el);
-  setTimeout(() => el.remove(), ms);
+  return el;
+}
+
+/** ✕, the action and "Kopiuj błąd", on a card or in the history. */
+function noticeClick(e: MouseEvent): void {
+  const target = e.target as HTMLElement;
+  const box = target.closest<HTMLElement>("[data-notice]");
+  const n = box ? notices.get(Number(box.dataset.notice)) : undefined;
+  if (!box || !n) return;
+  const card = box.classList.contains("notice");
+  if (target.closest("[data-notice-close]")) {
+    notices.seen(n.id);
+    box.remove();
+  } else if (target.closest("[data-notice-act]")) {
+    notices.seen(n.id);
+    if (card) box.remove();
+    else closeNoticeHistory();
+    n.action?.run();
+  } else {
+    const copy = target.closest<HTMLButtonElement>("[data-notice-copy]");
+    if (!copy) return;
+    void writeText(n.text).then(
+      () => (copy.textContent = t("notice.copied")),
+      (err) => (copy.textContent = String(err)),
+    );
+  }
+}
+
+let history: HTMLElement | null = null;
+
+/** The bell's list over the bottom bar; the bell again, Esc or a click elsewhere closes it. */
+export function toggleNoticeHistory(): void {
+  if (history) return closeNoticeHistory();
+  notices.seenAll();
+  history = document.createElement("div");
+  history.className = "notice-history";
+  history.setAttribute("role", "dialog");
+  history.setAttribute("aria-label", t("notice.history"));
+  history.innerHTML = historyHtml(notices.all());
+  history.addEventListener("click", (e) => {
+    if (!(e.target as HTMLElement).closest("[data-notice-clear]")) return noticeClick(e);
+    notices.clear();
+    closeNoticeHistory();
+  });
+  document.body.appendChild(history);
+  document.addEventListener("mousedown", leaveHistory, true);
+  window.addEventListener("keydown", escHistory, true);
+  window.addEventListener("blur", closeNoticeHistory);
+}
+
+function closeNoticeHistory(): void {
+  history?.remove();
+  history = null;
+  document.removeEventListener("mousedown", leaveHistory, true);
+  window.removeEventListener("keydown", escHistory, true);
+  window.removeEventListener("blur", closeNoticeHistory);
+}
+
+function leaveHistory(e: MouseEvent): void {
+  const target = e.target instanceof Element ? e.target : null;
+  // The bell toggles it itself.
+  if (target && (history?.contains(target) || target.closest("[data-notices-open]"))) return;
+  closeNoticeHistory();
+}
+
+function escHistory(e: KeyboardEvent): void {
+  if (e.key !== "Escape") return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  closeNoticeHistory();
 }
 
 export interface NewProject {
