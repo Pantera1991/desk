@@ -379,15 +379,18 @@ fn float(app: &AppHandle, window: &Window, on: bool) {
 /// bar away and the unlock gave it back with new buttons: the traffic lights
 /// over the docked top bar, and a window that drags. Docked, it gets its look
 /// back.
+#[cfg(target_os = "macos")]
 pub fn unlocked(app: &AppHandle) {
-    if !app.state::<Dropdown>().docked() {
-        return;
-    }
-    #[cfg(target_os = "macos")]
-    if let Some(window) = crate::main_window(app) {
+    if app.state::<Dropdown>().docked()
+        && let Some(window) = crate::main_window(app)
+    {
         dropdown_window(&window, true);
     }
 }
+
+/// Windows, Linux: no traffic lights to hide again.
+#[cfg(not(target_os = "macos"))]
+pub fn unlocked(_app: &AppHandle) {}
 
 /// No traffic lights while docked (like iTerm's hotkey window), free to slide
 /// above the screen's top edge, and allowed on a Space with an app in full
