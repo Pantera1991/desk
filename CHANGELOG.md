@@ -1,5 +1,34 @@
 # Zmiany
 
+## 0.2.0 (2026-11-15)
+
+- **Awaryjne zatrzymanie przy przegrzaniu.** W Opcje → Temperatura i kawa (domyślnie wyłączone,
+  próg 95°C): gdy średnia z 15 s dojdzie do progu, desk zamraża pracę w swoich sesjach. Nic nie
+  ginie, a praca rusza dopiero po kliknięciu ▶ Wznów, gdy procesor zejdzie 5°C pod próg, po
+  wyłączeniu opcji albo po zamknięciu desk; samo ostygnięcie jej nie wznawia. Przy zatrzymaniu
+  temperatura ma ⏸, do tego komunikat i powiadomienie systemowe.
+- **Kliknięcie w temperaturę otwiera panel procesora:** temperatura, użycie i średnie obciążenie,
+  historia z ostatnich 10 minut i procesy, które najbardziej obciążają procesor. Przy procesach
+  z sesji desk stoi nazwa karty, a kliknięcie ją otwiera. Kolory chipa temperatury możesz ustawić
+  sam, a które części panelu widać, wybierasz w Opcjach.
+- **Nowe komunikaty.** Pojawiają się w prawym górnym rogu, z dala od pola wpisywania, z ikoną
+  i kolorem: potwierdzenie, informacja, ostrzeżenie albo błąd. Kilka naraz układa się jeden pod
+  drugim, zamiast się zasłaniać. Błąd zostaje, aż go zamkniesz, i ma „Kopiuj błąd”; reszta znika
+  sama, a najechanie wstrzymuje odliczanie. „Przywróć” wznawia sesję, która się skończyła,
+  a „Zainstaluj” instaluje nową wersję. Dzwonek w dolnym pasku liczy ostrzeżenia i błędy, które
+  mogły umknąć, i otwiera listę ostatnich komunikatów.
+- **Poprawianie promptu (⌘G) ma pigułkę jak w CRM** (BETA). Claude zostaje na ekranie zamiast
+  czarnego kafelka, pigułka mówi, co się dzieje („Poprawiam prompt”, „Nic do poprawy”, serwer nie
+  odpowiada), a **Cofnij** wstawia z powrotem tekst sprzed poprawki.
+- **Fable widać w sesjach.** Tabela sesji w szczegółach limitów pokazuje „+ Fable” przy każdej
+  sesji, która go użyła, także przez subagenta, z kosztem w podpowiedzi. Kropka przy liczniku nie
+  gaśnie, gdy limit Fable jest równie zły jak tygodniowy.
+- **Wykres stopni wiatraków jest czytelny:** etykiety z temperaturą stoją nad wykresem i nie
+  nachodzą na siebie. Zapas „W dół” można ustawić na 0°C: stopień schodzi wtedy zaraz pod swoim
+  progiem.
+- **Przeglądarka i kawa w górnym pasku to ikony w kolorze motywu** zamiast kolorowych emoji,
+  w tej samej ramce co limity i temperatura.
+
 ## 0.1.38 (2026-11-14)
 
 - **Przy przegrzaniu desk może też włączyć wiatraki (macOS na Apple Silicon).** W Opcje →
