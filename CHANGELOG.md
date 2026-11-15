@@ -1,5 +1,13 @@
 # Zmiany
 
+## 0.2.3 (2026-11-15)
+
+- **Limit tygodniowy po resecie pokazuje prawdę.** Po resecie kupionym na claude.ai (np. „Fable
+  reset”) desk dalej pokazywał stare zużycie tygodnia, nawet 100%, aż do końca tygodnia, bo
+  sesje, które od resetu nic nie robiły, pamiętały liczbę sprzed niego. Teraz liczą się tylko
+  sesje, które odpowiedziały po ostatnim odczycie z Anthropic, więc reset widać od razu, a z nim
+  poprawne tempo i dzienny budżet.
+
 ## 0.2.2 (2026-11-15)
 
 - **Kopiowanie pokazuje jeden komunikat.** `/copy` w Claude Code (i każdy program, który
