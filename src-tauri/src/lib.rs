@@ -15,6 +15,7 @@ pub mod discovery;
 pub mod drag;
 pub mod dropdown;
 pub mod env;
+pub mod core_temps;
 pub mod fans;
 pub mod fan_control;
 pub mod git;
