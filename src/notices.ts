@@ -179,6 +179,6 @@ export function clock(at: number): string {
 }
 
 /** Same as tile.ts's (not imported: that pulls the terminal into tests). */
-function escapeHtml(s: string): string {
+export function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 }
