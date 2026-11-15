@@ -1,5 +1,12 @@
 # Zmiany
 
+## 0.2.2 (2026-11-15)
+
+- **Kopiowanie pokazuje jeden komunikat.** `/copy` w Claude Code (i każdy program, który
+  wysyła kopię kilkoma drogami naraz) pokazywało „Skopiowano do schowka” dwa razy. Teraz
+  jedna kopia to jeden komunikat, a ostrzeżenie o zablokowanej zmianie schowka też pojawia
+  się tylko raz.
+
 ## 0.2.1 (2026-11-15)
 
 - **Awaryjne zatrzymanie patrzy na najgorętszy czujnik.** Dotąd porównywało próg z czujnikiem,
