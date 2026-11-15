@@ -1,5 +1,20 @@
 # Zmiany
 
+## 0.2.1 (2026-11-15)
+
+- **Awaryjne zatrzymanie patrzy na najgorętszy czujnik.** Dotąd porównywało próg z czujnikiem,
+  który pod obciążeniem pokazuje nawet o 25°C mniej niż rdzenie procesora, więc przy 95°C mogło
+  nie zadziałać wcale. Teraz bierze najgorętszy odczyt: rdzenie procesora (te same, które pokazuje
+  Stats; Stats nie jest potrzebny) albo czujnik desk. Gdy macOS zgłosi krytyczną temperaturę,
+  zatrzymuje pracę od razu, a Wznów czeka, aż to minie. Domyślny próg to teraz 90°C. Próg zapisany
+  w 0.2.0 (zwykle 95°C) zostaje, ale dotyczy już najgorętszego czujnika, więc zadziała dużo
+  wcześniej niż dotąd; zmienisz go w Opcje → Temperatura i kawa.
+- **Widać, na co patrzy zatrzymanie.** Podpowiedź przy temperaturze pokazuje rdzenie i czujnik
+  desk, także po zatrzymaniu, więc wiadomo, na co czeka Wznów. Komunikat po zatrzymaniu podaje
+  najgorętszy odczyt albo mówi, że zatrzymał macOS. Opcje ostrzegają, gdy na tym komputerze
+  zatrzymanie widzi mniej: Mac z Intelem, układ, którego desk jeszcze nie zna, albo komputer bez
+  odczytu temperatury.
+
 ## 0.2.0 (2026-11-15)
 
 - **Awaryjne zatrzymanie przy przegrzaniu.** W Opcje → Temperatura i kawa (domyślnie wyłączone,
