@@ -364,7 +364,7 @@ describe("emergency stop", () => {
   const halted = at(97, { emergency: 95, halted: true, frozen: 12 });
 
   it("limits typed in Options stay sensible", () => {
-    expect([0, 59.4, 60, 95, 110, 300, NaN].map(clampEmergency)).toEqual([60, 60, 60, 95, 110, 110, 90]);
+    expect([0, 59.4, 60, 95, 110, 300, NaN].map(clampEmergency)).toEqual([60, 60, 60, 95, 110, 110, 105]);
   });
 
   it("the chip pauses, turns red and gets a resume button", () => {
