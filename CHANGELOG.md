@@ -1,5 +1,13 @@
 # Zmiany
 
+## 0.2.6 (2026-11-16)
+
+- **Awaryjny stop nie zatrzymuje już kart przy zwykłej pracy.** Domyślny próg był 90°C, a stop
+  patrzy na najgorętszy rdzeń procesora, który przy dużym obciążeniu normalnie ma 100–103°C
+  (macOS sam go tam trzyma i niczego nie zgłasza). Dlatego desk zatrzymywał karty raz za razem,
+  także zaraz po ▶ Wznów. Domyślny próg to teraz 105°C, a kto miał stare 90°C, dostaje 105°C
+  sam. Próg wpisany ręcznie zostaje bez zmian.
+
 ## 0.2.5 (2026-11-15)
 
 - **Przewijanie w kafelku Claude już się nie zawiesza.** Po przełączeniu kart (⌘1–9) rozmowa
