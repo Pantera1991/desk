@@ -114,6 +114,10 @@ pub struct Layout {
     pub emergency_on: bool,
     /// Clamped to thermal::MIN_EMERGENCY..=MAX_EMERGENCY where it is used.
     pub emergency_at: u32,
+    /// `emergency_at` was saved knowing the stop watches the hottest CPU core.
+    /// Files without it hold the 90°C default meant for desk's own sensor,
+    /// which `load` moves to today's default (thermal::OLD_DEFAULT_EMERGENCY).
+    pub emergency_for_cores: bool,
     /// The temperature chip's colours, chosen in Options; None: from the
     /// slowing limit or the first fan step (src/thermal.ts).
     pub thermal_colors: Option<ThermalColors>,
@@ -193,6 +197,7 @@ impl Default for Layout {
             fan_limit: None,
             emergency_on: false,
             emergency_at: crate::thermal::DEFAULT_EMERGENCY,
+            emergency_for_cores: true,
             thermal_colors: None,
             cpu_hidden: Vec::new(),
             usage_layout: "tabs".into(),
@@ -235,8 +240,14 @@ pub fn load(path: &Path) -> Layout {
                 l.thermal_mode = "off".into();
                 l.thermal_limit = crate::thermal::DEFAULT_LIMIT;
             }
-            let had_steps = serde_json::from_str::<serde_json::Value>(&text).is_ok_and(|v| v.get("fanSteps").is_some());
-            migrate_fan_steps(&mut l, had_steps);
+            let raw = serde_json::from_str::<serde_json::Value>(&text).ok();
+            let has = |key: &str| raw.as_ref().is_some_and(|v| v.get(key).is_some());
+            migrate_fan_steps(&mut l, has("fanSteps"));
+            if !has("emergencyForCores") && l.emergency_at == crate::thermal::OLD_DEFAULT_EMERGENCY {
+                // The old default sat 10°C over desk's sensor; the stop now
+                // watches the cores, which run far hotter under plain load.
+                l.emergency_at = crate::thermal::DEFAULT_EMERGENCY;
+            }
             l.normalized()
         }
         Err(_) => {
@@ -326,11 +337,24 @@ mod tests {
         let p = tmp.path().join("layout.json");
         std::fs::write(&p, r#"{"version":1,"thermalLimit":80}"#).unwrap();
         let l = load(&p);
-        assert_eq!((l.emergency_on, l.emergency_at, l.thermal_colors), (false, 90, None));
-        std::fs::write(&p, r#"{"thermalColors":{"warm":55,"hot":70},"emergencyOn":true,"emergencyAt":90}"#).unwrap();
+        assert_eq!((l.emergency_on, l.emergency_at, l.thermal_colors), (false, crate::thermal::DEFAULT_EMERGENCY, None));
+        std::fs::write(&p, r#"{"thermalColors":{"warm":55,"hot":70},"emergencyOn":true,"emergencyAt":95}"#).unwrap();
         let l = load(&p);
-        assert_eq!((l.emergency_on, l.emergency_at), (true, 90));
+        assert_eq!((l.emergency_on, l.emergency_at), (true, 95));
         assert_eq!(l.thermal_colors, Some(ThermalColors { warm: 55, hot: 70 }));
+    }
+
+    #[test]
+    fn the_old_90_degree_default_moves_to_the_core_default_once() {
+        use crate::thermal::DEFAULT_EMERGENCY;
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("layout.json");
+        std::fs::write(&p, r#"{"version":1,"emergencyOn":true,"emergencyAt":90}"#).unwrap();
+        let l = load(&p);
+        assert_eq!((l.emergency_on, l.emergency_at, l.emergency_for_cores), (true, DEFAULT_EMERGENCY, true));
+        // Saved again, a 90 picked by hand stays 90.
+        save(&p, &Layout { emergency_at: 90, ..l }).unwrap();
+        assert_eq!(load(&p).emergency_at, 90);
     }
 
     #[test]

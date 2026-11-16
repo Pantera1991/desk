@@ -35,8 +35,9 @@
 //!   only). Below the first step the fans are macOS's again.
 //!
 //! Emergency stop
-//! - Only when turned on in Options (off by default): once the same average
-//!   reaches its limit (90 °C by default), desk freezes the work in all its
+//! - Only when turned on in Options (off by default): once the average of
+//!   the hottest of desk's sensor and the CPU cores (core_temps.rs) reaches
+//!   its limit (105 °C by default), desk freezes the work in all its
 //!   sessions, tiles open or not (`Halt`, `freeze_plan`). Nothing is killed:
 //!   macOS and Linux stop the processes (SIGSTOP), Windows suspends their
 //!   threads. It stays so until the user resumes it from the top bar, which
@@ -64,8 +65,15 @@ const WINDOW: usize = 3;
 /// Slowed at least this long, so the sessions do not flap at the limit.
 const MIN_SLOW: Duration = Duration::from_secs(60);
 
-/// The emergency stop's limit (Options, layout `emergencyAt`), °C.
-pub const DEFAULT_EMERGENCY: u32 = 90;
+/// The emergency stop's limit (Options, layout `emergencyAt`), °C. It is
+/// compared with the hottest CPU core, which on Apple Silicon runs past 100°C
+/// under plain heavy load: an M5 Pro holds its cores at 102–103°C under full
+/// load with the fans at 100%, and macOS reports no thermal pressure there.
+/// 105°C sits just over that ceiling, where the chip is no longer holding.
+pub const DEFAULT_EMERGENCY: u32 = 105;
+/// The default before the stop watched the cores, chosen 10°C over desk's own
+/// sensor; layout.rs moves files still holding it to DEFAULT_EMERGENCY.
+pub const OLD_DEFAULT_EMERGENCY: u32 = 90;
 pub const MIN_EMERGENCY: u32 = 60;
 pub const MAX_EMERGENCY: u32 = 110;
 /// Resuming after an emergency stop waits until the average is this far

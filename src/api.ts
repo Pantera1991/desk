@@ -89,6 +89,8 @@ export interface Layout {
   /** Emergency stop: from `emergencyAt` °C the work in every session freezes until resumed by hand (thermal.rs Halt). */
   emergencyOn: boolean;
   emergencyAt: number;
+  /** `emergencyAt` was saved knowing the stop watches the hottest core (layout.rs migrates files without it). */
+  emergencyForCores?: boolean;
   /** The temperature chip's colours; null: from the slowing limit or the first fan step (thermal.ts). */
   thermalColors: ThermalColors | null;
   /** Parts of the temperature chip's panel hidden in Options (cpu-view.ts CpuPart); empty: all shown. */

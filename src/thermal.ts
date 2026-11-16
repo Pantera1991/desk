@@ -32,7 +32,7 @@ const WARM_MARGIN = 10;
 export const MIN_COLOR = 30;
 export const MAX_COLOR = 110;
 /** The emergency stop's limit (thermal.rs DEFAULT_EMERGENCY...), °C. */
-export const DEFAULT_EMERGENCY = 90;
+export const DEFAULT_EMERGENCY = 105;
 export const MIN_EMERGENCY = 60;
 export const MAX_EMERGENCY = 110;
 /** Resuming waits until the CPU is this far below it (thermal.rs RESUME_MARGIN). */
