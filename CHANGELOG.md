@@ -1,5 +1,14 @@
 # Zmiany
 
+## 0.2.7 (2026-11-17)
+
+- **Opcje ostrzegają, gdy próg awaryjnego stopu jest za niski.** Rdzenie procesora przy zwykłym
+  pełnym obciążeniu same trzymają do 103°C, więc próg wpisany ręcznie na 103°C lub mniej (np.
+  101°C) zatrzymywał karty przy normalnej pracy. Pod progiem pojawia się teraz czerwone
+  ostrzeżenie z podpowiedzią, żeby ustawić co najmniej 105°C. Zapisany próg się nie zmienia.
+- **Komunikat o zatrzymaniu podaje próg.** Zamiast „Procesor ma 103°C: desk awaryjnie zatrzymał
+  pracę…” jest „Procesor ma 103°C (próg 101°C): …”, więc od razu widać, dlaczego stop zadziałał.
+
 ## 0.2.6 (2026-11-16)
 
 - **Awaryjny stop nie zatrzymuje już kart przy zwykłej pracy.** Domyślny próg był 90°C, a stop
