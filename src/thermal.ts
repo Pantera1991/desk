@@ -38,6 +38,10 @@ export const MAX_EMERGENCY = 110;
 /** Resuming waits until the CPU is this far below it (thermal.rs RESUME_MARGIN). */
 export const RESUME_MARGIN = 5;
 
+/** What the CPU cores hold under plain full load on Apple Silicon, °C (thermal.rs DEFAULT_EMERGENCY:
+ * an M5 Pro stays at 102–103 with the fans at 100%). A limit at or under it stops ordinary work. */
+export const CORES_HOLD = 103;
+
 /** An emergency limit typed in Options: whole degrees within MIN..MAX. */
 export function clampEmergency(n: number): number {
   if (!Number.isFinite(n)) return DEFAULT_EMERGENCY;
@@ -308,12 +312,15 @@ function haltLines(s: ThermalStatus): string[] {
   return lines;
 }
 
-/** Options' lines on what the emergency stop watches here: what it watches when that is the cores,
+/** Options' lines on what the emergency stop watches here: what it watches when that is the cores
+ * (and a warning when `limit` is at or under what they hold under plain load, CORES_HOLD),
  * a warning when it sees less; nothing for a CPU sensor (Linux, Windows) or before the first reading. */
-export function emergencyLines(sees: StopSees | null): MessageKey[] {
+export function emergencyLines(sees: StopSees | null, limit = DEFAULT_EMERGENCY): MessageKey[] {
   switch (sees) {
     case "cores":
-      return ["settings.emergencyWatchesCores"];
+      return limit <= CORES_HOLD
+        ? ["settings.emergencyWatchesCores", "settings.emergencyUnderCores"]
+        : ["settings.emergencyWatchesCores"];
     case "sensor":
       return ["settings.emergencySensorOnly"];
     case "system":

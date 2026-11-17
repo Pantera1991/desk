@@ -8,6 +8,8 @@ import {
   clampEmergency,
   clampFanMargin,
   clampLimit,
+  CORES_HOLD,
+  DEFAULT_EMERGENCY,
   emergencyLines,
   FAN_WAITS,
   fanChart,
@@ -398,7 +400,7 @@ describe("emergency stop", () => {
   it("a toast when it stops, before anything else that changed, and when it resumes", () => {
     const before = at(94, { emergency: 95, slowed: true, processes: 3 });
     expect(thermalToast(before, { ...halted, slowed: true, processes: 3 })?.text).toBe(
-      "Procesor ma 97°C: desk awaryjnie zatrzymał pracę w kartach (12 procesów). Wznów przyciskiem ▶ w górnym pasku.",
+      "Procesor ma 97°C (próg 95°C): desk awaryjnie zatrzymał pracę w kartach (12 procesów). Wznów przyciskiem ▶ w górnym pasku.",
     );
     expect(thermalToast(halted, halted)).toBeNull();
     expect(thermalToast(halted, at(88, { emergency: 95 }))?.text).toBe(t("thermal.resumed"));
@@ -417,7 +419,7 @@ describe("emergency stop", () => {
   it("the toast names the hottest reading, or macOS", () => {
     const hot = at(56, { emergency: 90, halted: true, frozen: 12, hottest: 91, cores: 91, haltedBy: "temperature" });
     expect(thermalToast(at(56, { emergency: 90 }), hot)?.text).toBe(
-      "Procesor ma 91°C: desk awaryjnie zatrzymał pracę w kartach (12 procesów). Wznów przyciskiem ▶ w górnym pasku.",
+      "Procesor ma 91°C (próg 90°C): desk awaryjnie zatrzymał pracę w kartach (12 procesów). Wznów przyciskiem ▶ w górnym pasku.",
     );
     const sys = { ...hot, haltedBy: "system" as const };
     expect(thermalToast(at(56, { emergency: 90 }), sys)?.text).toBe(
@@ -434,6 +436,16 @@ describe("emergency stop", () => {
     expect(emergencyLines("nothing")).toEqual(["settings.emergencyNothing"]);
     expect(emergencyLines("cpu")).toEqual([]);
     expect(emergencyLines(null)).toEqual([]);
+  });
+  it("Options warns when the limit is at or under what the cores hold under plain full load", () => {
+    const warned = ["settings.emergencyWatchesCores", "settings.emergencyUnderCores"];
+    expect(emergencyLines("cores", 101)).toEqual(warned);
+    expect(emergencyLines("cores", CORES_HOLD)).toEqual(warned);
+    expect(emergencyLines("cores", CORES_HOLD + 1)).toEqual(["settings.emergencyWatchesCores"]);
+    expect(emergencyLines("cores", DEFAULT_EMERGENCY)).toEqual(["settings.emergencyWatchesCores"]);
+    // desk's own sensor and other systems' CPU sensors read lower: no warning there.
+    expect(emergencyLines("sensor", 101)).toEqual(["settings.emergencySensorOnly"]);
+    expect(emergencyLines("cpu", 101)).toEqual([]);
   });
   it("while halted the title shows the reading Resume waits on", () => {
     const halted = at(56, { emergency: 90, halted: true, frozen: 12, hottest: 88, cores: 88, sees: "cores", haltedBy: "temperature" });
