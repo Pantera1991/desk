@@ -34,6 +34,8 @@ import {
   autoColors,
   clampColors,
   clampEmergency,
+  CORES_HOLD,
+  DEFAULT_EMERGENCY,
   emergencyLines,
   clampFanMargin,
   clampLimit,
@@ -269,8 +271,11 @@ export class Settings {
   private emergencyHtml(layout: Layout): string {
     const on = layout.emergencyOn;
     // While on: what it watches here, or a warning when it sees less (thermal.ts emergencyLines).
-    const watches = (on ? emergencyLines(this.ctx.thermal()?.sees ?? null) : [])
-      .map((k) => `<p class="${k === "settings.emergencyWatchesCores" ? "dim small" : "error"}" data-row>${t(k)}</p>`)
+    const watches = (on ? emergencyLines(this.ctx.thermal()?.sees ?? null, layout.emergencyAt) : [])
+      .map(
+        (k) =>
+          `<p class="${k === "settings.emergencyWatchesCores" ? "dim small" : "error"}" data-row>${t(k, { hold: CORES_HOLD, suggested: DEFAULT_EMERGENCY })}</p>`,
+      )
       .join("");
     return `<label class="line" data-row><input type="checkbox" data-k="emergency-on" ${on ? "checked" : ""}/> ${t("settings.emergencyOn")}</label>
       <label class="line" data-row>${t("settings.emergencyAt")} <input type="number" min="${MIN_EMERGENCY}" max="${MAX_EMERGENCY}" step="1" value="${layout.emergencyAt}" data-k="emergency-at" ${on ? "" : "disabled"}/> °C</label>
