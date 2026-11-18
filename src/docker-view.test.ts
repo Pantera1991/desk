@@ -108,6 +108,21 @@ describe("docker view", () => {
     expect(html).toMatch(/<button[^>]*data-d="rm"[^>]*disabled/);
   });
 
+  it("container row: name and buttons on line one, image and status on line two", () => {
+    const o = ov([host("h", { containers: [c("web-1", "running", "web")] })]);
+    const html = renderDocker(o, new Set(["host:h", "proj:h/web"]), none, new Map());
+    const row = html.match(/<div class="dk-container">[\s\S]*?<\/div><\/div>/)?.[0] ?? "";
+    expect(row).toContain("web-1");
+    const sub = row.match(/<div class="dk-sub">([\s\S]*?)<\/div>/)?.[1] ?? "";
+    expect(sub).toContain("nginx:1.27");
+    expect(sub).toContain("Up 3 days");
+    expect(sub).toContain(" · ");
+    expect(sub).not.toContain("web-1");
+    expect(row).toMatch(/<button[^>]*data-d="logs"[^>]*data-host="h"[^>]*data-target="web-1"/);
+    expect(row).toMatch(/data-d="shell"/);
+    expect(row).toMatch(/data-d="restart"/);
+  });
+
   it("escapes names", () => {
     const o = ov([host("h", { containers: [c("<b>", "running")] })]);
     const html = renderDocker(o, new Set(["host:h", "nocompose:h"]), none, new Map());

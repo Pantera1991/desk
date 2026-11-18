@@ -3559,6 +3559,19 @@ p.up-model {
   min-width: 0;
 }
 
+.dk-container {
+  min-width: 0;
+}
+
+.dk-sub {
+  color: var(--dim);
+  font-size: calc(11px * var(--ui-scale, 1));
+  padding: 0 calc(4px * var(--ui-scale, 1)) calc(3px * var(--ui-scale, 1)) calc(30px * var(--ui-scale, 1));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .dk-toggle {
   cursor: pointer;
 }

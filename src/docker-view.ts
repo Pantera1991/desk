@@ -145,7 +145,7 @@ function btn(kind: string, host: string, target: string, label: string, disabled
 
 function containerRow(host: string, c: DockerContainer, busy: ReadonlySet<string>): string {
   const h: Health = c.state === "running" ? "up" : c.state === "restarting" || c.state === "paused" ? "partial" : "down";
-  return `<div class="dk-row dk-container"><span class="dk-dot dk-${h}">${ICON[h]}</span><span class="dk-name">${esc(c.name)}</span><span class="dk-image">${esc(c.image)}</span><span class="dk-status">${esc(c.status)}</span>${btn("logs", host, c.name, t("docker.logs"), false)}${btn("shell", host, c.name, t("docker.shell"), c.state !== "running")}${btn("restart", host, c.name, t("docker.restart"), busy.has(`${host}|${c.name}`))}</div>`;
+  return `<div class="dk-container"><div class="dk-row"><span class="dk-dot dk-${h}">${ICON[h]}</span><span class="dk-name">${esc(c.name)}</span>${btn("logs", host, c.name, t("docker.logs"), false)}${btn("shell", host, c.name, t("docker.shell"), c.state !== "running")}${btn("restart", host, c.name, t("docker.restart"), busy.has(`${host}|${c.name}`))}</div><div class="dk-sub">${esc(c.image)} · ${esc(c.status)}</div></div>`;
 }
 
 function deployBtn(host: string, project: string, path: string): string {
