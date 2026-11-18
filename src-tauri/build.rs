@@ -64,6 +64,7 @@ const COMMANDS: &[&str] = &[
     "usage_details",
     "docker_overview",
     "docker_image_rm",
+    "docker_restart",
     "quit_desk",
 ];
 

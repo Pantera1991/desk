@@ -3,6 +3,7 @@
 //! removes an image.
 
 use serde::{Deserialize, Serialize};
+use crate::proc::run;
 use std::path::Path;
 use std::time::Duration;
 
@@ -39,6 +40,8 @@ pub struct Container {
     pub status: String,
     pub project: Option<String>,
     pub service: Option<String>,
+    /// Folder the compose project was started from (compose label).
+    pub working_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -83,6 +86,7 @@ pub struct Overview {
 const TIMEOUT: Duration = Duration::from_secs(3);
 const COMPOSE_PROJECT: &str = "com.docker.compose.project";
 const COMPOSE_SERVICE: &str = "com.docker.compose.service";
+const COMPOSE_WORKING_DIR: &str = "com.docker.compose.project.working_dir";
 
 /// One JSON object per non-blank line; lines that are not JSON are skipped.
 fn json_lines(stdout: &str) -> impl Iterator<Item = serde_json::Value> + '_ {
@@ -118,6 +122,7 @@ pub fn parse_containers(stdout: &str) -> Vec<Container> {
                 status: field(&v, "Status"),
                 project: label(&labels, COMPOSE_PROJECT),
                 service: label(&labels, COMPOSE_SERVICE),
+                working_dir: label(&labels, COMPOSE_WORKING_DIR),
             }
         })
         .collect()
@@ -160,68 +165,6 @@ pub fn valid_image(s: &str) -> bool {
     !s.is_empty()
         && !s.starts_with('-')
         && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/' | ':' | '@'))
-}
-
-/// Run a program without a terminal and collect its stdout; killed after
-/// `timeout`. A non-zero exit gives its trimmed stderr.
-fn run(program: &Path, args: &[&str], timeout: Duration) -> Result<String, String> {
-    use std::io::Read;
-    use std::process::{Command, Stdio};
-    let mut child = Command::new(program)
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    // Drain the pipes on threads so a chatty child cannot block on a full pipe.
-    let mut out = child.stdout.take().unwrap();
-    let mut err = child.stderr.take().unwrap();
-    let out_t = std::thread::spawn(move || {
-        let mut b = Vec::new();
-        let _ = out.read_to_end(&mut b);
-        b
-    });
-    let err_t = std::thread::spawn(move || {
-        let mut b = Vec::new();
-        let _ = err.read_to_end(&mut b);
-        b
-    });
-    let deadline = std::time::Instant::now() + timeout;
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(s)) => break Ok(s),
-            Ok(None) if std::time::Instant::now() >= deadline => {
-                let _ = child.kill();
-                let _ = child.wait();
-                // Threads end with the pipes; nothing more to read.
-                return Err(timeout_message(timeout));
-            }
-            Ok(None) => std::thread::sleep(Duration::from_millis(20)),
-            Err(e) => break Err(e.to_string()),
-        }
-    };
-    let status = status?;
-    let stdout = out_t.join().unwrap_or_default();
-    let stderr = err_t.join().unwrap_or_default();
-    if status.success() {
-        Ok(String::from_utf8_lossy(&stdout).into_owned())
-    } else {
-        let text = String::from_utf8_lossy(&stderr).trim().to_string();
-        if !text.is_empty() {
-            return Err(text);
-        }
-        Err(match status.code() {
-            Some(n) => tr!(format!("docker zakończył się kodem {n}"), format!("docker exited with code {n}")),
-            None => tr!("docker został przerwany".to_string(), "docker was terminated".to_string()),
-        })
-    }
-}
-
-/// "Did not answer" with the wait that really ran out (whole seconds, rounded up).
-fn timeout_message(timeout: Duration) -> String {
-    let s = timeout.as_secs() + u64::from(timeout.subsec_nanos() > 0);
-    tr!(format!("serwer nie odpowiada ({s} s)"), format!("server did not answer ({s} s)"))
 }
 
 fn list(docker: &Path, url: &str, args: &[&str]) -> Result<String, String> {
@@ -290,6 +233,22 @@ pub fn image_rm(hosts: &[DockerHost], host: &str, image: &str) -> Result<(), Str
     let docker = crate::agents::which("docker")
         .ok_or_else(|| tr!("brak programu docker", "docker is not installed").to_string())?;
     run(&docker, &["-H", &h.url, "image", "rm", image], Duration::from_secs(30)).map(|_| ())
+}
+
+pub fn restart(hosts: &[DockerHost], host: &str, container: &str) -> Result<(), String> {
+    let h = hosts
+        .iter()
+        .find(|h| h.name == host)
+        .ok_or_else(|| tr!("nieznany serwer Dockera", "unknown Docker server").to_string())?;
+    if !valid_url(&h.url) {
+        return Err(tr!("nieprawidłowy adres serwera", "invalid server address").into());
+    }
+    if !valid_name(container) {
+        return Err(tr!("nieprawidłowa nazwa", "invalid name").into());
+    }
+    let docker = crate::agents::which("docker")
+        .ok_or_else(|| tr!("brak programu docker", "docker is not installed").to_string())?;
+    run(&docker, &["-H", &h.url, "restart", container], Duration::from_secs(30)).map(|_| ())
 }
 
 /// Agent id of a tile that runs a `docker` command built by `tile_command`.
@@ -444,38 +403,6 @@ not json
         assert!(!valid_image("x;y"));
     }
 
-    #[cfg(unix)]
-    #[test]
-    fn run_times_out_and_kills() {
-        let t = std::time::Instant::now();
-        let r = run(Path::new("sleep"), &["5"], Duration::from_secs(1));
-        assert!(t.elapsed() < Duration::from_secs(3));
-        let e = r.unwrap_err();
-        assert!(e.contains("1 s"), "{e}");
-    }
-
-    #[test]
-    fn timeout_message_names_the_real_wait() {
-        assert!(timeout_message(Duration::from_secs(3)).contains("(3 s)"));
-        assert!(timeout_message(Duration::from_secs(30)).contains("(30 s)"));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn run_failure_without_stderr_names_the_exit_code() {
-        let e = run(Path::new("sh"), &["-c", "exit 3"], Duration::from_secs(2)).unwrap_err();
-        assert!(e.contains('3'), "{e}");
-        assert!(!e.is_empty());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn run_returns_stdout_and_stderr_on_failure() {
-        assert_eq!(run(Path::new("sh"), &["-c", "echo hi"], Duration::from_secs(2)).unwrap(), "hi\n");
-        let e = run(Path::new("sh"), &["-c", "echo boom >&2; exit 3"], Duration::from_secs(2)).unwrap_err();
-        assert_eq!(e, "boom");
-    }
-
     fn hosts() -> Vec<DockerHost> {
         vec![DockerHost { name: "Docker1".into(), url: "tcp://192.0.2.10:2375".into() }]
     }
@@ -492,5 +419,22 @@ not json
     fn image_rm_rejects_unknown_host_and_bad_image() {
         assert!(image_rm(&hosts(), "nope", "x").is_err());
         assert!(image_rm(&hosts(), "Docker1", "x;y").is_err());
+    }
+
+    #[test]
+    fn parses_working_dir_label() {
+        let out = r#"{"ID":"a","Names":"n","Image":"i","State":"running","Status":"Up","Labels":"com.docker.compose.project=mm,com.docker.compose.project.working_dir=/home/u/PhpstormProjects/mm-general"}
+{"ID":"b","Names":"m","Image":"i","State":"running","Status":"Up","Labels":"com.docker.compose.project=mm"}"#;
+        let c = parse_containers(out);
+        assert_eq!(c[0].working_dir.as_deref(), Some("/home/u/PhpstormProjects/mm-general"));
+        assert_eq!(c[0].project.as_deref(), Some("mm"));
+        assert_eq!(c[1].working_dir, None);
+    }
+
+    #[test]
+    fn restart_rejects_unknown_host_and_bad_name() {
+        assert!(restart(&hosts(), "nope", "web").is_err());
+        assert!(restart(&hosts(), "Docker1", "a;b").is_err());
+        assert!(restart(&hosts(), "Docker1", "-x").is_err());
     }
 }

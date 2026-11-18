@@ -33,6 +33,7 @@ pub mod new_project;
 #[cfg(target_os = "linux")]
 mod pam;
 pub mod preview;
+pub mod proc;
 pub mod pricing;
 pub mod project;
 pub mod prompt_ai;
@@ -635,6 +636,11 @@ fn docker_image_rm(app: State<'_, App>, host: String, image: String) -> Result<(
     docker::image_rm(&layout::load(&app.layout_path).docker_hosts, &host, &image)
 }
 
+#[tauri::command(async)]
+fn docker_restart(app: State<'_, App>, host: String, container: String) -> Result<(), String> {
+    docker::restart(&layout::load(&app.layout_path).docker_hosts, &host, &container)
+}
+
 /// One folder of the project, opened in the tree (`node_modules/`...).
 #[tauri::command]
 async fn project_dir(path: String, rel: String) -> Result<Vec<String>, String> {
@@ -1056,6 +1062,7 @@ pub fn run() {
             usage_models,
             docker_overview,
             docker_image_rm,
+            docker_restart,
             quit_desk,
         ])
         .on_window_event(|window, event| {

@@ -74,6 +74,7 @@
     "allow-usage-details",
     "allow-docker-overview",
     "allow-docker-image-rm",
+    "allow-docker-restart",
     "allow-quit-desk"
   ]
 }
