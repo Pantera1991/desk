@@ -33,9 +33,9 @@ miejsce panelu (dymek → boczny panel) i „Czego nie robimy” (dochodzi wdro�
    budującego (nie użytkownika): jedno miejsce zamiast dwóch.*
 3. **Restart kontenera** — wg `2026-11-18-docker-restart-design.md`, w nowym panelu.
 4. **„Wdróż” przy projekcie compose** (wybór użytkownika: wariant A — w kafelku, z potwierdzeniem).
-   - Przycisk przy wierszu projektu compose, **tylko** gdy desk zna lokalny folder projektu
-     o tej samej nazwie (bez wielkości liter; lista z `api.listProjects`) i ten folder ma plik
-     compose (`compose.yaml`, `compose.yml`, `docker-compose.yaml` albo `docker-compose.yml`).
+   - Przycisk przy wierszu projektu compose, **tylko** gdy projekt ma otwartą kartę w desk
+     (dopasowanie: „Decyzje budującego” pkt 1) i folder tej karty ma plik compose (`compose.yaml`,
+     `compose.yml`, `docker-compose.yaml` albo `docker-compose.yml`).
    - Potwierdzenie (zawsze): „Wdrożyć `mm-general` na Docker1 z `~/PhpstormProjects/mm-general`?
      Gałąź: `main`, 3 niezacommitowane zmiany.” Gdy zmian nie ma: „…Gałąź: `main`, bez
      niezacommitowanych zmian.” Gdy to nie repozytorium gita: bez części o gałęzi.
@@ -80,11 +80,14 @@ miejsce panelu (dymek → boczny panel) i „Czego nie robimy” (dochodzi wdro�
 
 ## Decyzje budującego po recenzji (do sprawdzenia przez użytkownika)
 
-1. **Który lokalny folder.** Najpierw etykieta kontenera `com.docker.compose.project.working_dir`
-   (ścieżka, z której projekt był ostatnio wdrożony): jeśli to folder znany desk, bierzemy go.
-   Inaczej folder o nazwie projektu (bez wielkości liter) z `api.listProjects`, z pominięciem
-   worktree (`worktreeOf`). Gdy pasuje więcej niż jeden — przycisku nie ma. Ścieżka zawsze w
-   potwierdzeniu. Rust czyta tę etykietę razem z pozostałymi (`Container.workingDir`).
+1. **Który lokalny folder — zawsze folder projektu otwartego w desk, nigdy inny (decyzja
+   użytkownika).** Kandydatami są tylko projekty, które mają otwartą kartę w siatce desk (ścieżki
+   kart), nie lista `api.listProjects` ani foldery spoza desk. Karta pasuje do projektu compose,
+   gdy jej ścieżka równa się etykiecie kontenera `com.docker.compose.project.working_dir`
+   (ścieżka ostatniego wdrożenia) albo — gdy żadna tak nie pasuje — gdy nazwa jej folderu równa się
+   nazwie projektu (bez wielkości liter). Brak otwartej karty albo więcej niż jedna pasująca —
+   przycisku „Wdróż” nie ma. Nigdy nie bierzemy po prostu aktywnej karty dla dowolnego projektu.
+   Ścieżka zawsze w potwierdzeniu. Rust czyta etykietę razem z pozostałymi (`Container.workingDir`).
 2. **Nazwa projektu.** `-p` dostaje nazwę z etykiety `com.docker.compose.project` (prawdziwą nazwę
    na serwerze), nie nazwę folderu; folder może się nazywać inaczej (dopasowany po `working_dir`).
 3. **Bez wtyczki compose** (`overview.compose == false`) przycisku „Wdróż” nie ma. Budowanie wysyła
