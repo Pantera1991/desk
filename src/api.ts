@@ -547,6 +547,8 @@ export const api = {
   dockerRestart: (host: string, container: string) => invoke<void>("docker_restart", { host, container }),
   /** Branch and dirty count of a local folder; null when it is not a git repository (or git timed out). */
   gitStatusSummary: (path: string) => invoke<GitSummary | null>("git_status_summary", { path }),
+  /** Of the given folders, those holding a compose file (where a deploy may run). */
+  composeDirs: (paths: string[]) => invoke<string[]>("compose_dirs", { paths }),
   /** Server of the saved prompt-rewriting VPN config, null when none (the key never leaves Rust). */
   promptAiVpn: () => invoke<string | null>("prompt_ai_vpn"),
   /** Save a pasted WireGuard .conf ("" removes it); returns its server. */

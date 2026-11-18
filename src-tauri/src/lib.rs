@@ -641,6 +641,12 @@ fn docker_restart(app: State<'_, App>, host: String, container: String) -> Resul
     docker::restart(&layout::load(&app.layout_path).docker_hosts, &host, &container)
 }
 
+/// The folders (of open cards) that hold a compose file: a deploy may run there.
+#[tauri::command(async)]
+fn compose_dirs(paths: Vec<String>) -> Vec<String> {
+    docker::compose_dirs(&paths)
+}
+
 /// One folder of the project, opened in the tree (`node_modules/`...).
 #[tauri::command]
 async fn project_dir(path: String, rel: String) -> Result<Vec<String>, String> {
@@ -1069,6 +1075,7 @@ pub fn run() {
             docker_overview,
             docker_image_rm,
             docker_restart,
+            compose_dirs,
             quit_desk,
         ])
         .on_window_event(|window, event| {

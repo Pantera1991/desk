@@ -12,11 +12,11 @@ export interface DockerPanelContext {
   overview(): Promise<DockerOverview>;
   /** Folders of the open cards: where a compose project may be deployed from. */
   openPaths(): string[];
-  /** A logs or shell tile for a container or compose project; `title` is its name. */
-  open(tile: DockerTile, title: string, path?: string): void;
+  /** A logs, shell or deploy tile for a container or compose project; `title` is its name. Settles once it opened (or failed to). */
+  open(tile: DockerTile, title: string, path?: string): Promise<void>;
   removeImage(host: string, image: string): Promise<void>;
   restart(host: string, container: string): Promise<void>;
-  /** Focuses the deploy tile of that project when one is open; false when there is none. */
+  /** Focuses the deploy tile of that project (attaching again one still running without a tile); false when there is none. */
   focusDeploy(host: string, project: string): boolean;
 }
 
@@ -79,6 +79,11 @@ export class DockerPanel {
   private branches = loadOpen();
   /** "host|image" of the images being removed. */
   private busy = new Set<string>();
+  /** "host|project" from a click on "Wdróż" until its tile opened: one deploy at a time. */
+  private deploying = new Set<string>();
+  /** Open folders holding a compose file (compose_dirs), asked for `composeKey` (the paths joined). */
+  private compose = new Set<string>();
+  private composeKey: string | null = null;
 
   constructor(
     private onLayout: () => void,
@@ -102,7 +107,6 @@ export class DockerPanel {
     document.addEventListener("visibilitychange", () => {
       if (this.shown && !document.hidden) this.fetch();
     });
-    window.addEventListener("resize", () => this.refresh());
     if (recall(OPEN_KEY) === "1") this.start();
   }
 
@@ -126,6 +130,7 @@ export class DockerPanel {
     this.shown = true;
     this.overview = null;
     this.error = null;
+    this.composeKey = null;
     this.el.hidden = false;
     this.fetch();
     // A tick never queues behind a slow call, and none fires while the window is hidden.
@@ -158,14 +163,14 @@ export class DockerPanel {
     this.body.scrollTop = scroll;
   }
 
-  /** "host|project" → the open card's folder it deploys from. */
+  /** "host|project" → the open card's folder it deploys from (one with a compose file). */
   private deployable(): Map<string, string> {
     const map = new Map<string, string>();
     const paths = this.ctx.openPaths();
     for (const h of this.overview?.hosts ?? []) {
       for (const project of new Set(h.containers.map((c) => c.project).filter((p): p is string => p !== null))) {
         const path = deployFolder(project, h.containers, paths);
-        if (path !== null) map.set(`${h.name}|${project}`, path);
+        if (path !== null && this.compose.has(path)) map.set(`${h.name}|${project}`, path);
       }
     }
     return map;
@@ -175,11 +180,14 @@ export class DockerPanel {
     const b = target.closest<HTMLElement>("[data-d]");
     if (b) {
       const { d, host = "", target: what = "", question = "" } = b.dataset;
-      if (d === "refresh") return this.fetch();
+      if (d === "refresh") {
+        this.composeKey = null; // a compose file may have been added meanwhile
+        return this.fetch();
+      }
       if (d === "close") return this.close();
       if (d === "logs" || d === "projectLogs" || d === "shell") {
         const label = d === "shell" ? t("docker.tileShell", { name: what }) : t("docker.tileLogs", { name: what });
-        return this.ctx.open({ host, target: what, kind: d }, label);
+        return this.ctx.open({ host, target: what, kind: d }, label).catch((err) => toast(String(err), { kind: "error" }));
       }
       if (d === "rm") return this.remove(host, what, question);
       if (d === "restart") return this.restart(host, what);
@@ -243,18 +251,53 @@ export class DockerPanel {
   }
 
   private async deploy(host: string, project: string, path: string): Promise<void> {
-    if (this.confirming || path === "") return;
-    if (this.ctx.focusDeploy(host, project)) return;
-    this.confirming = true;
-    let ok: boolean;
+    const key = `${host}|${project}`;
+    if (this.confirming || this.deploying.has(key) || path === "") return;
+    this.deploying.add(key);
     try {
-      const git = await api.gitStatusSummary(path).catch(() => null);
-      ok = await confirmBox(deployQuestion(host, project, path, git), t("docker.deploy"));
+      if (this.ctx.focusDeploy(host, project)) return;
+      // Drawn before a card closed or another one of the project opened: draw again, ask nothing.
+      if (this.deployable().get(key) !== path) {
+        this.refresh();
+        this.fetch();
+        return;
+      }
+      this.confirming = true;
+      let ok: boolean;
+      try {
+        const git = await api.gitStatusSummary(path).catch(() => null);
+        ok = await confirmBox(deployQuestion(host, project, path, git), t("docker.deploy"));
+      } finally {
+        this.confirming = false;
+      }
+      // A deploy tile may have come up while the question was open.
+      if (!ok || this.ctx.focusDeploy(host, project)) return;
+      await this.ctx.open({ host, target: project, kind: "deploy" }, t("docker.tileDeploy", { name: project }), path);
+    } catch (err) {
+      toast(String(err), { kind: "error" });
     } finally {
-      this.confirming = false;
+      this.deploying.delete(key);
     }
-    if (!ok) return;
-    this.ctx.open({ host, target: project, kind: "deploy" }, t("docker.tileDeploy", { name: project }), path);
+  }
+
+  /** Which open folders hold a compose file: asked only when the open folders
+   *  changed since the last answer (at most once per refresh). A failed call
+   *  shows no new button and is asked again on the next refresh. */
+  private async askCompose(gen: number): Promise<void> {
+    const paths = this.ctx.openPaths();
+    const key = paths.join("\n");
+    if (key === this.composeKey) return;
+    let dirs: string[] = [];
+    if (paths.length > 0) {
+      try {
+        dirs = await api.composeDirs(paths);
+      } catch {
+        return;
+      }
+    }
+    if (gen !== this.gen) return;
+    this.compose = new Set(dirs);
+    this.composeKey = key;
   }
 
   /** One request at a time; asked for while one is in flight, it follows right after. */
@@ -273,10 +316,11 @@ export class DockerPanel {
       call = Promise.reject(err);
     }
     call
-      .then((o) => {
+      .then(async (o) => {
         if (gen !== this.gen) return;
         this.overview = o;
         this.error = null;
+        await this.askCompose(gen);
       })
       // Shown in the panel; asked again in 5 s.
       .catch((err) => {

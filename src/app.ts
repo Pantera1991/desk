@@ -54,7 +54,7 @@ import { usageHtml } from "./usage";
 import { UsagePopover } from "./usage-popover";
 import { CpuPopover } from "./cpu-popover";
 import { DockerPanel } from "./docker-panel";
-import { findDeployTile } from "./docker-view";
+import { blockedDeploy, findDeploySession } from "./docker-view";
 import {
   DEFAULT_EMERGENCY,
   DEFAULT_FAN_MARGIN,
@@ -101,6 +101,8 @@ export class App {
   private tmuxMissing = false;
   /** Tiles about to open a conversation again (⌘S): key → Claude session id. */
   private resuming = new Map<string, string>();
+  /** Deploy tiles confirmed in the Docker panel, about to start: the only way a `compose up` session starts (see blockedDeploy). */
+  private confirmedDeploys = new Set<string>();
   private earlyExits = new Map<number, string>(); // pty-exit that arrived before attach returned
   /** Tiles kept in the saved layout though not open: they failed to open at startup or their session ended with others (see Endings). */
   private missing: Place[] = [];
@@ -224,13 +226,17 @@ export class App {
       {
         overview: async () => (this.dockerLast = await api.dockerOverview()),
         openPaths: () => [...new Set([...this.tiles.values()].map((t) => t.path))],
-        open: (tile, title, path) => void this.openDockerTile(tile, title, path),
+        open: (tile, title, path) => this.openDockerTile(tile, title, path),
         removeImage: (host, image) => api.dockerImageRm(host, image),
         restart: (host, container) => api.dockerRestart(host, container),
         focusDeploy: (host, project) => {
-          const key = this.layout ? findDeployTile(this.layout.docker, [...this.tiles.keys()], host, project) : null;
-          if (key === null) return false;
-          this.setActive(key, true);
+          if (!this.layout) return false;
+          const open = [...this.tiles.keys()];
+          const found = findDeploySession(this.layout.docker, open, [...this.running].filter((k) => !this.tiles.has(k)), host, project);
+          if (found === null) return false;
+          // Still running in tmux with its tile closed (⌘Q): attached again, not deployed twice.
+          if (found.open) this.setActive(found.key, true);
+          else void this.openTile(found.key);
           return true;
         },
       },
@@ -623,10 +629,19 @@ export class App {
       account = accountFor(this.layout, key, spec.path);
       if (account && fresh) this.layout.tileAccounts[key] = account;
     }
+    const confirmed = this.confirmedDeploys.delete(key);
     // A Docker tile is its command's own to start again, never restored: tmux lost it, so it goes.
     if (spec.agent === "docker" && restore && fresh) {
       this.forgetKey(key);
       this.save();
+      return null;
+    }
+    // A deploy that ended runs again only when asked in the Docker panel, never from "Przywróć" or ⌘⇧T.
+    if (spec.agent === "docker" && blockedDeploy(this.layout.docker[key], !fresh, confirmed)) {
+      this.forgetKey(key);
+      this.closed = this.closed.filter((c) => c.key !== key);
+      this.save();
+      toast(t("docker.deployAgain"), { topic: "sessions" });
       return null;
     }
     try {
@@ -744,24 +759,36 @@ export class App {
     await this.openTile(key);
   }
 
-  /** Logs or a shell of a Docker container in a card of the project it belongs to (the home folder when none matches). */
+  /** Logs, a shell or a deploy of Docker in a card: of `folder` when given (a
+   *  deploy, confirmed in the panel), else of the project the container belongs
+   *  to (the home folder when none matches). */
   private async openDockerTile(tile: DockerTile, title: string, folder?: string): Promise<void> {
-    const container = this.dockerLast?.hosts.find((h) => h.name === tile.host)?.containers.find((c) => c.name === tile.target);
-    const wanted = [tile.target, container?.project].filter((n): n is string => !!n).map((n) => n.toLowerCase());
-    const projects = await api.listProjects(this.layout.extraFolders).catch(() => []);
-    const base = (p: string) => p.split(/[\\/]/).filter(Boolean).pop()?.toLowerCase() ?? "";
     // A deploy runs from the folder it was asked for, never from a guess.
-    const path = folder ?? projects.find((p) => wanted.includes(base(p.path)))?.path ?? this.home;
+    const path = folder ?? (await this.dockerFolder(tile));
     const taken = [...(await api.listSessions()), ...this.tiles.values()];
     const key = keyOf({ path, agent: "docker", instance: nextInstance(taken, path, "docker") });
     this.layout.docker[key] = tile;
     this.layout.titles[key] = title;
-    await this.openTile(key);
+    if (tile.kind === "deploy") this.confirmedDeploys.add(key);
+    try {
+      await this.openTile(key);
+    } finally {
+      this.confirmedDeploys.delete(key);
+    }
     // Not opened: nothing may stay under a key the next tile would reuse.
     if (!this.tiles.has(key)) {
       this.forgetKey(key);
       this.save();
     }
+  }
+
+  /** The project folder named like the container or its compose project, else the home folder. */
+  private async dockerFolder(tile: DockerTile): Promise<string> {
+    const container = this.dockerLast?.hosts.find((h) => h.name === tile.host)?.containers.find((c) => c.name === tile.target);
+    const wanted = [tile.target, container?.project].filter((n): n is string => !!n).map((n) => n.toLowerCase());
+    const projects = await api.listProjects(this.layout.extraFolders).catch(() => []);
+    const base = (p: string) => p.split(/[\\/]/).filter(Boolean).pop()?.toLowerCase() ?? "";
+    return projects.find((p) => wanted.includes(base(p.path)))?.path ?? this.home;
   }
 
   /** A plain shell in a project's card (in the home folder with no tile focused). */
@@ -963,6 +990,7 @@ export class App {
   private async reopen(key: string, sessionId: string | null): Promise<void> {
     if (this.tiles.has(key)) return this.openTile(key);
     const alive = (await api.listSessions()).some((s) => keyOf(s) === key);
+    if (!alive) this.running.delete(key); // ended meanwhile: starts anew (a deploy is refused, see createTile)
     if (!alive && sessionId && parseKey(key).agent === "claude") this.resuming.set(key, sessionId);
     await this.openTile(key);
   }

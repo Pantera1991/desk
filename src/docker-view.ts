@@ -1,7 +1,7 @@
-// The Docker button's panel, as HTML: a tree per server (compose projects with
+// The Docker side panel, as HTML: a tree per server (compose projects with
 // their containers, containers without compose, images, networks, volumes).
 // Pure: open branches and busy buttons come in as sets. Data: docker.rs;
-// behaviour: docker-popover.ts.
+// behaviour: docker-panel.ts.
 import type { DockerTile, DockerHost, DockerContainer, DockerHostView, DockerImage, DockerNamed, DockerOverview, GitSummary } from "./api";
 import { t, tn } from "./i18n";
 import { escapeHtml as esc } from "./notices";
@@ -53,6 +53,7 @@ export function deployFolder(project: string, containers: DockerContainer[], ope
   const byLabel = new Set(
     containers.filter((c) => c.project === project && c.workingDir !== null && openPaths.includes(c.workingDir)).map((c) => c.workingDir as string),
   );
+  // Labels naming two open folders: no guess, and no falling back to the name either.
   if (byLabel.size > 0) return byLabel.size === 1 ? [...byLabel][0] : null;
   const named = [...new Set(openPaths.filter((p) => base(p).toLowerCase() === project.toLowerCase()))];
   return named.length === 1 ? named[0] : null;
@@ -61,6 +62,29 @@ export function deployFolder(project: string, containers: DockerContainer[], ope
 /** The open deploy tile of a project on a server (its layout key), if any. */
 export function findDeployTile(docker: Record<string, DockerTile>, openKeys: readonly string[], host: string, project: string): string | null {
   return openKeys.find((k) => docker[k]?.kind === "deploy" && docker[k].host === host && docker[k].target === project) ?? null;
+}
+
+/** The deploy session of a project on a server: its open tile, else one still
+ *  running in tmux whose tile was closed (⌘Q keeps the session), to attach
+ *  again instead of starting a second `compose up`. */
+export function findDeploySession(
+  docker: Record<string, DockerTile>,
+  openKeys: readonly string[],
+  runningKeys: readonly string[],
+  host: string,
+  project: string,
+): { key: string; open: boolean } | null {
+  const open = findDeployTile(docker, openKeys, host, project);
+  if (open !== null) return { key: open, open: true };
+  const running = findDeployTile(docker, runningKeys, host, project);
+  return running === null ? null : { key: running, open: false };
+}
+
+/** A deploy tile whose session would start anew (`compose up --build`) other
+ *  than from a click confirmed in the Docker panel ("Przywróć", ⌘⇧T, resuming
+ *  work): refused, so a deploy never runs again without asking. */
+export function blockedDeploy(tile: DockerTile | undefined, running: boolean, confirmed: boolean): boolean {
+  return tile?.kind === "deploy" && !running && !confirmed;
 }
 
 const ICON: Record<Health, string> = { up: "●", partial: "◐", down: "○" };

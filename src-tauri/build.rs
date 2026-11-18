@@ -66,6 +66,7 @@ const COMMANDS: &[&str] = &[
     "docker_overview",
     "docker_image_rm",
     "docker_restart",
+    "compose_dirs",
     "quit_desk",
 ];
 

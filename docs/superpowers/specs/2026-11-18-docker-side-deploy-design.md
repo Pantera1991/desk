@@ -18,7 +18,7 @@ miejsce panelu (dymek → boczny panel) i „Czego nie robimy” (dochodzi wdro�
 1. **Boczny panel Dockera** (wybór użytkownika: wariant A).
    - Panel po prawej, jak panel plików: nagłówek „🐳 Docker”, ⟳ (odśwież teraz), × (zamknij),
      pod nim to samo drzewo co dziś w dymku (`renderDocker`).
-   - Otwieranie i zamykanie: skrót **⌘G / Ctrl+Shift+G** (nowy wpis `docker` w `src/keys.ts`,
+   - Otwieranie i zamykanie: skrót **⇧⌘G na macOS / Ctrl+Shift+G gdzie indziej** (nowy wpis `docker` w `src/keys.ts`,
      grupa „window”, do zmiany w Opcje → Skróty), przycisk 🐳 w górnym pasku i × w nagłówku.
    - Klik obok **nie** zamyka panelu (to nie dymek). Esc też nie (Esc należy do terminali).
    - Szerokość zmieniana przeciąganiem lewej krawędzi (jak `.side .splitter`), pamiętana w
@@ -106,7 +106,9 @@ miejsce panelu (dymek → boczny panel) i „Czego nie robimy” (dochodzi wdro�
    otwarty: bez potwierdzenia przenosi do istniejącego kafelka zamiast uruchamiać drugie wdrożenie.
 7. **Układ.** Panel Dockera to osobny element w `.middle`, między `.stage` a panelem plików;
    tryb skupienia zależy tylko od panelu plików (`Side.isOpen`). Esc z obsługi dymka znika.
-8. **Skrót** `Super+KeyG` (⌘G / Ctrl+Shift+G) jest wolny w `src/keys.ts`.
+8. **Skrót** ⇧⌘G na macOS (`Super+Shift+KeyG`; samo ⌘G to przepisanie promptu w `src/tile.ts`,
+   zarezerwowane w `src/keys.ts` jako `reserved.promptRewrite`) i Ctrl+Shift+G na Linuksie
+   i Windows (`Control+Shift+KeyG`; samo Ctrl+G to tam przepisanie promptu).
 
 ## Zostawione budującemu
 

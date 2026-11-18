@@ -6,7 +6,8 @@ const toast = vi.fn();
 vi.mock("./ui", () => ({ confirmBox: (m: string, ok?: string) => confirm(m, ok), toast: (...a: unknown[]) => toast(...a) }));
 
 const gitStatusSummary = vi.fn();
-vi.mock("./api", () => ({ api: { gitStatusSummary: (p: string) => gitStatusSummary(p) } }));
+const composeDirs = vi.fn<(paths: string[]) => Promise<string[]>>();
+vi.mock("./api", () => ({ api: { gitStatusSummary: (p: string) => gitStatusSummary(p), composeDirs: (p: string[]) => composeDirs(p) } }));
 
 import { deployQuestion, restartQuestion } from "./docker-view";
 import { t } from "./i18n";
@@ -55,6 +56,8 @@ beforeEach(() => {
   vi.stubGlobal("Element", class {});
   confirm.mockReset();
   toast.mockReset();
+  composeDirs.mockReset();
+  composeDirs.mockImplementation(async (paths) => paths);
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -62,7 +65,7 @@ afterEach(() => {
 });
 
 function make(overview: () => Promise<DockerOverview>, removeImage = vi.fn().mockResolvedValue(undefined), extra: Partial<DockerPanelContext> = {}) {
-  const open = vi.fn();
+  const open = vi.fn<DockerPanelContext["open"]>().mockResolvedValue(undefined);
   const p = new DockerPanel(vi.fn(), {
     overview,
     openPaths: () => [],
@@ -296,17 +299,35 @@ describe("the Docker panel", () => {
   });
 
   describe("deploy", () => {
-    const click = () => {
-      const btn = { dataset: { d: "deploy", host: "srv", target: "shop", path: "/work/shop" } };
+    const SHOP: DockerOverview = {
+      cli: true,
+      compose: true,
+      hosts: [
+        {
+          name: "srv",
+          url: "tcp://srv:2375",
+          error: null,
+          containers: [{ id: "1", name: "shop-web-1", image: "shop", state: "running", status: "Up", project: "shop", service: "web", workingDir: "/work/shop" }],
+          images: [],
+          networks: [],
+          volumes: [],
+        },
+      ],
+    };
+    let paths: string[];
+    const click = (path = "/work/shop") => {
+      const btn = { dataset: { d: "deploy", host: "srv", target: "shop", path } };
       el.fire("click", { target: { closest: (s: string) => (s === "[data-d]" ? btn : null) } });
     };
     const opened = async (extra: Partial<DockerPanelContext> = {}) => {
       gitStatusSummary.mockReset();
       gitStatusSummary.mockResolvedValue({ branch: "main", dirty: 0 });
-      const m = make(vi.fn().mockResolvedValue(OVERVIEW), undefined, extra);
+      paths = ["/work/shop"];
+      const overview = vi.fn().mockResolvedValue(SHOP);
+      const m = make(overview, undefined, { openPaths: () => paths, ...extra });
       m.p.open();
       await vi.advanceTimersByTimeAsync(0);
-      return m;
+      return { ...m, overview };
     };
 
     it("asks with the git summary, then opens a deploy tile on the given folder", async () => {
@@ -315,7 +336,7 @@ describe("the Docker panel", () => {
       click();
       await vi.advanceTimersByTimeAsync(0);
       expect(gitStatusSummary).toHaveBeenCalledWith("/work/shop");
-      expect(confirm).toHaveBeenCalledWith(deployQuestion("srv", "shop", "/work/shop", { branch: "main", dirty: 0 }) , t("docker.deploy"));
+      expect(confirm).toHaveBeenCalledWith(deployQuestion("srv", "shop", "/work/shop", { branch: "main", dirty: 0 }), t("docker.deploy"));
       expect(open).toHaveBeenCalledWith({ host: "srv", target: "shop", kind: "deploy" }, t("docker.tileDeploy", { name: "shop" }), "/work/shop");
     });
 
@@ -338,6 +359,100 @@ describe("the Docker panel", () => {
       expect(confirm).not.toHaveBeenCalled();
       expect(gitStatusSummary).not.toHaveBeenCalled();
       expect(open).not.toHaveBeenCalled();
+    });
+
+    it("a second click while the confirmation is up asks nothing more", async () => {
+      const { open } = await opened();
+      let answer!: (ok: boolean) => void;
+      confirm.mockReturnValue(new Promise((r) => (answer = r)));
+      click();
+      await vi.advanceTimersByTimeAsync(0);
+      click();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(confirm).toHaveBeenCalledTimes(1);
+      answer(true);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(open).toHaveBeenCalledTimes(1);
+    });
+
+    it("a click while the deploy tile is opening is ignored, and works again once it opened", async () => {
+      const { open } = await opened();
+      let opened_!: () => void;
+      open.mockReturnValueOnce(new Promise<void>((r) => (opened_ = r)));
+      confirm.mockResolvedValue(true);
+      click();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(open).toHaveBeenCalledTimes(1);
+      click();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(confirm).toHaveBeenCalledTimes(1);
+      expect(open).toHaveBeenCalledTimes(1);
+      opened_();
+      await vi.advanceTimersByTimeAsync(0);
+      click();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(confirm).toHaveBeenCalledTimes(2);
+    });
+
+    it("a deploy tile that appeared during the confirmation is focused, not opened again", async () => {
+      const focusDeploy = vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true);
+      const { open } = await opened({ focusDeploy });
+      confirm.mockResolvedValue(true);
+      click();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(focusDeploy).toHaveBeenCalledTimes(2);
+      expect(open).not.toHaveBeenCalled();
+    });
+
+    it("a card closed since the last refresh: nothing asked, the panel draws again", async () => {
+      const { open } = await opened();
+      expect(el.child.innerHTML).toContain('data-d="deploy"');
+      paths = [];
+      confirm.mockResolvedValue(true);
+      click();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(confirm).not.toHaveBeenCalled();
+      expect(open).not.toHaveBeenCalled();
+      expect(el.child.innerHTML).not.toContain('data-d="deploy"');
+    });
+
+    it("another card of the project opened since: nothing asked", async () => {
+      const { open } = await opened();
+      paths = ["/work/shop", "/other/shop"];
+      SHOP.hosts[0].containers[0].workingDir = null; // matched by name: now two candidates
+      try {
+        confirm.mockResolvedValue(true);
+        click();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(confirm).not.toHaveBeenCalled();
+        expect(open).not.toHaveBeenCalled();
+      } finally {
+        SHOP.hosts[0].containers[0].workingDir = "/work/shop";
+      }
+    });
+
+    it("shows Wdróż only for an open folder with a compose file", async () => {
+      composeDirs.mockResolvedValue([]);
+      await opened();
+      expect(composeDirs).toHaveBeenCalledWith(["/work/shop"]);
+      expect(el.child.innerHTML).toContain('data-d="projectLogs"'); // the project is drawn
+      expect(el.child.innerHTML).not.toContain('data-d="deploy"');
+    });
+
+    it("asks for compose files only when the open folders change, never while closed", async () => {
+      const { p } = await opened();
+      expect(el.child.innerHTML).toContain('data-d="deploy"');
+      expect(composeDirs).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(DOCKER_EVERY_MS * 2);
+      expect(composeDirs).toHaveBeenCalledTimes(1);
+      paths = ["/work/shop", "/work/api"];
+      await vi.advanceTimersByTimeAsync(DOCKER_EVERY_MS);
+      expect(composeDirs).toHaveBeenCalledTimes(2);
+      expect(composeDirs).toHaveBeenLastCalledWith(["/work/shop", "/work/api"]);
+      p.close();
+      paths = ["/x"];
+      await vi.advanceTimersByTimeAsync(DOCKER_EVERY_MS * 3);
+      expect(composeDirs).toHaveBeenCalledTimes(2);
     });
   });
 });

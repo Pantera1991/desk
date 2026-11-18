@@ -256,6 +256,16 @@ pub fn restart(hosts: &[DockerHost], host: &str, container: &str) -> Result<(), 
 pub const COMPOSE_FILES: [&str; 4] =
     ["compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"];
 
+/// The given folders that hold a compose file (where "Wdróż" may run), in
+/// their order. Only a look at the files: no process, no network.
+pub fn compose_dirs(paths: &[String]) -> Vec<String> {
+    paths
+        .iter()
+        .filter(|p| COMPOSE_FILES.iter().any(|f| Path::new(p).join(f).is_file()))
+        .cloned()
+        .collect()
+}
+
 /// Agent id of a tile that runs a `docker` command built by `tile_command`.
 pub const DOCKER_AGENT: &str = "docker";
 
@@ -303,6 +313,29 @@ mod tests {
     }
     fn tile(target: &str, kind: DockerTileKind) -> DockerTile {
         DockerTile { host: "Docker1".into(), target: target.into(), kind }
+    }
+
+    #[test]
+    fn compose_dirs_keeps_folders_with_a_compose_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let with = |name: &str, file: Option<&str>| {
+            let d = tmp.path().join(name);
+            std::fs::create_dir_all(&d).unwrap();
+            if let Some(f) = file {
+                std::fs::write(d.join(f), "services: {}\n").unwrap();
+            }
+            d.to_str().unwrap().to_string()
+        };
+        let yaml = with("a", Some("compose.yaml"));
+        let old = with("b", Some("docker-compose.yml"));
+        let none = with("c", None);
+        let fake = with("d", None);
+        std::fs::create_dir_all(Path::new(&fake).join("compose.yml")).unwrap(); // a folder, not a file
+        let gone = tmp.path().join("gone").to_str().unwrap().to_string();
+        assert_eq!(
+            compose_dirs(&[yaml.clone(), none, old.clone(), fake, gone]),
+            vec![yaml, old]
+        );
     }
 
     #[test]

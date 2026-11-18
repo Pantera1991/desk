@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { DockerContainer, DockerHostView, DockerImage, DockerOverview } from "./api";
-import { checkHosts, draftAdd, draftRemove, draftRows, draftSet, flipOpen, health, isOpen, imageTarget, removeQuestion, renderDocker, deployFolder, deployQuestion, restartQuestion, findDeployTile } from "./docker-view";
+import { checkHosts, draftAdd, draftRemove, draftRows, draftSet, flipOpen, health, isOpen, imageTarget, removeQuestion, renderDocker, deployFolder, deployQuestion, restartQuestion, findDeployTile, findDeploySession, blockedDeploy } from "./docker-view";
 import { setLanguage, t } from "./i18n";
 
 const c = (name: string, state: string, project: string | null = null, workingDir: string | null = null): DockerContainer => ({
@@ -200,5 +200,39 @@ describe("findDeployTile", () => {
     expect(findDeployTile(docker, [], "srv", "shop")).toBeNull();
     expect(findDeployTile(docker, ["/a#docker:2"], "srv", "shop")).toBeNull();
     expect(findDeployTile(docker, ["/a#docker:1"], "srv", "api")).toBeNull();
+  });
+});
+
+describe("findDeploySession", () => {
+  const docker = {
+    "/a#docker:1": { host: "srv", target: "shop", kind: "deploy" as const },
+    "/a#docker:2": { host: "srv", target: "shop", kind: "logs" as const },
+    "/b#docker:1": { host: "other", target: "shop", kind: "deploy" as const },
+  };
+  it("prefers the open tile", () => {
+    expect(findDeploySession(docker, ["/a#docker:1"], ["/a#docker:1"], "srv", "shop")).toEqual({ key: "/a#docker:1", open: true });
+  });
+  it("finds a deploy still running in tmux whose tile was closed", () => {
+    expect(findDeploySession(docker, [], ["/a#docker:1", "/a#docker:2"], "srv", "shop")).toEqual({ key: "/a#docker:1", open: false });
+  });
+  it("ignores ended sessions, other kinds and other hosts", () => {
+    expect(findDeploySession(docker, [], [], "srv", "shop")).toBeNull();
+    expect(findDeploySession(docker, [], ["/a#docker:2"], "srv", "shop")).toBeNull();
+    expect(findDeploySession(docker, [], ["/b#docker:1"], "srv", "shop")).toBeNull();
+  });
+});
+
+describe("blockedDeploy", () => {
+  const deploy = { host: "srv", target: "shop", kind: "deploy" as const };
+  it("refuses a fresh deploy session that was not confirmed in the panel", () => {
+    expect(blockedDeploy(deploy, false, false)).toBe(true);
+  });
+  it("lets the confirmed click start it, and a running one be attached", () => {
+    expect(blockedDeploy(deploy, false, true)).toBe(false);
+    expect(blockedDeploy(deploy, true, false)).toBe(false);
+  });
+  it("leaves logs, shells and other tiles alone", () => {
+    expect(blockedDeploy({ ...deploy, kind: "logs" }, false, false)).toBe(false);
+    expect(blockedDeploy(undefined, false, false)).toBe(false);
   });
 });
