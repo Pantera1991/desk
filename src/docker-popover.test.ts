@@ -87,13 +87,30 @@ describe("the Docker popover", () => {
     expect(overview).toHaveBeenCalledTimes(2);
   });
 
-  it("forgets a call in flight when closed", async () => {
-    const overview = vi.fn().mockReturnValue(new Promise(() => {}));
+  it("keeps one call in flight across close and reopen, then asks once", async () => {
+    let done!: (o: typeof OVERVIEW) => void;
+    const overview = vi.fn().mockReturnValueOnce(new Promise((r) => (done = r))).mockResolvedValue(OVERVIEW);
     const { p } = make(overview);
     p.toggle();
     p.close();
     p.toggle();
+    expect(overview).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(DOCKER_EVERY_MS);
+    expect(overview).toHaveBeenCalledTimes(1);
+    done(OVERVIEW);
+    await vi.advanceTimersByTimeAsync(0);
     expect(overview).toHaveBeenCalledTimes(2);
+  });
+
+  it("asks nothing after a stale call settles on a closed panel", async () => {
+    let done!: (o: typeof OVERVIEW) => void;
+    const overview = vi.fn().mockReturnValueOnce(new Promise((r) => (done = r)));
+    const { p } = make(overview);
+    p.toggle();
+    p.close();
+    done(OVERVIEW);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(overview).toHaveBeenCalledTimes(1);
   });
 
   it("survives a failing call", async () => {

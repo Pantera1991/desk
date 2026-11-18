@@ -195,7 +195,7 @@ fn run(program: &Path, args: &[&str], timeout: Duration) -> Result<String, Strin
                 let _ = child.kill();
                 let _ = child.wait();
                 // Threads end with the pipes; nothing more to read.
-                return Err(tr!("serwer nie odpowiada (3 s)", "server did not answer (3 s)").into());
+                return Err(timeout_message(timeout));
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(20)),
             Err(e) => break Err(e.to_string()),
@@ -207,8 +207,21 @@ fn run(program: &Path, args: &[&str], timeout: Duration) -> Result<String, Strin
     if status.success() {
         Ok(String::from_utf8_lossy(&stdout).into_owned())
     } else {
-        Err(String::from_utf8_lossy(&stderr).trim().to_string())
+        let text = String::from_utf8_lossy(&stderr).trim().to_string();
+        if !text.is_empty() {
+            return Err(text);
+        }
+        Err(match status.code() {
+            Some(n) => tr!(format!("docker zakończył się kodem {n}"), format!("docker exited with code {n}")),
+            None => tr!("docker został przerwany".to_string(), "docker was terminated".to_string()),
+        })
     }
+}
+
+/// "Did not answer" with the wait that really ran out (whole seconds, rounded up).
+fn timeout_message(timeout: Duration) -> String {
+    let s = timeout.as_secs() + u64::from(timeout.subsec_nanos() > 0);
+    tr!(format!("serwer nie odpowiada ({s} s)"), format!("server did not answer ({s} s)"))
 }
 
 fn list(docker: &Path, url: &str, args: &[&str]) -> Result<String, String> {
@@ -435,10 +448,24 @@ not json
     #[test]
     fn run_times_out_and_kills() {
         let t = std::time::Instant::now();
-        let r = run(Path::new("sleep"), &["5"], Duration::from_millis(300));
-        assert!(t.elapsed() < Duration::from_secs(2));
+        let r = run(Path::new("sleep"), &["5"], Duration::from_secs(1));
+        assert!(t.elapsed() < Duration::from_secs(3));
         let e = r.unwrap_err();
-        assert!(e.contains("3 s"), "{e}");
+        assert!(e.contains("1 s"), "{e}");
+    }
+
+    #[test]
+    fn timeout_message_names_the_real_wait() {
+        assert!(timeout_message(Duration::from_secs(3)).contains("(3 s)"));
+        assert!(timeout_message(Duration::from_secs(30)).contains("(30 s)"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_failure_without_stderr_names_the_exit_code() {
+        let e = run(Path::new("sh"), &["-c", "exit 3"], Duration::from_secs(2)).unwrap_err();
+        assert!(e.contains('3'), "{e}");
+        assert!(!e.is_empty());
     }
 
     #[cfg(unix)]

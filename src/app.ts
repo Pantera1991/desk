@@ -609,8 +609,7 @@ export class App {
     }
     // A Docker tile is its command's own to start again, never restored: tmux lost it, so it goes.
     if (spec.agent === "docker" && restore && fresh) {
-      delete this.layout.docker[key];
-      delete this.layout.titles[key];
+      this.forgetKey(key);
       this.save();
       return null;
     }
@@ -741,6 +740,11 @@ export class App {
     this.layout.docker[key] = tile;
     this.layout.titles[key] = title;
     await this.openTile(key);
+    // Not opened: nothing may stay under a key the next tile would reuse.
+    if (!this.tiles.has(key)) {
+      this.forgetKey(key);
+      this.save();
+    }
   }
 
   /** A plain shell in a project's card (in the home folder with no tile focused). */
@@ -964,15 +968,20 @@ export class App {
     this.closed = this.closed.filter((c) => c.key !== key); // killed: nothing to reopen
     const forgotten = [this.layout.runs, this.layout.docker, this.layout.cards, this.layout.titles, this.layout.sizes, this.layout.tileAccounts].some((m) => key in m);
     if (forgotten || this.layout.minimized.includes(key)) {
-      delete this.layout.runs[key];
-      delete this.layout.docker[key];
-      delete this.layout.cards[key];
-      delete this.layout.titles[key];
-      delete this.layout.sizes[key];
-      delete this.layout.tileAccounts[key];
-      this.layout.minimized = this.layout.minimized.filter((k) => k !== key);
+      this.forgetKey(key);
       this.save();
     }
+  }
+
+  /** What desk kept in the layout for a tile's key (the caller saves). */
+  private forgetKey(key: string): void {
+    delete this.layout.runs[key];
+    delete this.layout.docker[key];
+    delete this.layout.cards[key];
+    delete this.layout.titles[key];
+    delete this.layout.sizes[key];
+    delete this.layout.tileAccounts[key];
+    this.layout.minimized = this.layout.minimized.filter((k) => k !== key);
   }
 
   /** ⌘Y: the sessions running without a tile (closed with ⌘Q, or left from

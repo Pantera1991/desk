@@ -3,7 +3,7 @@
 // keeps its scroll across refreshes, closes on Esc, a click elsewhere or the
 // window losing focus. Content: docker-view.ts; data: docker.rs.
 import type { DockerOverview, DockerTile } from "./api";
-import { renderDocker } from "./docker-view";
+import { flipOpen, renderDocker } from "./docker-view";
 import { t } from "./i18n";
 import { escapeHtml } from "./notices";
 import { confirmBox, toast } from "./ui";
@@ -108,8 +108,7 @@ export class DockerPopover {
     this.shown = false;
     clearInterval(this.timer);
     this.again = false;
-    this.gen++;
-    this.pending = false;
+    this.gen++; // `pending` stays up until that call settles: never two at once
     this.el.hidden = true;
     this.el.innerHTML = this.html = "";
     this.chip()?.removeAttribute("aria-expanded");
@@ -155,7 +154,7 @@ export class DockerPopover {
     }
     const id = target.closest<HTMLElement>("[data-open]")?.dataset.open;
     if (id) {
-      if (!this.open.delete(id)) this.open.add(id);
+      this.open = flipOpen(id, this.open);
       saveOpen(this.open);
       this.refresh();
     }
@@ -211,8 +210,15 @@ export class DockerPopover {
         if (gen === this.gen) this.error = String(err);
       })
       .finally(() => {
-        if (gen !== this.gen) return;
         this.pending = false;
+        if (gen !== this.gen) {
+          // Closed meanwhile; opened again since: the one call it waited for.
+          if (this.shown && this.again) {
+            this.again = false;
+            this.fetch();
+          }
+          return;
+        }
         this.refresh();
         if (this.again && this.shown) {
           this.again = false;

@@ -23,7 +23,7 @@ import {
 import { accountColor, withAccount, withoutAccount } from "./accounts";
 import type { LinkClick } from "./links";
 import { partsHtml, withPart } from "./cpu-parts";
-import { checkHosts } from "./docker-view";
+import { checkHosts, draftAdd, draftRemove, draftRows, draftSet } from "./docker-view";
 import { PLATFORM, shortcut } from "./platform";
 import { rows, shortPath } from "./projects";
 import { search, type SearchItem } from "./settings-search";
@@ -158,6 +158,9 @@ function waitLabel(seconds: number): string {
 }
 
 export class Settings {
+  /** Docker rows typed but not saved: they outlive a re-render (another tab); null once saved or untouched. */
+  private dockerDraft: DockerHost[] | null = null;
+
   private dockerRowHtml(h: DockerHost): string {
     return `<div class="line docker-host"><input type="text" data-k="docker-name" value="${escapeHtml(h.name)}" placeholder="${t("settings.dockerName")}" spellcheck="false" /><input type="text" data-k="docker-url" value="${escapeHtml(h.url)}" placeholder="${t("settings.dockerUrl")}" spellcheck="false" /><button data-k="docker-rm" title="${t("settings.dockerRemove")}">✕</button></div>`;
   }
@@ -166,10 +169,22 @@ export class Settings {
   private bindDocker(box: HTMLElement): void {
     const rows = box.querySelector<HTMLElement>('[data-k="docker-rows"]')!;
     const error = box.querySelector<HTMLElement>('[data-k="docker-error"]')!;
+    const index = (row: Element) => [...rows.children].indexOf(row);
+    const current = () => draftRows(this.dockerDraft, this.ctx.layout().dockerHosts ?? []);
     rows.addEventListener("click", (e) => {
-      if ((e.target as HTMLElement).closest('[data-k="docker-rm"]')) (e.target as HTMLElement).closest(".docker-host")!.remove();
+      const row = (e.target as HTMLElement).closest(".docker-host");
+      if (!row || !(e.target as HTMLElement).closest('[data-k="docker-rm"]')) return;
+      this.dockerDraft = draftRemove(current(), index(row));
+      row.remove();
+    });
+    rows.addEventListener("input", (e) => {
+      const input = e.target as HTMLInputElement;
+      const row = input.closest(".docker-host");
+      const field = input.dataset.k === "docker-name" ? "name" : input.dataset.k === "docker-url" ? "url" : null;
+      if (row && field) this.dockerDraft = draftSet(current(), index(row), field, input.value);
     });
     box.querySelector('[data-k="docker-add"]')!.addEventListener("click", () => {
+      this.dockerDraft = draftAdd(current());
       rows.insertAdjacentHTML("beforeend", this.dockerRowHtml({ name: "", url: "" }));
       rows.querySelector<HTMLInputElement>(".docker-host:last-child [data-k=docker-name]")?.focus();
     });
@@ -183,7 +198,10 @@ export class Settings {
       if (problem) return;
       void this.ctx
         .setDockerHosts(hosts)
-        .then(() => toast(t("settings.dockerSaved"), { kind: "ok" }))
+        .then(() => {
+          this.dockerDraft = null;
+          toast(t("settings.dockerSaved"), { kind: "ok" });
+        })
         .catch((err) => {
           error.textContent = String(err);
         });
@@ -918,7 +936,7 @@ export class Settings {
           "",
           `<p class="dim small" data-row>${t("settings.dockerAbout")}</p>
       <div class="docker-hosts">
-        <div data-k="docker-rows">${(layout.dockerHosts ?? []).map((h) => this.dockerRowHtml(h)).join("")}</div>
+        <div data-k="docker-rows">${draftRows(this.dockerDraft, layout.dockerHosts ?? []).map((h) => this.dockerRowHtml(h)).join("")}</div>
         <div class="line"><button data-k="docker-add">${t("settings.dockerAdd")}</button><button data-k="docker-save">${t("settings.dockerSave")}</button><span class="vpn-error" data-k="docker-error"></span></div>
       </div>`,
           "row",

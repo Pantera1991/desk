@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { DockerContainer, DockerHostView, DockerImage, DockerOverview } from "./api";
-import { checkHosts, health, imageTarget, removeQuestion, renderDocker } from "./docker-view";
+import { checkHosts, draftAdd, draftRemove, draftRows, draftSet, flipOpen, health, isOpen, imageTarget, removeQuestion, renderDocker } from "./docker-view";
 import { setLanguage, t } from "./i18n";
 
 const c = (name: string, state: string, project: string | null = null): DockerContainer => ({
@@ -51,6 +51,18 @@ describe("docker view", () => {
     );
     expect(html).toContain("server did not answer (3 s)");
     expect(html).toContain("web-1");
+  });
+
+  it("unfolds servers by default, folds the rest, and remembers a fold", () => {
+    const o = ov([host("h", { containers: [c("web-1", "running", "web")] })]);
+    const html = renderDocker(o, none, none);
+    expect(html).toContain('data-open="proj:h/web"'); // the server is open, so its branches show
+    expect(html).not.toContain("web-1"); // the project is folded
+    const folded = flipOpen("host:h", none);
+    expect(isOpen("host:h", folded)).toBe(false);
+    expect(renderDocker(o, folded, none)).not.toContain('data-open="proj:h/web"');
+    expect(isOpen("host:h", flipOpen("host:h", folded))).toBe(true);
+    expect(isOpen("proj:h/web", flipOpen("proj:h/web", none))).toBe(true);
   });
 
   it("empty error string is still an error", () => {
@@ -118,5 +130,20 @@ describe("checkHosts", () => {
   it("refuses an empty name and duplicates, ignoring case and spaces", () => {
     expect(checkHosts([h("  ", "tcp://x:1")])).toBe(t("settings.dockerNameEmpty"));
     expect(checkHosts([h("A", "tcp://x:1"), h(" a ", "tcp://y:1")])).toBe(t("settings.dockerNameDup", { name: "a" }));
+  });
+});
+
+describe("Options draft", () => {
+  const saved = [{ name: "a", url: "tcp://1.1.1.1:2375" }];
+  it("shows the saved servers until something is typed, then the draft", () => {
+    expect(draftRows(null, saved)).toEqual(saved);
+    const typed = draftSet(draftAdd(draftRows(null, saved)), 1, "name", "b");
+    expect(typed).toEqual([saved[0], { name: "b", url: "" }]);
+    expect(draftRows(typed, saved)).toEqual(typed);
+    expect(draftRows(null, saved)).toEqual(saved); // cleared after a save
+    expect(saved).toEqual([{ name: "a", url: "tcp://1.1.1.1:2375" }]); // never mutated
+  });
+  it("removes a row by index", () => {
+    expect(draftRemove([{ name: "a", url: "x" }, { name: "b", url: "y" }], 0)).toEqual([{ name: "b", url: "y" }]);
   });
 });

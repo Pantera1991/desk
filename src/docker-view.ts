@@ -33,8 +33,23 @@ export function removeQuestion(host: string, img: DockerImage, all: DockerImage[
 
 const ICON: Record<Health, string> = { up: "●", partial: "◐", down: "○" };
 
+const CLOSED = "closed:";
+
+/** Servers (`host:<name>`) are unfolded unless the user folded them (stored as `closed:<id>`); every other branch is folded unless stored as open. */
+export function isOpen(id: string, open: ReadonlySet<string>): boolean {
+  return id.startsWith("host:") ? !open.has(CLOSED + id) : open.has(id);
+}
+
+/** The state after a click on a branch. */
+export function flipOpen(id: string, open: ReadonlySet<string>): Set<string> {
+  const next = new Set(open);
+  const key = id.startsWith("host:") ? CLOSED + id : id;
+  if (!next.delete(key)) next.add(key);
+  return next;
+}
+
 function toggle(id: string, open: ReadonlySet<string>, inner: string, body: string): string {
-  const o = open.has(id);
+  const o = isOpen(id, open);
   return `<div class="dk-branch${o ? " open" : ""}"><div class="dk-row dk-toggle" data-open="${esc(id)}"><span class="dk-caret">${o ? "▾" : "▸"}</span>${inner}</div>${o ? `<div class="dk-children">${body}</div>` : ""}</div>`;
 }
 
@@ -91,7 +106,7 @@ function hostBranch(o: DockerOverview, h: DockerHostView, open: ReadonlySet<stri
   return toggle(`host:${h.name}`, open, inner, body);
 }
 
-/** `busy` holds "host|target" of the images being removed; `open` the branch ids shown unfolded. */
+/** `busy` holds "host|target" of the images being removed; `open` the branch state (see isOpen). */
 export function renderDocker(o: DockerOverview | null, open: ReadonlySet<string>, busy: ReadonlySet<string>): string {
   if (!o) return `<div class="dk-empty">${esc(t("docker.loading"))}</div>`;
   if (!o.cli) return `<div class="dk-empty">${esc(t("docker.noCli"))}</div>`;
@@ -115,4 +130,21 @@ export function checkHosts(hosts: DockerHost[]): string | null {
     seen.add(key);
   }
   return null;
+}
+
+/** Options → Docker: the rows as typed and not saved yet (kept across tab switches). Pure edits on copies. */
+export function draftRows(draft: DockerHost[] | null, saved: DockerHost[]): DockerHost[] {
+  return (draft ?? saved).map((h) => ({ ...h }));
+}
+
+export function draftSet(rows: DockerHost[], i: number, field: "name" | "url", value: string): DockerHost[] {
+  return rows.map((h, j) => (j === i ? { ...h, [field]: value } : { ...h }));
+}
+
+export function draftAdd(rows: DockerHost[]): DockerHost[] {
+  return [...rows.map((h) => ({ ...h })), { name: "", url: "" }];
+}
+
+export function draftRemove(rows: DockerHost[], i: number): DockerHost[] {
+  return rows.filter((_, j) => j !== i).map((h) => ({ ...h }));
 }
