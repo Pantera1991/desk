@@ -103,6 +103,8 @@ export class App {
   private resuming = new Map<string, string>();
   /** Deploy tiles confirmed in the Docker panel, about to start: the only way a `compose up` session starts (see blockedDeploy). */
   private confirmedDeploys = new Set<string>();
+  /** Logs/shell tiles being opened (host|target|kind): a fast second click is ignored until the first lands. */
+  private openingDocker = new Set<string>();
   private earlyExits = new Map<number, string>(); // pty-exit that arrived before attach returned
   /** Tiles kept in the saved layout though not open: they failed to open at startup or their session ended with others (see Endings). */
   private missing: Place[] = [];
@@ -776,8 +778,21 @@ export class App {
    *  deploy, confirmed in the panel), else of the project the container belongs
    *  to (the home folder when none matches). */
   private async openDockerTile(tile: DockerTile, title: string, folder?: string): Promise<void> {
-    // A second click on the same logs or shell goes to the tile that is already there.
-    if (tile.kind !== "deploy" && this.focusDockerTile(tile)) return;
+    if (tile.kind === "deploy") return this.openDockerTileNow(tile, title, folder);
+    // A second click on the same logs or shell goes to the tile that is already there,
+    // or is ignored while the first is still being opened (the awaits below).
+    if (this.focusDockerTile(tile)) return;
+    const id = `${tile.host}|${tile.target}|${tile.kind}`;
+    if (this.openingDocker.has(id)) return;
+    this.openingDocker.add(id);
+    try {
+      await this.openDockerTileNow(tile, title, folder);
+    } finally {
+      this.openingDocker.delete(id);
+    }
+  }
+
+  private async openDockerTileNow(tile: DockerTile, title: string, folder?: string): Promise<void> {
     // A deploy runs from the folder it was asked for, never from a guess.
     const path = folder ?? (await this.dockerFolder(tile));
     const taken = [...(await api.listSessions()), ...this.tiles.values()];
