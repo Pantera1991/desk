@@ -12,6 +12,9 @@ const GLOBE =
 const CUP =
   '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M1.8 5.2h6.6v2.4a2.6 2.6 0 0 1-2.6 2.6H4.4a2.6 2.6 0 0 1-2.6-2.6z"/><path d="M8.4 5.9h.6a1.35 1.35 0 0 1 0 2.7h-.75"/><path d="M4.1 1.6c-.45.5.45 1 0 1.6M6.3 1.6c-.45.5.45 1 0 1.6"/></svg>';
 
+const WHALE =
+  '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M.9 6.4h9.6c.4-.9 1-1.2 1.6-1.2-.2-.6-.9-.9-1.5-.7-.1-.6-.5-1-1-1.2-.2.5-.1.9.1 1.2"/><path d="M1.2 6.4c.2 2.2 1.8 3.6 4.4 3.6 2.6 0 4.1-1.3 4.9-3.6"/><path d="M2.6 4.7h1.5v1.7H2.6zM4.4 4.7h1.5v1.7H4.4zM6.2 4.7h1.5v1.7H6.2zM4.4 3h1.5v1.7H4.4z"/></svg>';
+
 /** "desk" and, once the app said it, its version in small print. `drag` is
  *  the attribute that drags the window by them (none while docked). */
 export function brandHtml(version: string | null, drag: string): string {
@@ -23,6 +26,12 @@ export function brandHtml(version: string | null, drag: string): string {
 export function browserHtml(keys: string): string {
   const title = escapeHtml(t("top.browserTitle", { keys }));
   return `<button class="top-btn icon" data-top="browser" title="${title}" aria-label="${escapeHtml(t("top.browser"))}">${GLOBE}</button>`;
+}
+
+/** The whale that opens the Docker panel; nothing while no server is set up. */
+export function dockerHtml(show: boolean): string {
+  if (!show) return "";
+  return `<button class="top-btn icon" data-top="docker" title="${escapeHtml(t("top.dockerTitle"))}" aria-label="${escapeHtml(t("top.docker"))}">${WHALE}</button>`;
 }
 
 /** Off: the cup alone. On: the cup and what it keeps awake. Sleep left disabled: a red chip before it. */

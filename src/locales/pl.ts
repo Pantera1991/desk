@@ -633,6 +633,10 @@ export const pl = {
   "docker.health.down": "zatrzymany",
   "docker.rmTag": "Zdjąć tag {image} z {host}? Obraz ma też {others}, więc nic nie zostanie usunięte z dysku.",
   "docker.rmImage": "Usunąć obraz {image} ({size}) z {host}?",
+  "docker.tileLogs": "logi: {name}",
+  "docker.tileShell": "sh: {name}",
+  "top.docker": "Docker",
+  "top.dockerTitle": "Serwery Dockera",
 };
 
 export type Messages = Record<keyof typeof pl, string>;

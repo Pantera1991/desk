@@ -11,6 +11,8 @@ import {
   type CoffeeLevel,
   type CoffeeStatus,
   type Conversation,
+  type DockerOverview,
+  type DockerTile,
   type GithubRepo,
   type Layout,
   type Project,
@@ -51,6 +53,7 @@ import { setSaved, syncTile } from "./saved";
 import { usageHtml } from "./usage";
 import { UsagePopover } from "./usage-popover";
 import { CpuPopover } from "./cpu-popover";
+import { DockerPopover } from "./docker-popover";
 import {
   DEFAULT_EMERGENCY,
   DEFAULT_FAN_MARGIN,
@@ -60,7 +63,7 @@ import {
   thermalHtml,
   thermalToast,
 } from "./thermal";
-import { brandHtml, browserHtml, coffeeHtml } from "./topbar";
+import { brandHtml, browserHtml, coffeeHtml, dockerHtml } from "./topbar";
 import { UpdateChecker, type UpdateOutcome } from "./updates";
 import { accountById, accountColor, accountFor, hasAccounts } from "./accounts";
 
@@ -165,6 +168,9 @@ export class App {
   private usagePopover: UsagePopover;
   /** The temperature chip's panel (cpu-popover.ts). */
   private cpuPopover: CpuPopover;
+  private dockerPopover: DockerPopover;
+  /** The servers as the panel last saw them (to find a container's compose project). */
+  private dockerLast: DockerOverview | null = null;
 
   constructor(root: HTMLElement) {
     document.documentElement.dataset.platform = PLATFORM; // CSS: room for the macOS traffic lights
@@ -207,6 +213,11 @@ export class App {
         if (!this.settings.isOpen) void this.settings.toggle("power");
       },
       resume: () => void this.resumeWork(),
+    });
+    this.dockerPopover = new DockerPopover(root, {
+      overview: async () => (this.dockerLast = await api.dockerOverview()),
+      open: (tile, title) => void this.openDockerTile(tile, title),
+      removeImage: (host, image) => api.dockerImageRm(host, image),
     });
     // Opening, closing or resizing the panel changes the grid's width: lay out again.
     this.rail = root.querySelector(".rail")!;
@@ -430,6 +441,7 @@ export class App {
       const t = (e.target as HTMLElement).closest<HTMLElement>("[data-top]")?.dataset.top;
       if (t === "browser") this.side.browse();
       if (t === "thermal") this.cpuPopover.toggle();
+      if (t === "docker") this.dockerPopover.toggle();
       if (t === "thermal-resume") void this.resumeWork();
       if (t === "update") void this.installUpdate();
       if (t === "leave") void api.dropdownLeave();
@@ -544,6 +556,11 @@ export class App {
     const opened = await Promise.all(keys.map((k) => this.createTile(k, true)));
     keys.forEach((k, i) => {
       if (opened[i]) return;
+      // A Docker tile never comes back (createTile dropped what it kept): not kept for the next start.
+      if (parseKey(k).agent === "docker") {
+        this.layout.lanes = L.remove(this.layout.lanes, k);
+        return;
+      }
       // Keep it in the saved layout (volume not mounted, tmux not ready...) for the next start.
       this.missing.push({ key: k, lane: this.layout.lanes.findIndex((l) => l.includes(k)) });
       this.layout.lanes = L.remove(this.layout.lanes, k);
@@ -584,8 +601,16 @@ export class App {
       account = accountFor(this.layout, key, spec.path);
       if (account && fresh) this.layout.tileAccounts[key] = account;
     }
+    // A Docker tile is its command's own to start again, never restored: tmux lost it, so it goes.
+    if (spec.agent === "docker" && restore && fresh) {
+      delete this.layout.docker[key];
+      delete this.layout.titles[key];
+      this.save();
+      return null;
+    }
     try {
-      const slug = await api.openSession(spec.path, spec.agent, spec.instance, this.layout.runs[key], resume, restore, account);
+      const command = spec.agent === "docker" ? JSON.stringify(this.layout.docker[key]) : this.layout.runs[key];
+      const slug = await api.openSession(spec.path, spec.agent, spec.instance, command, resume, restore, account);
       this.running.add(key);
       // A session started anew under a slug used before: the old state names
       // another conversation (a name given now would save that one).
@@ -695,6 +720,20 @@ export class App {
     const taken = [...(await api.listSessions()), ...this.tiles.values()];
     const key = keyOf({ path, agent: "run", instance: nextInstance(taken, path, "run") });
     this.layout.runs[key] = picked.value;
+    await this.openTile(key);
+  }
+
+  /** Logs or a shell of a Docker container in a card of the project it belongs to (the home folder when none matches). */
+  private async openDockerTile(tile: DockerTile, title: string): Promise<void> {
+    const container = this.dockerLast?.hosts.find((h) => h.name === tile.host)?.containers.find((c) => c.name === tile.target);
+    const wanted = [tile.target, container?.project].filter((n): n is string => !!n).map((n) => n.toLowerCase());
+    const projects = await api.listProjects(this.layout.extraFolders).catch(() => []);
+    const base = (p: string) => p.split(/[\\/]/).filter(Boolean).pop()?.toLowerCase() ?? "";
+    const path = projects.find((p) => wanted.includes(base(p.path)))?.path ?? this.home;
+    const taken = [...(await api.listSessions()), ...this.tiles.values()];
+    const key = keyOf({ path, agent: "docker", instance: nextInstance(taken, path, "docker") });
+    this.layout.docker[key] = tile;
+    this.layout.titles[key] = title;
     await this.openTile(key);
   }
 
@@ -917,9 +956,10 @@ export class App {
     if (slug) await api.killSession(slug).catch((err) => toast(String(err), { kind: "error", topic: "sessions" }));
     this.running.delete(key);
     this.closed = this.closed.filter((c) => c.key !== key); // killed: nothing to reopen
-    const forgotten = [this.layout.runs, this.layout.cards, this.layout.titles, this.layout.sizes, this.layout.tileAccounts].some((m) => key in m);
+    const forgotten = [this.layout.runs, this.layout.docker, this.layout.cards, this.layout.titles, this.layout.sizes, this.layout.tileAccounts].some((m) => key in m);
     if (forgotten || this.layout.minimized.includes(key)) {
       delete this.layout.runs[key];
+      delete this.layout.docker[key];
       delete this.layout.cards[key];
       delete this.layout.titles[key];
       delete this.layout.sizes[key];
@@ -1263,7 +1303,7 @@ export class App {
   private sessionSize(key: string): number {
     const size = this.layout.sizes[key];
     if (size > 0) return size;
-    return ["shell", "run"].includes(parseKey(key).agent) ? AUX_SIZE : 1;
+    return ["shell", "run", "docker"].includes(parseKey(key).agent) ? AUX_SIZE : 1;
   }
 
   /** A card's height until it is resized: what its unfolded sessions need. */
@@ -1776,7 +1816,7 @@ export class App {
     }<span class="spacer"${drag}></span>${this.updateHtml()}${usageHtml(this.usage, Date.now(), (id) => {
       const a = this.layout.claudeAccounts.find((x) => x.id === id);
       return a ? { name: a.name, color: accountColor(this.layout, a.id) } : null;
-    })}${thermalHtml(this.thermal, this.layout.thermalColors)}${browserHtml(keysIn("⌘W"))}${coffeeHtml(this.coffee, PLATFORM)}${this.quitHtml()}`;
+    })}${thermalHtml(this.thermal, this.layout.thermalColors)}${dockerHtml(this.layout.dockerHosts.length > 0)}${browserHtml(keysIn("⌘W"))}${coffeeHtml(this.coffee, PLATFORM)}${this.quitHtml()}`;
     this.footer.innerHTML =
       `<span class="here" hidden></span><span class="hints">${hints()
         .map(([k, label]) => `<span><kbd>${k}</kbd> ${escapeHtml(label)}</span>`)
@@ -1785,6 +1825,7 @@ export class App {
     this.usagePopover.refresh();
     // The bar was drawn anew: the panel finds its chip again (or closes).
     this.cpuPopover.refresh();
+    this.dockerPopover.refresh();
   }
 
   /** The active session at the start of the bottom bar, in its project's color. */

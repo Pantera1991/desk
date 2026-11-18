@@ -3536,3 +3536,91 @@ p.up-model {
 .up-all-sessions {
   margin-top: 14px;
 }
+
+/* ---- Docker panel under the whale chip (docker-view.ts, docker-popover.ts) ---- */
+.up.dk {
+  width: 560px;
+}
+
+.dk-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 4px;
+  min-width: 0;
+}
+
+.dk-toggle {
+  cursor: pointer;
+}
+
+.dk-toggle:hover {
+  background: var(--hover, rgba(255, 255, 255, 0.05));
+}
+
+.dk-children {
+  margin-left: 14px;
+}
+
+.dk-caret {
+  width: 10px;
+  color: var(--dim);
+}
+
+.dk-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dk-image,
+.dk-status,
+.dk-size,
+.dk-age,
+.dk-count {
+  color: var(--dim);
+  white-space: nowrap;
+}
+
+.dk-up {
+  color: #4cc38a;
+}
+
+.dk-partial {
+  color: #e0a030;
+}
+
+.dk-down {
+  color: var(--dim);
+}
+
+.dk-err .dk-error,
+.dk-fail {
+  color: #e5484d;
+}
+
+.dk-btn {
+  font: inherit;
+  padding: 1px 7px;
+  color: var(--fg);
+  background: transparent;
+  border: 1px solid var(--line-hi);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.dk-btn:hover:not(:disabled) {
+  background: var(--hover, rgba(255, 255, 255, 0.08));
+}
+
+.dk-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.dk-empty {
+  padding: 10px;
+  color: var(--dim);
+}
