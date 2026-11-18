@@ -99,6 +99,65 @@ export interface Layout {
   usageLayout: UsageLayout;
   /** How a session's share of the 5-hour window is worked out (usage_share.rs). */
   usageShare: UsageShare;
+  /** Docker servers shown in the Docker panel (docker.rs). */
+  dockerHosts: DockerHost[];
+  /** What each Docker tile shows, by session key; Rust builds the command. */
+  docker: Record<string, DockerTile>;
+}
+
+/** A Docker server added in Options: a name and its `-H` address. */
+export interface DockerHost {
+  name: string;
+  url: string;
+}
+
+/** A Docker tile: logs of a container or compose project, or a shell in a container. */
+export interface DockerTile {
+  host: string;
+  target: string;
+  kind: "logs" | "projectLogs" | "shell";
+}
+
+export interface DockerContainer {
+  id: string;
+  name: string;
+  image: string;
+  /** Docker's lowercase state: running, exited, restarting, paused, created, dead... */
+  state: string;
+  status: string;
+  project: string | null;
+  service: string | null;
+}
+
+/** One row per tag; `<none>` stays literal for repository and tag. */
+export interface DockerImage {
+  id: string;
+  repository: string;
+  tag: string;
+  size: string;
+  created: string;
+}
+
+export interface DockerNamed {
+  name: string;
+  driver: string;
+}
+
+export interface DockerHostView {
+  name: string;
+  url: string;
+  error: string | null;
+  containers: DockerContainer[];
+  images: DockerImage[];
+  networks: DockerNamed[];
+  volumes: DockerNamed[];
+}
+
+/** `cli` false: no docker command; then `hosts` is empty and `compose` false. */
+export interface DockerOverview {
+  cli: boolean;
+  compose: boolean;
+  hosts: DockerHostView[];
 }
 
 /** What desk does when hot: nothing, slow its sessions, the fan steps, or both. */
@@ -473,6 +532,9 @@ export interface PtyExit {
 
 export const api = {
   bootstrap: () => invoke<Bootstrap>("bootstrap"),
+  dockerOverview: () => invoke<DockerOverview>("docker_overview"),
+  /** `docker image rm` of a tag or id on one server; never --force. Rejects with Docker's error. */
+  dockerImageRm: (host: string, image: string) => invoke<void>("docker_image_rm", { host, image }),
   /** Server of the saved prompt-rewriting VPN config, null when none (the key never leaves Rust). */
   promptAiVpn: () => invoke<string | null>("prompt_ai_vpn"),
   /** Save a pasted WireGuard .conf ("" removes it); returns its server. */
