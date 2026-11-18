@@ -235,8 +235,9 @@ export class App {
           const found = findDeploySession(this.layout.docker, open, [...this.running].filter((k) => !this.tiles.has(k)), host, project);
           if (found === null) return false;
           // Still running in tmux with its tile closed (⌘Q): attached again, not deployed twice.
+          // Through reopen, which asks tmux first: one that ended since the last poll is refused, not re-run.
           if (found.open) this.setActive(found.key, true);
-          else void this.openTile(found.key);
+          else void this.reopen(found.key, null);
           return true;
         },
       },
