@@ -1,5 +1,13 @@
 # Zmiany
 
+## 0.2.8 (2026-11-18)
+
+- **desk nie zjada już procesora w spoczynku.** Na Linuksie obserwator folderu `state/` reagował
+  także na samo otwarcie pliku, a w odpowiedzi ten plik czytał, co dawało kolejne otwarcie i tak
+  bez końca. Nawet z jednym bezczynnym kafelkiem desk i WebKit zajmowały razem kilka rdzeni,
+  a zużycie rosło z czasem pracy, aż okno przestawało reagować. Teraz liczą się tylko zapisy
+  pliku, więc w spoczynku desk zużywa 0–2% CPU.
+
 ## 0.2.7 (2026-11-17)
 
 - **Opcje ostrzegają, gdy próg awaryjnego stopu jest za niski.** Rdzenie procesora przy zwykłym
