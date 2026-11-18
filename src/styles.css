@@ -3593,6 +3593,26 @@ p.up-model {
   white-space: nowrap;
 }
 
+.dk-badge {
+  font-size: 11px;
+  padding: 0 6px;
+  border-radius: 8px;
+  white-space: nowrap;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dk-inuse {
+  color: var(--dim);
+  border: 1px solid currentColor;
+}
+
+.dk-unused {
+  color: var(--accent);
+  border: 1px solid currentColor;
+}
+
 .dk-up {
   color: #4cc38a;
 }

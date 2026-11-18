@@ -3,7 +3,7 @@
 // none while the window is hidden), keeps its scroll across refreshes.
 // Content: docker-view.ts; data: docker.rs.
 import { api, type DockerOverview, DockerTile } from "./api";
-import { deployFolder, deployQuestion, flipOpen, renderDocker, restartQuestion } from "./docker-view";
+import { deployFolder, deployQuestion, flipOpen, renderDocker, restartQuestion, rmErrorMessage } from "./docker-view";
 import { t } from "./i18n";
 import { escapeHtml } from "./notices";
 import { confirmBox, toast } from "./ui";
@@ -219,7 +219,7 @@ export class DockerPanel {
       await this.ctx.removeImage(host, image);
       toast(t("docker.removed", { image, host }), { kind: "ok" });
     } catch (err) {
-      toast(String(err), { kind: "error" });
+      toast(rmErrorMessage(String(err), image), { kind: "error" });
     }
     this.busy.delete(key);
     this.fetch();

@@ -23,6 +23,29 @@ export function imageTarget(img: DockerImage): string {
   return img.repository === NONE || img.tag === NONE ? img.id : `${img.repository}:${img.tag}`;
 }
 
+const strip = (id: string): string => id.replace(/^sha256:/, "");
+
+/** Names of containers (any state) created from this image. `docker ps` gives only the reference, so match by name:tag, bare name (latest) or id prefix. */
+export function imageUsers(img: DockerImage, containers: DockerContainer[]): string[] {
+  const named = img.repository !== NONE && img.tag !== NONE;
+  const imgId = strip(img.id);
+  return containers
+    .filter((c) => {
+      if (named && (c.image === `${img.repository}:${img.tag}` || (img.tag === "latest" && c.image === img.repository))) return true;
+      const ref = strip(c.image);
+      return /^[0-9a-f]{12,64}$/.test(ref) && imgId.startsWith(ref);
+    })
+    .map((c) => c.name);
+}
+
+/** Docker's refusal to remove a used image becomes a plain sentence; other errors stay raw. */
+export function rmErrorMessage(err: string, image: string): string {
+  if (err.includes("conflict: unable to remove repository reference") || err.includes("image is being used by")) {
+    return t("docker.rmInUse", { image });
+  }
+  return err;
+}
+
 /** The confirmation: a shared image only loses a tag, nothing is freed. */
 export function removeQuestion(host: string, img: DockerImage, all: DockerImage[]): string {
   const image = imageTarget(img);
@@ -136,11 +159,18 @@ function projectBranch(host: string, name: string, list: DockerContainer[], comp
   return toggle(`proj:${host}/${name}`, open, inner, list.map((c) => containerRow(host, c, busy)).join(""));
 }
 
-function imageRow(host: string, img: DockerImage, all: DockerImage[], busy: ReadonlySet<string>): string {
+function imageRow(host: string, img: DockerImage, all: DockerImage[], busy: ReadonlySet<string>, containers: DockerContainer[]): string {
   const target = imageTarget(img);
   const label = img.repository === NONE ? `${NONE} ${img.id}` : `${img.repository}:${img.tag}`;
   const q = removeQuestion(host, img, all);
-  return `<div class="dk-row dk-img"><span class="dk-name">${esc(label)}</span><span class="dk-size">${esc(img.size)}</span><span class="dk-age">${esc(img.created)}</span><button type="button" class="dk-btn" data-d="rm" data-host="${esc(host)}" data-target="${esc(target)}" data-question="${esc(q)}"${busy.has(`${host}|${target}`) ? " disabled" : ""}>${esc(t("docker.remove"))}</button></div>`;
+  const users = imageUsers(img, containers);
+  const inUse = users.length > 0;
+  const badge = inUse
+    ? `<span class="dk-badge dk-inuse">${esc(t("docker.inUse", { names: users.join(", ") }))}</span>`
+    : `<span class="dk-badge dk-unused">${esc(t("docker.unused"))}</span>`;
+  const off = inUse || busy.has(`${host}|${target}`);
+  const hint = inUse ? ` title="${esc(t("docker.inUseHint"))}"` : "";
+  return `<div class="dk-row dk-img"><span class="dk-name">${esc(label)}</span>${badge}<span class="dk-size">${esc(img.size)}</span><span class="dk-age">${esc(img.created)}</span><button type="button" class="dk-btn" data-d="rm" data-host="${esc(host)}" data-target="${esc(target)}" data-question="${esc(q)}"${hint}${off ? " disabled" : ""}>${esc(t("docker.remove"))}</button></div>`;
 }
 
 function namedRow(n: DockerNamed): string {
@@ -167,7 +197,7 @@ function hostBranch(o: DockerOverview, h: DockerHostView, open: ReadonlySet<stri
   const body =
     [...projects].map(([name, list]) => projectBranch(h.name, name, list, o.compose, open, busy, deployable.get(`${h.name}|${name}`))).join("") +
     group(`nocompose:${h.name}`, t("docker.noCompose"), loose.length, loose.map((c) => containerRow(h.name, c, busy)).join(""), open) +
-    group(`images:${h.name}`, t("docker.images"), h.images.length, h.images.map((i) => imageRow(h.name, i, h.images, busy)).join(""), open) +
+    group(`images:${h.name}`, t("docker.images"), h.images.length, h.images.map((i) => imageRow(h.name, i, h.images, busy, h.containers)).join(""), open) +
     group(`networks:${h.name}`, t("docker.networks"), h.networks.length, h.networks.map(namedRow).join(""), open) +
     group(`volumes:${h.name}`, t("docker.volumes"), h.volumes.length, h.volumes.map(namedRow).join(""), open);
   return toggle(`host:${h.name}`, open, inner, body);

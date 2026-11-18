@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { DockerContainer, DockerHostView, DockerImage, DockerOverview } from "./api";
-import { checkHosts, draftAdd, draftRemove, draftRows, draftSet, flipOpen, health, isOpen, imageTarget, removeQuestion, renderDocker, deployFolder, deployQuestion, restartQuestion, findDockerTile, findDockerSession, blockedDeploy } from "./docker-view";
+import { checkHosts, draftAdd, draftRemove, draftRows, draftSet, flipOpen, health, isOpen, imageTarget, removeQuestion, renderDocker, deployFolder, deployQuestion, restartQuestion, findDockerTile, findDockerSession, blockedDeploy, imageUsers, rmErrorMessage } from "./docker-view";
 import { setLanguage, t } from "./i18n";
 
 const c = (name: string, state: string, project: string | null = null, workingDir: string | null = null): DockerContainer => ({
@@ -258,5 +258,52 @@ describe("blockedDeploy", () => {
   it("leaves logs, shells and other tiles alone", () => {
     expect(blockedDeploy({ ...deploy, kind: "logs" }, false, false)).toBe(false);
     expect(blockedDeploy(undefined, false, false)).toBe(false);
+  });
+});
+
+describe("image usage", () => {
+  beforeEach(() => setLanguage("pl"));
+  const ci = (name: string, image: string, state = "running"): DockerContainer => ({ ...c(name, state), image });
+  const ID = "9902990e3bec1234567890abcdef1234567890abcdef1234567890abcdef1234";
+
+  it("matches name:tag", () => {
+    expect(imageUsers(img("web", "1.4"), [ci("a", "web:1.4"), ci("b", "web:1.5")])).toEqual(["a"]);
+  });
+  it("bare name matches only latest", () => {
+    expect(imageUsers(img("web", "latest"), [ci("a", "web")])).toEqual(["a"]);
+    expect(imageUsers(img("web", "1.4"), [ci("a", "web")])).toEqual([]);
+  });
+  it("short id and sha256 id", () => {
+    expect(imageUsers(img("web", "1.4", ID), [ci("a", "9902990e3bec")])).toEqual(["a"]);
+    expect(imageUsers(img("web", "1.4", `sha256:${ID}`), [ci("a", `sha256:${ID}`), ci("b", "9902990e3bec")])).toEqual(["a", "b"]);
+    expect(imageUsers(img("web", "1.4", ID), [ci("a", "9902990e3be")])).toEqual([]);
+  });
+  it("<none> image matches only by id", () => {
+    expect(imageUsers(img("<none>", "<none>", ID), [ci("a", "<none>:<none>"), ci("b", "<none>"), ci("c", "9902990e3bec")])).toEqual(["c"]);
+  });
+  it("stopped containers count", () => {
+    expect(imageUsers(img("web", "1.4"), [ci("a", "web:1.4", "exited")])).toEqual(["a"]);
+  });
+
+  it("renders in-use badge and disabled remove", () => {
+    const o = ov([host("h", { images: [img("web", "1.4")], containers: [ci("a<", "web:1.4"), ci("b", "web:1.4", "exited")] })]);
+    const html = renderDocker(o, new Set(["host:h", "images:h"]), none, new Map());
+    expect(html).toContain("w użyciu: a&#60;, b");
+    expect(html).toContain(t("docker.inUseHint"));
+    expect(html).toMatch(/<button[^>]*data-d="rm"[^>]*disabled/);
+    expect(html).not.toContain("nieużywany");
+  });
+  it("renders unused badge and enabled remove", () => {
+    const o = ov([host("h", { images: [img("web", "1.4")] })]);
+    const html = renderDocker(o, new Set(["host:h", "images:h"]), none, new Map());
+    expect(html).toContain("nieużywany");
+    expect(html).not.toMatch(/<button[^>]*data-d="rm"[^>]*disabled/);
+  });
+
+  it("maps in-use errors", () => {
+    const raw = 'Error response from daemon: conflict: unable to remove repository reference "web:1.4" (must force) - container 9223 is using its referenced image 99';
+    expect(rmErrorMessage(raw, "web:1.4")).toBe("Nie usunięto web:1.4: używa go kontener. Najpierw zatrzymaj albo usuń kontener.");
+    expect(rmErrorMessage("image is being used by running container x", "web:1.4")).toContain("Nie usunięto web:1.4");
+    expect(rmErrorMessage("boom", "web:1.4")).toBe("boom");
   });
 });
