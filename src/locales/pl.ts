@@ -647,6 +647,13 @@ export const pl = {
   "docker.removed": "Usunięto obraz {image} z {host}.",
   "docker.tileLogs": "logi: {name}",
   "docker.tileShell": "sh: {name}",
+  "docker.restart": "Restart",
+  "docker.deploy": "Wdróż",
+  "docker.restartQuestion": "Zrestartować kontener {container} na {host}? Usługa przestanie działać na kilka sekund.",
+  "docker.deployQuestion": "Wdrożyć {project} na {host} z {path}?{git}",
+  "docker.deployBranch": " Gałąź: {branch}, {changes}.",
+  "docker.deployClean": "bez niezacommitowanych zmian",
+  "docker.deployDirty": "{n} niezacommitowana zmiana|{n} niezacommitowane zmiany|{n} niezacommitowanych zmian",
   "top.docker": "Docker",
   "top.dockerTitle": "Serwery Dockera",
 };

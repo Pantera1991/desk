@@ -115,7 +115,7 @@ export interface DockerHost {
 export interface DockerTile {
   host: string;
   target: string;
-  kind: "logs" | "projectLogs" | "shell";
+  kind: "logs" | "projectLogs" | "shell" | "deploy";
 }
 
 export interface DockerContainer {
@@ -127,6 +127,14 @@ export interface DockerContainer {
   status: string;
   project: string | null;
   service: string | null;
+  /** Label com.docker.compose.project.working_dir: the folder compose was started from (on the server). */
+  workingDir: string | null;
+}
+
+/** Branch (null: detached) and number of uncommitted changes of a local folder. */
+export interface GitSummary {
+  branch: string | null;
+  dirty: number;
 }
 
 /** One row per tag; `<none>` stays literal for repository and tag. */
@@ -535,6 +543,10 @@ export const api = {
   dockerOverview: () => invoke<DockerOverview>("docker_overview"),
   /** `docker image rm` of a tag or id on one server; never --force. Rejects with Docker's error. */
   dockerImageRm: (host: string, image: string) => invoke<void>("docker_image_rm", { host, image }),
+  /** `docker restart` of one container on one server. Rejects with Docker's error. */
+  dockerRestart: (host: string, container: string) => invoke<void>("docker_restart", { host, container }),
+  /** Branch and dirty count of a local folder; null when it is not a git repository (or git timed out). */
+  gitStatusSummary: (path: string) => invoke<GitSummary | null>("git_status_summary", { path }),
   /** Server of the saved prompt-rewriting VPN config, null when none (the key never leaves Rust). */
   promptAiVpn: () => invoke<string | null>("prompt_ai_vpn"),
   /** Save a pasted WireGuard .conf ("" removes it); returns its server. */

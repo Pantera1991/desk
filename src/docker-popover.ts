@@ -124,7 +124,7 @@ export class DockerPopover {
     const html =
       `<div class="up dk" role="dialog" aria-label="${escapeHtml(t("docker.title"))}"><i class="up-nib"></i>` +
       `<header class="up-head"><span class="up-title">${escapeHtml(t("docker.title"))}</span><button type="button" class="dk-btn" data-d="refresh">${escapeHtml(t("docker.refresh"))}</button></header>` +
-      `<div class="up-body">${err}${renderDocker(this.overview, this.open, this.busy)}</div></div>`;
+      `<div class="up-body">${err}${renderDocker(this.overview, this.open, this.busy, new Map())}</div></div>`;
     if (html !== this.html || this.el.hidden) {
       const scroll = this.el.querySelector(".up-body")?.scrollTop ?? 0;
       this.el.innerHTML = this.html = html;

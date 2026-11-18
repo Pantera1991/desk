@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { DockerContainer, DockerHostView, DockerImage, DockerOverview } from "./api";
-import { checkHosts, draftAdd, draftRemove, draftRows, draftSet, flipOpen, health, isOpen, imageTarget, removeQuestion, renderDocker } from "./docker-view";
+import { checkHosts, draftAdd, draftRemove, draftRows, draftSet, flipOpen, health, isOpen, imageTarget, removeQuestion, renderDocker, deployFolder, deployQuestion, restartQuestion } from "./docker-view";
 import { setLanguage, t } from "./i18n";
 
-const c = (name: string, state: string, project: string | null = null): DockerContainer => ({
+const c = (name: string, state: string, project: string | null = null, workingDir: string | null = null): DockerContainer => ({
   id: `id-${name}`,
   name,
   image: "nginx:1.27",
@@ -11,6 +11,7 @@ const c = (name: string, state: string, project: string | null = null): DockerCo
   status: state === "running" ? "Up 3 days" : "Exited (1)",
   project,
   service: project ? "web" : null,
+  workingDir,
 });
 const img = (repository: string, tag: string, id = "ab12"): DockerImage => ({ id, repository, tag, size: "412 MB", created: "3 days ago" });
 const host = (name: string, over: Partial<DockerHostView> = {}): DockerHostView => ({
@@ -38,7 +39,7 @@ describe("docker view", () => {
   });
 
   it("renders missing cli", () => {
-    const html = renderDocker({ cli: false, compose: false, hosts: [] }, none, none);
+    const html = renderDocker({ cli: false, compose: false, hosts: [] }, none, none, new Map());
     expect(html).toContain(t("docker.noCli"));
     expect(html).not.toContain("data-d");
   });
@@ -48,6 +49,7 @@ describe("docker view", () => {
       ov([host("bad", { error: "server did not answer (3 s)" }), host("good", { containers: [c("web-1", "running", "web")] })]),
       new Set(["host:good", "proj:good/web"]),
       none,
+      new Map(),
     );
     expect(html).toContain("server did not answer (3 s)");
     expect(html).toContain("web-1");
@@ -55,33 +57,33 @@ describe("docker view", () => {
 
   it("unfolds servers by default, folds the rest, and remembers a fold", () => {
     const o = ov([host("h", { containers: [c("web-1", "running", "web")] })]);
-    const html = renderDocker(o, none, none);
+    const html = renderDocker(o, none, none, new Map());
     expect(html).toContain('data-open="proj:h/web"'); // the server is open, so its branches show
     expect(html).not.toContain("web-1"); // the project is folded
     const folded = flipOpen("host:h", none);
     expect(isOpen("host:h", folded)).toBe(false);
-    expect(renderDocker(o, folded, none)).not.toContain('data-open="proj:h/web"');
+    expect(renderDocker(o, folded, none, new Map())).not.toContain('data-open="proj:h/web"');
     expect(isOpen("host:h", flipOpen("host:h", folded))).toBe(true);
     expect(isOpen("proj:h/web", flipOpen("proj:h/web", none))).toBe(true);
   });
 
   it("empty error string is still an error", () => {
-    const html = renderDocker(ov([host("bad", { error: "" })]), none, none);
+    const html = renderDocker(ov([host("bad", { error: "" })]), none, none, new Map());
     expect(html).toContain(t("docker.errorFallback"));
   });
 
   it("groups by compose project", () => {
     const o = ov([host("h", { containers: [c("a-1", "running", "web"), c("lone", "running")] })]);
     const open = new Set(["host:h", "proj:h/web", "nocompose:h"]);
-    const html = renderDocker(o, open, none);
+    const html = renderDocker(o, open, none, new Map());
     expect(html).toContain(t("docker.noCompose"));
     expect(html).toContain('data-d="projectLogs"');
-    expect(renderDocker({ ...o, compose: false }, open, none)).not.toContain('data-d="projectLogs"');
+    expect(renderDocker({ ...o, compose: false }, open, none, new Map())).not.toContain('data-d="projectLogs"');
   });
 
   it("shell disabled when not running", () => {
     const o = ov([host("h", { containers: [c("up", "running"), c("down", "exited")] })]);
-    const html = renderDocker(o, new Set(["host:h", "nocompose:h"]), none);
+    const html = renderDocker(o, new Set(["host:h", "nocompose:h"]), none, new Map());
     const shells = html.match(/<button[^>]*data-d="shell"[^>]*>/g) ?? [];
     expect(shells).toHaveLength(2);
     expect(shells.filter((b) => b.includes("disabled"))).toHaveLength(1);
@@ -102,13 +104,13 @@ describe("docker view", () => {
 
   it("image rm button busy", () => {
     const o = ov([host("h", { images: [img("web", "1.4")] })]);
-    const html = renderDocker(o, new Set(["host:h", "images:h"]), new Set(["h|web:1.4"]));
+    const html = renderDocker(o, new Set(["host:h", "images:h"]), new Set(["h|web:1.4"]), new Map());
     expect(html).toMatch(/<button[^>]*data-d="rm"[^>]*disabled/);
   });
 
   it("escapes names", () => {
     const o = ov([host("h", { containers: [c("<b>", "running")] })]);
-    const html = renderDocker(o, new Set(["host:h", "nocompose:h"]), none);
+    const html = renderDocker(o, new Set(["host:h", "nocompose:h"]), none, new Map());
     expect(html).not.toContain("<b>");
     expect(html).toContain("&#60;b&#62;");
   });
@@ -145,5 +147,41 @@ describe("Options draft", () => {
   });
   it("removes a row by index", () => {
     expect(draftRemove([{ name: "a", url: "x" }, { name: "b", url: "y" }], 0)).toEqual([{ name: "b", url: "y" }]);
+  });
+
+  it("deployFolder: label match, name match, ambiguity, never outside openPaths", () => {
+    const wd = (dir: string | null) => [c("a-1", "running", "mm-general", dir)];
+    expect(deployFolder("mm-general", wd("/p/other"), ["/p/other", "/p/x"])).toBe("/p/other");
+    expect(deployFolder("mm-general", wd("/srv/gone"), ["/p/MM-General"])).toBe("/p/MM-General");
+    expect(deployFolder("mm-general", wd("/srv/gone"), ["/p/MM-General", "C:\\w\\mm-general"])).toBeNull();
+    expect(deployFolder("web", [], ["/a/web", "/b/web"])).toBeNull();
+    expect(deployFolder("web", [], ["C:\\a\\web"])).toBe("C:\\a\\web");
+    expect(deployFolder("web", wd("/srv/web"), [])).toBeNull();
+    expect(deployFolder("mm-general", [c("a", "running", "mm-general", "/p/a"), c("b", "running", "mm-general", "/p/b")], ["/p/a", "/p/b"])).toBeNull();
+    expect(deployFolder("mm-general", wd("/srv/web"), ["/p/zzz"])).toBeNull();
+  });
+
+  it("restart and deploy questions", () => {
+    setLanguage("pl");
+    expect(restartQuestion("Docker1", "web-app-1")).toBe("Zrestartować kontener web-app-1 na Docker1? Usługa przestanie działać na kilka sekund.");
+    const q = (git: { branch: string | null; dirty: number } | null) => deployQuestion("Docker1", "mm-general", "/p/mm-general", git);
+    expect(q({ branch: "main", dirty: 3 })).toBe("Wdrożyć mm-general na Docker1 z /p/mm-general? Gałąź: main, 3 niezacommitowane zmiany.");
+    expect(q({ branch: "main", dirty: 1 })).toContain("1 niezacommitowana zmiana.");
+    expect(q({ branch: "main", dirty: 5 })).toContain("5 niezacommitowanych zmian.");
+    expect(q({ branch: "main", dirty: 0 })).toBe("Wdrożyć mm-general na Docker1 z /p/mm-general? Gałąź: main, bez niezacommitowanych zmian.");
+    expect(q(null)).toBe("Wdrożyć mm-general na Docker1 z /p/mm-general?");
+  });
+
+  it("restart on every row; deploy only with map entry and compose; path escaped", () => {
+    const o = ov([host("h", { containers: [c("a", "running", "web"), c("b", "exited")] })]);
+    const open = new Set(["host:h", "proj:h/web", "nocompose:h"]);
+    const html = renderDocker(o, open, new Set(["h|a"]), new Map([["h|web", '/p/"x"&']]));
+    expect(html.match(/data-d="restart"/g)).toHaveLength(2);
+    expect(html).toMatch(/data-d="restart" data-host="h" data-target="a" disabled/);
+    expect(html).toMatch(/data-d="restart" data-host="h" data-target="b">/);
+    expect(html).toContain('data-d="deploy"');
+    expect(html).toContain('data-path="/p/&#34;x&#34;&#38;"');
+    expect(renderDocker(o, open, none, new Map())).not.toContain('data-d="deploy"');
+    expect(renderDocker({ ...o, compose: false }, open, none, new Map([["h|web", "/p"]]))).not.toContain('data-d="deploy"');
   });
 });

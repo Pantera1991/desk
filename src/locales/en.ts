@@ -648,6 +648,13 @@ export const en: Messages = {
   "docker.removed": "Removed image {image} from {host}.",
   "docker.tileLogs": "logs: {name}",
   "docker.tileShell": "sh: {name}",
+  "docker.restart": "Restart",
+  "docker.deploy": "Deploy",
+  "docker.restartQuestion": "Restart the container {container} on {host}? The service will be down for a few seconds.",
+  "docker.deployQuestion": "Deploy {project} to {host} from {path}?{git}",
+  "docker.deployBranch": " Branch: {branch}, {changes}.",
+  "docker.deployClean": "no uncommitted changes",
+  "docker.deployDirty": "{n} uncommitted change|{n} uncommitted changes",
   "top.docker": "Docker",
   "top.dockerTitle": "Docker servers",
 };
