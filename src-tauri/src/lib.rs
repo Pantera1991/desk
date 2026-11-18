@@ -232,7 +232,12 @@ fn open_session(
             .into());
         }
         let tile: docker::DockerTile = serde_json::from_str(&command.unwrap_or_default())
-            .map_err(|e| format!("invalid Docker tile: {e}"))?;
+            .map_err(|e| {
+                tr!(
+                    format!("nieprawidłowy kafelek Dockera: {e}"),
+                    format!("invalid Docker tile: {e}")
+                )
+            })?;
         docker::tile_command(&tile, &layout.docker_hosts)?
     } else if agent == RUN_AGENT {
         // Only a command the project itself defines (see project::run_targets).

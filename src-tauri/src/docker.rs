@@ -141,10 +141,11 @@ pub fn parse_named(stdout: &str) -> Vec<Named> {
         .collect()
 }
 
-/// `tcp://host:port` or `unix:///path`, no spaces or control characters.
+/// `tcp://host:port` or `unix:///path`; a strict charset, so quoting never
+/// meets a metacharacter in POSIX sh or PowerShell.
 pub fn valid_url(url: &str) -> bool {
     let rest = url.strip_prefix("tcp://").or_else(|| url.strip_prefix("unix://"));
-    rest.is_some_and(|r| !r.is_empty() && !r.chars().any(|c| c.is_whitespace() || c.is_control()))
+    rest.is_some_and(|r| !r.is_empty() && r.chars().all(|c| c.is_ascii_alphanumeric() || ".:/_-[]@%".contains(c)))
 }
 
 /// Container, project or service name: no leading dash, no shell characters.
@@ -357,6 +358,10 @@ mod tests {
     fn refuses_invalid_stored_url() {
         let hosts = vec![DockerHost { name: "Docker1".into(), url: "tcp://a b; rm".into() }];
         assert!(tile_command(&tile("web", DockerTileKind::Logs), &hosts).is_err());
+        for url in ["tcp://x';calc;'", "tcp://a$b", "tcp://a`b", "http://192.0.2.10:2375"] {
+            let hosts = vec![DockerHost { name: "Docker1".into(), url: url.into() }];
+            assert!(tile_command(&tile("web", DockerTileKind::Logs), &hosts).is_err(), "{url}");
+        }
     }
 
     #[test]
@@ -413,6 +418,10 @@ not json
         assert!(!valid_url("http://x"));
         assert!(!valid_url("tcp://"));
         assert!(!valid_url("tcp://a b"));
+        assert!(valid_url("tcp://[::1]:2375"));
+        for bad in ["tcp://x';calc;'", "tcp://a$b", "tcp://a`b", "http://192.0.2.10:2375"] {
+            assert!(!valid_url(bad), "{bad:?}");
+        }
         assert!(valid_name("web-app_1.x"));
         for bad in ["", "-x", "a;b", "a b"] {
             assert!(!valid_name(bad), "{bad:?}");
