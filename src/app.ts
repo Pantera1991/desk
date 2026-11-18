@@ -53,7 +53,7 @@ import { setSaved, syncTile } from "./saved";
 import { usageHtml } from "./usage";
 import { UsagePopover } from "./usage-popover";
 import { CpuPopover } from "./cpu-popover";
-import { DockerPopover } from "./docker-popover";
+import { DockerPanel } from "./docker-panel";
 import {
   DEFAULT_EMERGENCY,
   DEFAULT_FAN_MARGIN,
@@ -168,7 +168,7 @@ export class App {
   private usagePopover: UsagePopover;
   /** The temperature chip's panel (cpu-popover.ts). */
   private cpuPopover: CpuPopover;
-  private dockerPopover: DockerPopover;
+  private dockerPanel: DockerPanel;
   /** The servers as the panel last saw them (to find a container's compose project). */
   private dockerLast: DockerOverview | null = null;
 
@@ -214,11 +214,22 @@ export class App {
       },
       resume: () => void this.resumeWork(),
     });
-    this.dockerPopover = new DockerPopover(root, {
-      overview: async () => (this.dockerLast = await api.dockerOverview()),
-      open: (tile, title) => void this.openDockerTile(tile, title),
-      removeImage: (host, image) => api.dockerImageRm(host, image),
-    });
+    this.dockerPanel = new DockerPanel(
+      () => {
+        if (!this.layout) return;
+        this.render();
+        this.renderChrome();
+      },
+      {
+        overview: async () => (this.dockerLast = await api.dockerOverview()),
+        openPaths: () => [...new Set([...this.tiles.values()].map((t) => t.path))],
+        open: (tile, title) => void this.openDockerTile(tile, title),
+        removeImage: (host, image) => api.dockerImageRm(host, image),
+        // Wired in the next step: restart and deploy.
+        restart: async () => {},
+        deploy: async () => {},
+      },
+    );
     // Opening, closing or resizing the panel changes the grid's width: lay out again.
     this.rail = root.querySelector(".rail")!;
     this.strip = root.querySelector(".strip")!;
@@ -239,7 +250,7 @@ export class App {
       browser: () => this.layout?.browser ?? "auto",
       linkClick: () => this.layout?.linkClick ?? "desk",
     });
-    root.querySelector(".middle")!.appendChild(this.side.el);
+    root.querySelector(".middle")!.append(this.dockerPanel.el, this.side.el);
     this.footer = root.querySelector(".bottom")!;
 
     this.palette = new Palette({
@@ -447,7 +458,7 @@ export class App {
       const t = (e.target as HTMLElement).closest<HTMLElement>("[data-top]")?.dataset.top;
       if (t === "browser") this.side.browse();
       if (t === "thermal") this.cpuPopover.toggle();
-      if (t === "docker") this.dockerPopover.toggle();
+      if (t === "docker") this.dockerPanel.toggle();
       if (t === "thermal-resume") void this.resumeWork();
       if (t === "update") void this.installUpdate();
       if (t === "leave") void api.dropdownLeave();
@@ -1826,12 +1837,14 @@ export class App {
     const hide = this.docked
       ? `<span class="dim"> · </span><span class="dropdown-hint" title="${t("top.hideTitle")}"><kbd>${hotkey}</kbd> ${t("top.hide")}</span>`
       : "";
+    // No server left to show: the panel goes with its chip.
+    if (this.layout.dockerHosts.length === 0 && this.dockerPanel.isOpen) this.dockerPanel.close();
     this.top.innerHTML = `${leave}${brandHtml(this.version, drag)}${hide}<span class="dim"${drag}> · ${this.tiles.size} sessions</span>${this.backgroundHtml()}${
       waiting ? `<span class="waiting-pill"${drag}>${t("top.waiting", { n: waiting })}</span>` : ""
     }<span class="spacer"${drag}></span>${this.updateHtml()}${usageHtml(this.usage, Date.now(), (id) => {
       const a = this.layout.claudeAccounts.find((x) => x.id === id);
       return a ? { name: a.name, color: accountColor(this.layout, a.id) } : null;
-    })}${thermalHtml(this.thermal, this.layout.thermalColors)}${dockerHtml(this.layout.dockerHosts.length > 0)}${browserHtml(keysIn("⌘W"))}${coffeeHtml(this.coffee, PLATFORM)}${this.quitHtml()}`;
+    })}${thermalHtml(this.thermal, this.layout.thermalColors)}${dockerHtml(this.layout.dockerHosts.length > 0, this.dockerPanel.isOpen)}${browserHtml(keysIn("⌘W"))}${coffeeHtml(this.coffee, PLATFORM)}${this.quitHtml()}`;
     this.footer.innerHTML =
       `<span class="here" hidden></span><span class="hints">${hints()
         .map(([k, label]) => `<span><kbd>${k}</kbd> ${escapeHtml(label)}</span>`)
@@ -1840,7 +1853,6 @@ export class App {
     this.usagePopover.refresh();
     // The bar was drawn anew: the panel finds its chip again (or closes).
     this.cpuPopover.refresh();
-    this.dockerPopover.refresh();
   }
 
   /** The active session at the start of the bottom bar, in its project's color. */
@@ -2165,6 +2177,9 @@ export class App {
         break;
       case "files":
         this.side.showFiles();
+        break;
+      case "docker":
+        if (this.layout.dockerHosts.length > 0) this.dockerPanel.toggle();
         break;
       case "run": {
         const tile = this.tiles.get(this.active ?? "");

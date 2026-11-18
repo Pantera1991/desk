@@ -36,6 +36,7 @@ describe("actionFor", () => {
     expect(mac(k("s"))).toEqual({ type: "sessions" });
     expect(mac(k("t"))).toEqual({ type: "terminal" });
     expect(mac(k("f"))).toEqual({ type: "files" });
+    expect(mac(k("g"))).toEqual({ type: "docker" });
     expect(mac(k("u"))).toEqual({ type: "run" });
     expect(mac(k("o"))).toEqual({ type: "settings" });
     expect(mac(k("w"))).toEqual({ type: "preview" });

@@ -5,22 +5,23 @@ const confirm = vi.fn<(m: string, ok?: string) => Promise<boolean>>();
 const toast = vi.fn();
 vi.mock("./ui", () => ({ confirmBox: (m: string, ok?: string) => confirm(m, ok), toast: (...a: unknown[]) => toast(...a) }));
 
-import { DOCKER_EVERY_MS, DockerPopover } from "./docker-popover";
+import { DOCKER_EVERY_MS, DockerPanel } from "./docker-panel";
 
 const OVERVIEW: DockerOverview = { cli: true, compose: true, hosts: [] };
 
-/** Just enough DOM for the popover: no browser in these tests. */
+/** Just enough DOM for the panel: no browser in these tests. */
 function fakeEl() {
   const listeners: Record<string, ((e: unknown) => void)[]> = {};
+  const child = { scrollTop: 0, addEventListener() {}, setPointerCapture() {}, removeEventListener() {}, innerHTML: "" };
   return {
     hidden: false,
     className: "",
     innerHTML: "",
-    style: { left: "", top: "", maxHeight: "" },
-    firstElementChild: null,
-    append() {},
+    style: { width: "" } as Record<string, string>,
+    child,
     contains: () => false,
-    querySelector: () => null,
+    getBoundingClientRect: () => ({ width: 380 }),
+    querySelector: () => child,
     addEventListener(n: string, f: (e: unknown) => void) {
       (listeners[n] ??= []).push(f);
     },
@@ -31,18 +32,21 @@ function fakeEl() {
 }
 
 let el: ReturnType<typeof fakeEl>;
+let doc: { hidden: boolean };
+let store: Record<string, string>;
 const handlers: Record<string, ((e: unknown) => void)[]> = {};
 const fireGlobal = (n: string, e: unknown) => handlers[n]?.forEach((f) => f(e));
-const chip = { setAttribute() {}, removeAttribute() {}, getBoundingClientRect: () => ({ left: 0, right: 10, bottom: 10, width: 10 }) };
 
 beforeEach(() => {
   vi.useFakeTimers();
   el = fakeEl();
+  store = {};
   for (const k of Object.keys(handlers)) delete handlers[k];
   const on = (n: string, f: (e: unknown) => void) => void (handlers[n] ??= []).push(f);
-  vi.stubGlobal("document", { createElement: () => el, addEventListener: on, querySelector: () => chip });
+  doc = { hidden: false };
+  vi.stubGlobal("document", Object.assign(doc, { createElement: () => el, addEventListener: on }));
   vi.stubGlobal("window", { addEventListener: on, innerWidth: 1000, innerHeight: 800 });
-  vi.stubGlobal("localStorage", { getItem: () => null, setItem() {} });
+  vi.stubGlobal("localStorage", { getItem: (k: string) => store[k] ?? null, setItem: (k: string, v: string) => void (store[k] = v) });
   vi.stubGlobal("Element", class {});
   confirm.mockReset();
   toast.mockReset();
@@ -53,16 +57,23 @@ afterEach(() => {
 });
 
 function make(overview: () => Promise<DockerOverview>, removeImage = vi.fn().mockResolvedValue(undefined)) {
-  const p = new DockerPopover({ append() {} } as unknown as HTMLElement, { overview, open: vi.fn(), removeImage });
+  const p = new DockerPanel(vi.fn(), {
+    overview,
+    openPaths: () => [],
+    open: vi.fn(),
+    removeImage,
+    restart: vi.fn().mockResolvedValue(undefined),
+    deploy: vi.fn().mockResolvedValue(undefined),
+  });
   return { p, removeImage };
 }
 
-describe("the Docker popover", () => {
+describe("the Docker panel", () => {
   it("asks only while open", async () => {
     const overview = vi.fn().mockResolvedValue(OVERVIEW);
     const { p } = make(overview);
     expect(overview).not.toHaveBeenCalled();
-    p.toggle();
+    p.open();
     expect(overview).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(DOCKER_EVERY_MS);
     expect(overview).toHaveBeenCalledTimes(2);
@@ -74,7 +85,7 @@ describe("the Docker popover", () => {
   it("never overlaps", async () => {
     const overview = vi.fn().mockReturnValue(new Promise(() => {}));
     const { p } = make(overview);
-    p.toggle();
+    p.open();
     await vi.advanceTimersByTimeAsync(15_000);
     expect(overview).toHaveBeenCalledTimes(1);
   });
@@ -82,7 +93,7 @@ describe("the Docker popover", () => {
   it("skips a tick while the call is slow", async () => {
     const overview = vi.fn().mockImplementation(() => new Promise((r) => setTimeout(() => r(OVERVIEW), 6000)));
     const { p } = make(overview);
-    p.toggle();
+    p.open();
     await vi.advanceTimersByTimeAsync(10_000);
     expect(overview).toHaveBeenCalledTimes(2);
   });
@@ -91,9 +102,9 @@ describe("the Docker popover", () => {
     let done!: (o: typeof OVERVIEW) => void;
     const overview = vi.fn().mockReturnValueOnce(new Promise((r) => (done = r))).mockResolvedValue(OVERVIEW);
     const { p } = make(overview);
-    p.toggle();
+    p.open();
     p.close();
-    p.toggle();
+    p.open();
     expect(overview).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(DOCKER_EVERY_MS);
     expect(overview).toHaveBeenCalledTimes(1);
@@ -106,7 +117,7 @@ describe("the Docker popover", () => {
     let done!: (o: typeof OVERVIEW) => void;
     const overview = vi.fn().mockReturnValueOnce(new Promise((r) => (done = r)));
     const { p } = make(overview);
-    p.toggle();
+    p.open();
     p.close();
     done(OVERVIEW);
     await vi.advanceTimersByTimeAsync(0);
@@ -116,10 +127,69 @@ describe("the Docker popover", () => {
   it("survives a failing call", async () => {
     const overview = vi.fn().mockRejectedValue("boom");
     const { p } = make(overview);
-    p.toggle();
+    p.open();
     await vi.advanceTimersByTimeAsync(DOCKER_EVERY_MS);
     expect(overview).toHaveBeenCalledTimes(2);
-    expect(el.innerHTML).toContain("boom");
+    expect(el.child.innerHTML).toContain("boom");
+  });
+
+  it("pauses while the window is hidden and asks at once when it is back", async () => {
+    const overview = vi.fn().mockResolvedValue(OVERVIEW);
+    const { p } = make(overview);
+    p.open();
+    await vi.advanceTimersByTimeAsync(0);
+    doc.hidden = true;
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(overview).toHaveBeenCalledTimes(1);
+    doc.hidden = false;
+    fireGlobal("visibilitychange", {});
+    expect(overview).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not close on Esc or a click elsewhere", async () => {
+    const { p } = make(vi.fn().mockResolvedValue(OVERVIEW));
+    p.open();
+    await vi.advanceTimersByTimeAsync(0);
+    fireGlobal("keydown", { key: "Escape", preventDefault() {}, stopImmediatePropagation() {} });
+    fireGlobal("mousedown", Object.assign(new (globalThis.Element as new () => object)(), { closest: () => null }));
+    fireGlobal("blur", {});
+    expect(p.isOpen).toBe(true);
+  });
+
+  it("remembers being open and restores it", () => {
+    const { p } = make(vi.fn().mockResolvedValue(OVERVIEW));
+    p.open();
+    expect(store["desk.dockerPanel"]).toBe("1");
+    p.close();
+    expect(store["desk.dockerPanel"]).toBe("0");
+    store["desk.dockerPanel"] = "1";
+    expect(make(vi.fn().mockResolvedValue(OVERVIEW)).p.isOpen).toBe(true);
+  });
+
+  it("tells the layout when it opens or closes", () => {
+    const onLayout = vi.fn();
+    const p = new DockerPanel(onLayout, {
+      overview: vi.fn().mockResolvedValue(OVERVIEW),
+      openPaths: () => [],
+      open: vi.fn(),
+      removeImage: vi.fn(),
+      restart: vi.fn(),
+      deploy: vi.fn(),
+    });
+    p.open();
+    p.close();
+    expect(onLayout).toHaveBeenCalledTimes(2);
+  });
+
+  it("takes its width from storage, 380 by default, 280 at least", () => {
+    make(vi.fn().mockResolvedValue(OVERVIEW));
+    expect(el.style.width).toBe("380px");
+    store["desk.dockerWidth"] = "500";
+    make(vi.fn().mockResolvedValue(OVERVIEW));
+    expect(el.style.width).toBe("500px");
+    store["desk.dockerWidth"] = "100";
+    make(vi.fn().mockResolvedValue(OVERVIEW));
+    expect(el.style.width).toBe("280px");
   });
 
   describe("remove", () => {
@@ -133,7 +203,7 @@ describe("the Docker popover", () => {
       let done!: () => void;
       const removeImage = vi.fn().mockReturnValue(new Promise<void>((r) => (done = r)));
       const { p } = make(overview, removeImage);
-      p.toggle();
+      p.open();
       await vi.advanceTimersByTimeAsync(0);
       confirm.mockResolvedValue(true);
       click();
@@ -145,9 +215,9 @@ describe("the Docker popover", () => {
       expect(overview).toHaveBeenCalledTimes(1);
     });
 
-    it("ignores outside clicks and Esc while confirming", async () => {
+    it("stays open while confirming", async () => {
       const { p } = make(vi.fn().mockResolvedValue(OVERVIEW));
-      p.toggle();
+      p.open();
       await vi.advanceTimersByTimeAsync(0);
       confirm.mockReturnValue(new Promise(() => {}));
       click();
@@ -160,7 +230,7 @@ describe("the Docker popover", () => {
     it("asks first", async () => {
       const overview = vi.fn().mockResolvedValue(OVERVIEW);
       const { p, removeImage } = make(overview);
-      p.toggle();
+      p.open();
       await vi.advanceTimersByTimeAsync(0);
       confirm.mockResolvedValue(false);
       click();

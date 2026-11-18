@@ -3538,9 +3538,17 @@ p.up-model {
   margin-top: 14px;
 }
 
-/* ---- Docker panel under the whale chip (docker-view.ts, docker-popover.ts) ---- */
-.up.dk {
-  width: 560px;
+/* ---- Docker side panel (docker-view.ts, docker-panel.ts); frame shared with .side ---- */
+.dock-title {
+  padding: 0 6px;
+  font-weight: 600;
+}
+
+.dock-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden auto;
+  padding: 4px 8px 10px;
 }
 
 .dk-row {

@@ -29,9 +29,9 @@ export function browserHtml(keys: string): string {
 }
 
 /** The whale that opens the Docker panel; nothing while no server is set up. */
-export function dockerHtml(show: boolean): string {
+export function dockerHtml(show: boolean, pressed = false): string {
   if (!show) return "";
-  return `<button class="top-btn icon" data-top="docker" title="${escapeHtml(t("top.dockerTitle"))}" aria-label="${escapeHtml(t("top.docker"))}">${WHALE}</button>`;
+  return `<button class="top-btn icon" data-top="docker" aria-pressed="${pressed}" title="${escapeHtml(t("top.dockerTitle"))}" aria-label="${escapeHtml(t("top.docker"))}">${WHALE}</button>`;
 }
 
 /** Off: the cup alone. On: the cup and what it keeps awake. Sleep left disabled: a red chip before it. */

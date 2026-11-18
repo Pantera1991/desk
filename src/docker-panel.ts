@@ -1,25 +1,31 @@
-// The Docker chip's panel: slides down under the chip like the temperature
-// panel, asks for the servers every 5 s while open (never two calls at once),
-// keeps its scroll across refreshes, closes on Esc, a click elsewhere or the
-// window losing focus. Content: docker-view.ts; data: docker.rs.
+// The Docker side panel: sits in `.middle` between the stage and the files
+// panel, asks for the servers every 5 s while open (never two calls at once,
+// none while the window is hidden), keeps its scroll across refreshes.
+// Content: docker-view.ts; data: docker.rs.
 import type { DockerOverview, DockerTile } from "./api";
-import { flipOpen, renderDocker } from "./docker-view";
+import { deployFolder, flipOpen, renderDocker } from "./docker-view";
 import { t } from "./i18n";
 import { escapeHtml } from "./notices";
 import { confirmBox, toast } from "./ui";
 
-export interface DockerPopoverContext {
+export interface DockerPanelContext {
   overview(): Promise<DockerOverview>;
+  /** Folders of the open cards: where a compose project may be deployed from. */
+  openPaths(): string[];
   /** A logs or shell tile for a container or compose project; `title` is its name. */
-  open(tile: DockerTile, title: string): void;
+  open(tile: DockerTile, title: string, path?: string): void;
   removeImage(host: string, image: string): Promise<void>;
+  restart(host: string, container: string): Promise<void>;
+  deploy(host: string, project: string, path: string): Promise<void>;
 }
 
-const CHIP = '[data-top="docker"]';
 /** Fresh numbers this often while open. */
 export const DOCKER_EVERY_MS = 5000;
-const GAP = 8;
 const STORE = "desk.dockerOpen";
+const OPEN_KEY = "desk.dockerPanel";
+const WIDTH_KEY = "desk.dockerWidth";
+const DEFAULT_WIDTH = 380;
+const MIN_WIDTH = 280;
 
 function loadOpen(): Set<string> {
   try {
@@ -38,7 +44,25 @@ function saveOpen(open: ReadonlySet<string>): void {
   }
 }
 
-export class DockerPopover {
+function remember(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // Not remembered.
+  }
+}
+
+function recall(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+export class DockerPanel {
+  readonly el: HTMLElement;
+  private body: HTMLElement;
   private shown = false;
   private overview: DockerOverview | null = null;
   private error: string | null = null;
@@ -50,40 +74,35 @@ export class DockerPopover {
   /** Asked again right after the call in flight (a removal finished meanwhile). */
   private again = false;
   private timer: ReturnType<typeof setInterval> | undefined;
-  private el: HTMLElement;
   private html = "";
-  private open = loadOpen();
+  private branches = loadOpen();
   /** "host|image" of the images being removed. */
   private busy = new Set<string>();
 
   constructor(
-    host: HTMLElement,
-    private ctx: DockerPopoverContext,
+    private onLayout: () => void,
+    private ctx: DockerPanelContext,
   ) {
-    this.el = document.createElement("div");
-    this.el.className = "up-host";
+    this.el = document.createElement("aside");
+    this.el.className = "side dock";
     this.el.hidden = true;
-    host.append(this.el);
+
+    this.el.innerHTML =
+      `<div class="splitter"></div>` +
+      `<div class="side-head"><span class="dock-title">🐳 ${escapeHtml(t("docker.title"))}</span><span class="spacer"></span>` +
+      `<button type="button" data-d="refresh" title="${escapeHtml(t("docker.refresh"))}">⟳</button>` +
+      `<button type="button" data-d="close" title="${escapeHtml(t("docker.close"))}">×</button></div>` +
+      `<div class="dock-body"></div>`;
+    this.body = this.el.querySelector<HTMLElement>(".dock-body")!;
+    const w = Number(recall(WIDTH_KEY));
+    this.el.style.width = `${w > 0 ? Math.max(MIN_WIDTH, w) : DEFAULT_WIDTH}px`;
     this.el.addEventListener("click", (e) => void this.click(e.target as HTMLElement));
-    const leave = (e: Event) => {
-      const target = e.target instanceof Element ? e.target : null;
-      if (this.shown && !this.confirming && target && !this.el.contains(target) && !target.closest(CHIP)) this.close();
-    };
-    document.addEventListener("mousedown", leave, true);
-    document.addEventListener("focusin", leave, true);
-    window.addEventListener(
-      "keydown",
-      (e) => {
-        if (this.shown && !this.confirming && e.key === "Escape") {
-          e.preventDefault();
-          e.stopImmediatePropagation();
-          this.close();
-        }
-      },
-      true,
-    );
-    window.addEventListener("blur", () => this.close());
+    this.splitter();
+    document.addEventListener("visibilitychange", () => {
+      if (this.shown && !document.hidden) this.fetch();
+    });
     window.addEventListener("resize", () => this.refresh());
+    if (recall(OPEN_KEY) === "1") this.start();
   }
 
   get isOpen(): boolean {
@@ -91,14 +110,26 @@ export class DockerPopover {
   }
 
   toggle(): void {
-    if (this.shown) return this.close();
+    if (this.shown) this.close();
+    else this.open();
+  }
+
+  open(): void {
+    if (this.shown) return;
+    this.start();
+    remember(OPEN_KEY, "1");
+    this.onLayout();
+  }
+
+  private start(): void {
     this.shown = true;
     this.overview = null;
     this.error = null;
+    this.el.hidden = false;
     this.fetch();
-    // A tick never queues behind a slow call: it is skipped.
+    // A tick never queues behind a slow call, and none fires while the window is hidden.
     this.timer = setInterval(() => {
-      if (!this.pending) this.fetch();
+      if (!this.pending && !document.hidden) this.fetch();
     }, DOCKER_EVERY_MS);
     this.refresh();
   }
@@ -110,33 +141,33 @@ export class DockerPopover {
     this.again = false;
     this.gen++; // `pending` stays up until that call settles: never two at once
     this.el.hidden = true;
-    this.el.innerHTML = this.html = "";
-    this.chip()?.removeAttribute("aria-expanded");
+    this.body.innerHTML = this.html = "";
+    remember(OPEN_KEY, "0");
+    this.onLayout();
   }
 
-  /** Draws it again from the latest data, keeping its scroll; closes when the chip is gone. */
+  /** Draws it again from the latest data, keeping its scroll. */
   refresh(): void {
     if (!this.shown) return;
-    const chip = this.chip();
-    if (!chip) return this.close();
-    chip.setAttribute("aria-expanded", "true");
-    const err = this.error ? `<p class="up-line up-dim dk-fail">${escapeHtml(this.error)}</p>` : "";
-    const html =
-      `<div class="up dk" role="dialog" aria-label="${escapeHtml(t("docker.title"))}"><i class="up-nib"></i>` +
-      `<header class="up-head"><span class="up-title">${escapeHtml(t("docker.title"))}</span><button type="button" class="dk-btn" data-d="refresh">${escapeHtml(t("docker.refresh"))}</button></header>` +
-      `<div class="up-body">${err}${renderDocker(this.overview, this.open, this.busy, new Map())}</div></div>`;
-    if (html !== this.html || this.el.hidden) {
-      const scroll = this.el.querySelector(".up-body")?.scrollTop ?? 0;
-      this.el.innerHTML = this.html = html;
-      this.el.hidden = false;
-      const fresh = this.el.querySelector(".up-body");
-      if (fresh) fresh.scrollTop = scroll;
-    }
-    this.place(chip);
+    const err = this.error ? `<p class="dim dk-fail">${escapeHtml(this.error)}</p>` : "";
+    const html = `${err}${renderDocker(this.overview, this.branches, this.busy, this.deployable())}`;
+    if (html === this.html) return;
+    const scroll = this.body.scrollTop;
+    this.body.innerHTML = this.html = html;
+    this.body.scrollTop = scroll;
   }
 
-  private chip(): HTMLElement | null {
-    return document.querySelector<HTMLElement>(CHIP);
+  /** "host|project" → the open card's folder it deploys from. */
+  private deployable(): Map<string, string> {
+    const map = new Map<string, string>();
+    const paths = this.ctx.openPaths();
+    for (const h of this.overview?.hosts ?? []) {
+      for (const project of new Set(h.containers.map((c) => c.project).filter((p): p is string => p !== null))) {
+        const path = deployFolder(project, h.containers, paths);
+        if (path !== null) map.set(`${h.name}|${project}`, path);
+      }
+    }
+    return map;
   }
 
   private async click(target: HTMLElement): Promise<void> {
@@ -144,8 +175,8 @@ export class DockerPopover {
     if (b) {
       const { d, host = "", target: what = "", question = "" } = b.dataset;
       if (d === "refresh") return this.fetch();
+      if (d === "close") return this.close();
       if (d === "logs" || d === "projectLogs" || d === "shell") {
-        this.close();
         const label = d === "shell" ? t("docker.tileShell", { name: what }) : t("docker.tileLogs", { name: what });
         return this.ctx.open({ host, target: what, kind: d }, label);
       }
@@ -154,8 +185,8 @@ export class DockerPopover {
     }
     const id = target.closest<HTMLElement>("[data-open]")?.dataset.open;
     if (id) {
-      this.open = flipOpen(id, this.open);
-      saveOpen(this.open);
+      this.branches = flipOpen(id, this.branches);
+      saveOpen(this.branches);
       this.refresh();
     }
   }
@@ -228,17 +259,27 @@ export class DockerPopover {
       });
   }
 
-  /** Under the chip, its right edge on the chip's, inside the window; the nib points at the chip. */
-  private place(chip: HTMLElement): void {
-    const r = chip.getBoundingClientRect();
-    const box = this.el.firstElementChild as HTMLElement | null;
-    const width = box?.offsetWidth ?? 0;
-    const left = Math.max(GAP, Math.min(r.right - width, window.innerWidth - width - GAP));
-    const top = r.bottom + GAP;
-    this.el.style.left = `${left}px`;
-    this.el.style.top = `${top}px`;
-    this.el.style.maxHeight = `${window.innerHeight - top - GAP}px`;
-    const nib = r.left + r.width / 2;
-    box?.style.setProperty("--nib", `${Math.max(12, left + width - nib - 5)}px`);
+  private splitter(): void {
+    const bar = this.el.querySelector<HTMLElement>(".splitter");
+    if (!bar) return;
+    bar.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      bar.setPointerCapture(e.pointerId);
+      const startX = e.clientX;
+      const startW = this.el.getBoundingClientRect().width;
+      const move = (ev: PointerEvent) => {
+        const max = window.innerWidth - 320;
+        const w = Math.min(max, Math.max(MIN_WIDTH, startW + startX - ev.clientX));
+        this.el.style.width = `${w}px`;
+      };
+      const up = () => {
+        bar.removeEventListener("pointermove", move);
+        bar.removeEventListener("pointerup", up);
+        remember(WIDTH_KEY, String(Math.round(this.el.getBoundingClientRect().width)));
+        this.onLayout();
+      };
+      bar.addEventListener("pointermove", move);
+      bar.addEventListener("pointerup", up);
+    });
   }
 }
