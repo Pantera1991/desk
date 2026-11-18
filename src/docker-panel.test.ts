@@ -5,7 +5,12 @@ const confirm = vi.fn<(m: string, ok?: string) => Promise<boolean>>();
 const toast = vi.fn();
 vi.mock("./ui", () => ({ confirmBox: (m: string, ok?: string) => confirm(m, ok), toast: (...a: unknown[]) => toast(...a) }));
 
-import { DOCKER_EVERY_MS, DockerPanel } from "./docker-panel";
+const gitStatusSummary = vi.fn();
+vi.mock("./api", () => ({ api: { gitStatusSummary: (p: string) => gitStatusSummary(p) } }));
+
+import { deployQuestion, restartQuestion } from "./docker-view";
+import { t } from "./i18n";
+import { DOCKER_EVERY_MS, DockerPanel, type DockerPanelContext } from "./docker-panel";
 
 const OVERVIEW: DockerOverview = { cli: true, compose: true, hosts: [] };
 
@@ -56,16 +61,18 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function make(overview: () => Promise<DockerOverview>, removeImage = vi.fn().mockResolvedValue(undefined)) {
+function make(overview: () => Promise<DockerOverview>, removeImage = vi.fn().mockResolvedValue(undefined), extra: Partial<DockerPanelContext> = {}) {
+  const open = vi.fn();
   const p = new DockerPanel(vi.fn(), {
     overview,
     openPaths: () => [],
-    open: vi.fn(),
+    open,
     removeImage,
     restart: vi.fn().mockResolvedValue(undefined),
-    deploy: vi.fn().mockResolvedValue(undefined),
+    focusDeploy: vi.fn().mockReturnValue(false),
+    ...extra,
   });
-  return { p, removeImage };
+  return { p, removeImage, open };
 }
 
 describe("the Docker panel", () => {
@@ -174,7 +181,7 @@ describe("the Docker panel", () => {
       open: vi.fn(),
       removeImage: vi.fn(),
       restart: vi.fn(),
-      deploy: vi.fn(),
+      focusDeploy: vi.fn(),
     });
     p.open();
     p.close();
@@ -242,6 +249,95 @@ describe("the Docker panel", () => {
       await vi.advanceTimersByTimeAsync(0);
       expect(removeImage).toHaveBeenCalledWith("srv", "nginx:1");
       expect(overview).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe("restart", () => {
+    const click = () => {
+      const btn = { dataset: { d: "restart", host: "srv", target: "web" } };
+      el.fire("click", { target: { closest: (s: string) => (s === "[data-d]" ? btn : null) } });
+    };
+    const opened = async (restart: DockerPanelContext["restart"]) => {
+      const overview = vi.fn().mockResolvedValue(OVERVIEW);
+      const m = make(overview, undefined, { restart });
+      m.p.open();
+      await vi.advanceTimersByTimeAsync(0);
+      return { ...m, overview };
+    };
+
+    it("cancel calls nothing", async () => {
+      const restart = vi.fn().mockResolvedValue(undefined);
+      await opened(restart);
+      confirm.mockResolvedValue(false);
+      click();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(confirm).toHaveBeenCalledWith(restartQuestion("srv", "web"), t("docker.restart"));
+      expect(restart).not.toHaveBeenCalled();
+    });
+
+    it("OK restarts, toasts and refreshes", async () => {
+      const restart = vi.fn().mockResolvedValue(undefined);
+      const { overview } = await opened(restart);
+      confirm.mockResolvedValue(true);
+      click();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(restart).toHaveBeenCalledWith("srv", "web");
+      expect(toast).toHaveBeenCalledWith(expect.stringContaining("web"), { kind: "ok" });
+      expect(overview).toHaveBeenCalledTimes(2);
+    });
+
+    it("an error toasts its text", async () => {
+      await opened(vi.fn().mockRejectedValue("boom"));
+      confirm.mockResolvedValue(true);
+      click();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(toast).toHaveBeenCalledWith("boom", { kind: "error" });
+    });
+  });
+
+  describe("deploy", () => {
+    const click = () => {
+      const btn = { dataset: { d: "deploy", host: "srv", target: "shop", path: "/work/shop" } };
+      el.fire("click", { target: { closest: (s: string) => (s === "[data-d]" ? btn : null) } });
+    };
+    const opened = async (extra: Partial<DockerPanelContext> = {}) => {
+      gitStatusSummary.mockReset();
+      gitStatusSummary.mockResolvedValue({ branch: "main", dirty: 0 });
+      const m = make(vi.fn().mockResolvedValue(OVERVIEW), undefined, extra);
+      m.p.open();
+      await vi.advanceTimersByTimeAsync(0);
+      return m;
+    };
+
+    it("asks with the git summary, then opens a deploy tile on the given folder", async () => {
+      const { open } = await opened();
+      confirm.mockResolvedValue(true);
+      click();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(gitStatusSummary).toHaveBeenCalledWith("/work/shop");
+      expect(confirm).toHaveBeenCalledWith(deployQuestion("srv", "shop", "/work/shop", { branch: "main", dirty: 0 }) , t("docker.deploy"));
+      expect(open).toHaveBeenCalledWith({ host: "srv", target: "shop", kind: "deploy" }, t("docker.tileDeploy", { name: "shop" }), "/work/shop");
+    });
+
+    it("cancel opens nothing; a failing git summary still asks", async () => {
+      const { open } = await opened();
+      gitStatusSummary.mockRejectedValue("no git");
+      confirm.mockResolvedValue(false);
+      click();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(confirm).toHaveBeenCalledWith(deployQuestion("srv", "shop", "/work/shop", null), t("docker.deploy"));
+      expect(open).not.toHaveBeenCalled();
+    });
+
+    it("focuses the tile already open without asking", async () => {
+      const focusDeploy = vi.fn().mockReturnValue(true);
+      const { open } = await opened({ focusDeploy });
+      click();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(focusDeploy).toHaveBeenCalledWith("srv", "shop");
+      expect(confirm).not.toHaveBeenCalled();
+      expect(gitStatusSummary).not.toHaveBeenCalled();
+      expect(open).not.toHaveBeenCalled();
     });
   });
 });

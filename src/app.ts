@@ -54,6 +54,7 @@ import { usageHtml } from "./usage";
 import { UsagePopover } from "./usage-popover";
 import { CpuPopover } from "./cpu-popover";
 import { DockerPanel } from "./docker-panel";
+import { findDeployTile } from "./docker-view";
 import {
   DEFAULT_EMERGENCY,
   DEFAULT_FAN_MARGIN,
@@ -223,11 +224,15 @@ export class App {
       {
         overview: async () => (this.dockerLast = await api.dockerOverview()),
         openPaths: () => [...new Set([...this.tiles.values()].map((t) => t.path))],
-        open: (tile, title) => void this.openDockerTile(tile, title),
+        open: (tile, title, path) => void this.openDockerTile(tile, title, path),
         removeImage: (host, image) => api.dockerImageRm(host, image),
-        // Wired in the next step: restart and deploy.
-        restart: async () => {},
-        deploy: async () => {},
+        restart: (host, container) => api.dockerRestart(host, container),
+        focusDeploy: (host, project) => {
+          const key = this.layout ? findDeployTile(this.layout.docker, [...this.tiles.keys()], host, project) : null;
+          if (key === null) return false;
+          this.setActive(key, true);
+          return true;
+        },
       },
     );
     // Opening, closing or resizing the panel changes the grid's width: lay out again.
@@ -740,12 +745,13 @@ export class App {
   }
 
   /** Logs or a shell of a Docker container in a card of the project it belongs to (the home folder when none matches). */
-  private async openDockerTile(tile: DockerTile, title: string): Promise<void> {
+  private async openDockerTile(tile: DockerTile, title: string, folder?: string): Promise<void> {
     const container = this.dockerLast?.hosts.find((h) => h.name === tile.host)?.containers.find((c) => c.name === tile.target);
     const wanted = [tile.target, container?.project].filter((n): n is string => !!n).map((n) => n.toLowerCase());
     const projects = await api.listProjects(this.layout.extraFolders).catch(() => []);
     const base = (p: string) => p.split(/[\\/]/).filter(Boolean).pop()?.toLowerCase() ?? "";
-    const path = projects.find((p) => wanted.includes(base(p.path)))?.path ?? this.home;
+    // A deploy runs from the folder it was asked for, never from a guess.
+    const path = folder ?? projects.find((p) => wanted.includes(base(p.path)))?.path ?? this.home;
     const taken = [...(await api.listSessions()), ...this.tiles.values()];
     const key = keyOf({ path, agent: "docker", instance: nextInstance(taken, path, "docker") });
     this.layout.docker[key] = tile;

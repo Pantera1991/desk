@@ -650,6 +650,8 @@ export const en: Messages = {
   "docker.removed": "Removed image {image} from {host}.",
   "docker.tileLogs": "logs: {name}",
   "docker.tileShell": "sh: {name}",
+  "docker.restarted": "Restarted container {container} on {host}.",
+  "docker.tileDeploy": "deploy: {name}",
   "docker.restart": "Restart",
   "docker.deploy": "Deploy",
   "docker.restartQuestion": "Restart the container {container} on {host}? The service will be down for a few seconds.",

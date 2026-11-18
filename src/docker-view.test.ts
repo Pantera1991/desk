@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { DockerContainer, DockerHostView, DockerImage, DockerOverview } from "./api";
-import { checkHosts, draftAdd, draftRemove, draftRows, draftSet, flipOpen, health, isOpen, imageTarget, removeQuestion, renderDocker, deployFolder, deployQuestion, restartQuestion } from "./docker-view";
+import { checkHosts, draftAdd, draftRemove, draftRows, draftSet, flipOpen, health, isOpen, imageTarget, removeQuestion, renderDocker, deployFolder, deployQuestion, restartQuestion, findDeployTile } from "./docker-view";
 import { setLanguage, t } from "./i18n";
 
 const c = (name: string, state: string, project: string | null = null, workingDir: string | null = null): DockerContainer => ({
@@ -183,5 +183,22 @@ describe("Options draft", () => {
     expect(html).toContain('data-path="/p/&#34;x&#34;&#38;"');
     expect(renderDocker(o, open, none, new Map())).not.toContain('data-d="deploy"');
     expect(renderDocker({ ...o, compose: false }, open, none, new Map([["h|web", "/p"]]))).not.toContain('data-d="deploy"');
+  });
+});
+
+describe("findDeployTile", () => {
+  const docker = {
+    "/a#docker:1": { host: "srv", target: "shop", kind: "deploy" as const },
+    "/a#docker:2": { host: "srv", target: "shop", kind: "logs" as const },
+    "/b#docker:1": { host: "other", target: "shop", kind: "deploy" as const },
+  };
+  it("finds the open deploy tile of the same host and project", () => {
+    expect(findDeployTile(docker, ["/a#docker:1", "/b#docker:1"], "srv", "shop")).toBe("/a#docker:1");
+    expect(findDeployTile(docker, ["/b#docker:1"], "other", "shop")).toBe("/b#docker:1");
+  });
+  it("ignores closed tiles, other kinds and other hosts", () => {
+    expect(findDeployTile(docker, [], "srv", "shop")).toBeNull();
+    expect(findDeployTile(docker, ["/a#docker:2"], "srv", "shop")).toBeNull();
+    expect(findDeployTile(docker, ["/a#docker:1"], "srv", "api")).toBeNull();
   });
 });

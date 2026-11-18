@@ -2,8 +2,8 @@
 // panel, asks for the servers every 5 s while open (never two calls at once,
 // none while the window is hidden), keeps its scroll across refreshes.
 // Content: docker-view.ts; data: docker.rs.
-import type { DockerOverview, DockerTile } from "./api";
-import { deployFolder, flipOpen, renderDocker } from "./docker-view";
+import { api, type DockerOverview, DockerTile } from "./api";
+import { deployFolder, deployQuestion, flipOpen, renderDocker, restartQuestion } from "./docker-view";
 import { t } from "./i18n";
 import { escapeHtml } from "./notices";
 import { confirmBox, toast } from "./ui";
@@ -16,7 +16,8 @@ export interface DockerPanelContext {
   open(tile: DockerTile, title: string, path?: string): void;
   removeImage(host: string, image: string): Promise<void>;
   restart(host: string, container: string): Promise<void>;
-  deploy(host: string, project: string, path: string): Promise<void>;
+  /** Focuses the deploy tile of that project when one is open; false when there is none. */
+  focusDeploy(host: string, project: string): boolean;
 }
 
 /** Fresh numbers this often while open. */
@@ -181,6 +182,8 @@ export class DockerPanel {
         return this.ctx.open({ host, target: what, kind: d }, label);
       }
       if (d === "rm") return this.remove(host, what, question);
+      if (d === "restart") return this.restart(host, what);
+      if (d === "deploy") return this.deploy(host, what, b.dataset.path ?? "");
       return;
     }
     const id = target.closest<HTMLElement>("[data-open]")?.dataset.open;
@@ -213,6 +216,45 @@ export class DockerPanel {
     this.busy.delete(key);
     this.fetch();
     this.refresh();
+  }
+
+  private async restart(host: string, container: string): Promise<void> {
+    const key = `${host}|${container}`;
+    if (this.busy.has(key) || this.confirming) return;
+    this.confirming = true;
+    let ok: boolean;
+    try {
+      ok = await confirmBox(restartQuestion(host, container), t("docker.restart"));
+    } finally {
+      this.confirming = false;
+    }
+    if (!ok) return;
+    this.busy.add(key);
+    this.refresh();
+    try {
+      await this.ctx.restart(host, container);
+      toast(t("docker.restarted", { container, host }), { kind: "ok" });
+    } catch (err) {
+      toast(String(err), { kind: "error" });
+    }
+    this.busy.delete(key);
+    this.fetch();
+    this.refresh();
+  }
+
+  private async deploy(host: string, project: string, path: string): Promise<void> {
+    if (this.confirming || path === "") return;
+    if (this.ctx.focusDeploy(host, project)) return;
+    this.confirming = true;
+    let ok: boolean;
+    try {
+      const git = await api.gitStatusSummary(path).catch(() => null);
+      ok = await confirmBox(deployQuestion(host, project, path, git), t("docker.deploy"));
+    } finally {
+      this.confirming = false;
+    }
+    if (!ok) return;
+    this.ctx.open({ host, target: project, kind: "deploy" }, t("docker.tileDeploy", { name: project }), path);
   }
 
   /** One request at a time; asked for while one is in flight, it follows right after. */

@@ -2,7 +2,7 @@
 // their containers, containers without compose, images, networks, volumes).
 // Pure: open branches and busy buttons come in as sets. Data: docker.rs;
 // behaviour: docker-popover.ts.
-import type { DockerHost, DockerContainer, DockerHostView, DockerImage, DockerNamed, DockerOverview, GitSummary } from "./api";
+import type { DockerTile, DockerHost, DockerContainer, DockerHostView, DockerImage, DockerNamed, DockerOverview, GitSummary } from "./api";
 import { t, tn } from "./i18n";
 import { escapeHtml as esc } from "./notices";
 
@@ -56,6 +56,11 @@ export function deployFolder(project: string, containers: DockerContainer[], ope
   if (byLabel.size > 0) return byLabel.size === 1 ? [...byLabel][0] : null;
   const named = [...new Set(openPaths.filter((p) => base(p).toLowerCase() === project.toLowerCase()))];
   return named.length === 1 ? named[0] : null;
+}
+
+/** The open deploy tile of a project on a server (its layout key), if any. */
+export function findDeployTile(docker: Record<string, DockerTile>, openKeys: readonly string[], host: string, project: string): string | null {
+  return openKeys.find((k) => docker[k]?.kind === "deploy" && docker[k].host === host && docker[k].target === project) ?? null;
 }
 
 const ICON: Record<Health, string> = { up: "●", partial: "◐", down: "○" };

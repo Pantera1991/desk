@@ -649,6 +649,8 @@ export const pl = {
   "docker.removed": "Usunięto obraz {image} z {host}.",
   "docker.tileLogs": "logi: {name}",
   "docker.tileShell": "sh: {name}",
+  "docker.restarted": "Zrestartowano kontener {container} na {host}.",
+  "docker.tileDeploy": "wdróż: {name}",
   "docker.restart": "Restart",
   "docker.deploy": "Wdróż",
   "docker.restartQuestion": "Zrestartować kontener {container} na {host}? Usługa przestanie działać na kilka sekund.",
