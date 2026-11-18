@@ -12,6 +12,7 @@
   --danger: #ff7b72;
   --model: #d2a8ff;
   --mono: "JetBrainsMono Nerd Font Mono", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --ui-scale: 1;
   color-scheme: dark;
 }
 
@@ -27,7 +28,7 @@ body,
   overflow: hidden;
   background: var(--bg);
   color: var(--fg);
-  font: 11px/1.4 var(--mono);
+  font: calc(11px * var(--ui-scale))/1.4 var(--mono);
   -webkit-font-smoothing: antialiased;
   user-select: none;
 }
@@ -50,7 +51,7 @@ kbd {
   background: var(--line);
   border: 1px solid var(--line-hi);
   border-radius: 3px;
-  padding: 0 4px;
+  padding: 0 calc(4px * var(--ui-scale));
 }
 
 button {
@@ -59,7 +60,7 @@ button {
   background: var(--line);
   border: 1px solid var(--line-hi);
   border-radius: 3px;
-  padding: 2px 8px;
+  padding: calc(2px * var(--ui-scale)) calc(8px * var(--ui-scale));
   cursor: pointer;
 }
 
@@ -91,7 +92,7 @@ button:hover {
 
 .brand-version {
   margin-left: -3px; /* closer to the name than the bar's gap */
-  font-size: 9px;
+  font-size: calc(9px * var(--ui-scale));
   color: var(--dim);
 }
 
@@ -106,8 +107,8 @@ button:hover {
 
 .usage {
   margin-right: 8px;
-  padding: 0 7px;
-  line-height: 18px;
+  padding: 0 calc(7px * var(--ui-scale));
+  line-height: calc(18px * var(--ui-scale));
   border: 1px solid var(--line-hi);
   border-radius: 4px;
   background: none;
@@ -120,8 +121,8 @@ button:hover {
 /* a limit the text does not show (a model, the pace) is as bad as the color */
 .usage .dot {
   display: inline-block;
-  width: 6px;
-  height: 6px;
+  width: calc(6px * var(--ui-scale));
+  height: calc(6px * var(--ui-scale));
   margin-left: 5px;
   border-radius: 50%;
   background: currentColor;
@@ -149,8 +150,8 @@ button:hover {
 /* every chip in the top bar: the frame of the usage chip */
 .top-btn {
   margin-right: 8px;
-  padding: 0 7px;
-  line-height: 18px;
+  padding: 0 calc(7px * var(--ui-scale));
+  line-height: calc(18px * var(--ui-scale));
   background: none;
   border-color: var(--line-hi);
   border-radius: 4px;
@@ -163,7 +164,7 @@ button:hover {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  height: 20px;
+  height: calc(20px * var(--ui-scale));
   padding-left: 5px;
   white-space: nowrap;
 }
@@ -174,8 +175,8 @@ button:hover {
 
 .top-btn svg {
   flex: none;
-  width: 12px;
-  height: 12px;
+  width: calc(12px * var(--ui-scale));
+  height: calc(12px * var(--ui-scale));
   fill: none;
   stroke: currentColor;
   stroke-width: 1.3;
@@ -272,7 +273,7 @@ button:hover {
   color: var(--bg);
   background: var(--waiting);
   border-radius: 8px;
-  padding: 0 7px;
+  padding: 0 calc(7px * var(--ui-scale));
   font-weight: 700;
 }
 
@@ -352,7 +353,7 @@ button:hover {
   position: fixed;
   z-index: 61;
   pointer-events: none;
-  padding: 2px 8px;
+  padding: calc(2px * var(--ui-scale)) calc(8px * var(--ui-scale));
   border: 1px solid var(--accent);
   border-radius: 3px;
   background: var(--panel);
@@ -413,8 +414,8 @@ html.dragging-card .tile .term {
 .card-head .modes button {
   display: grid;
   place-items: center;
-  width: 18px;
-  height: 16px;
+  width: calc(18px * var(--ui-scale));
+  height: calc(16px * var(--ui-scale));
   padding: 0;
   background: none;
   border: 1px solid transparent;
@@ -431,8 +432,8 @@ html.dragging-card .tile .term {
 }
 
 .card-head .modes svg {
-  width: 11px;
-  height: 11px;
+  width: calc(11px * var(--ui-scale));
+  height: calc(11px * var(--ui-scale));
   fill: none;
   stroke: currentColor;
   stroke-width: 1.3;
@@ -442,7 +443,7 @@ html.dragging-card .tile .term {
 .card-tabs {
   flex: none;
   display: flex;
-  height: 20px;
+  height: calc(20px * var(--ui-scale));
   border-bottom: 1px solid var(--line);
   background: var(--panel);
   overflow: hidden;
@@ -458,7 +459,7 @@ html.dragging-card .tile .term {
   display: flex;
   align-items: center;
   gap: 5px;
-  padding: 0 10px;
+  padding: 0 calc(10px * var(--ui-scale));
   border: 0;
   border-right: 1px solid var(--line);
   border-radius: 0;
@@ -489,8 +490,8 @@ html.dragging-card .tile .term {
 }
 
 .card-tab .dot {
-  width: 6px;
-  height: 6px;
+  width: calc(6px * var(--ui-scale));
+  height: calc(6px * var(--ui-scale));
   background: var(--idle);
 }
 
@@ -516,7 +517,7 @@ html.dragging-card .tile .term {
 
 .card-tabs-note {
   margin-left: auto;
-  padding: 0 8px;
+  padding: 0 calc(8px * var(--ui-scale));
   align-self: center;
   color: var(--dim);
   white-space: nowrap;
@@ -528,17 +529,17 @@ html.dragging-card .tile .term {
 
 .card-head {
   display: none;
-  height: 20px;
+  height: calc(20px * var(--ui-scale));
   flex: none;
   align-items: center;
   gap: 6px;
-  padding: 0 4px 0 6px;
+  padding: 0 calc(4px * var(--ui-scale)) 0 calc(6px * var(--ui-scale));
   background: var(--panel);
   border-bottom: 1px solid var(--line);
   cursor: grab;
   white-space: nowrap;
   overflow: hidden;
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-scale));
 }
 
 .card.multi {
@@ -569,8 +570,8 @@ html.dragging-card .tile .term {
 }
 
 .card-head .actions button {
-  padding: 0 5px;
-  line-height: 14px;
+  padding: 0 calc(5px * var(--ui-scale));
+  line-height: calc(14px * var(--ui-scale));
   background: none;
   border: none;
   color: var(--dim);
@@ -590,14 +591,14 @@ html.dragging-card .tile .term {
 }
 
 .tile.grouped header {
-  height: 18px;
-  font-size: 10.5px;
+  height: calc(18px * var(--ui-scale));
+  font-size: calc(10.5px * var(--ui-scale));
 }
 
 /* ---- tiles ---- */
 .tile {
-  flex: 1 1 0;
   min-height: 80px;
+  min-height: calc(80px * var(--ui-scale));
   min-width: 0;
   overflow: hidden;
   display: flex;
@@ -628,8 +629,8 @@ html.dragging-card .tile .term {
 
 .dot {
   flex: none;
-  width: 8px;
-  height: 8px;
+  width: calc(8px * var(--ui-scale));
+  height: calc(8px * var(--ui-scale));
   border-radius: 50%;
   background: var(--proj);
 }
@@ -647,12 +648,12 @@ html.dragging-card .tile .term {
 }
 
 .tile header {
-  height: 20px;
+  height: calc(20px * var(--ui-scale));
   flex: none;
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 0 4px 0 6px;
+  padding: 0 calc(4px * var(--ui-scale)) 0 calc(6px * var(--ui-scale));
   background: var(--panel);
   border-bottom: 1px solid var(--line);
   cursor: grab;
@@ -665,7 +666,7 @@ html.dragging-card .tile .term {
 }
 
 .tile .badge {
-  min-width: 12px;
+  min-width: calc(12px * var(--ui-scale));
   color: var(--dim);
 }
 
@@ -702,7 +703,7 @@ html.dragging-card .tile .term {
 }
 
 .tile .account {
-  padding: 0 5px;
+  padding: 0 calc(5px * var(--ui-scale));
   border: 1px solid color-mix(in srgb, var(--acct) 45%, transparent);
   border-radius: 3px;
   background: color-mix(in srgb, var(--acct) 14%, transparent);
@@ -717,8 +718,8 @@ html.dragging-card .tile .term {
 
 .usage .acct {
   display: inline-block;
-  width: 7px;
-  height: 7px;
+  width: calc(7px * var(--ui-scale));
+  height: calc(7px * var(--ui-scale));
   margin-right: 4px;
   border-radius: 50%;
   vertical-align: 0;
@@ -763,9 +764,9 @@ html.dragging-card .tile .term {
 .tile .actions button {
   border: 0;
   background: none;
-  padding: 0 4px;
+  padding: 0 calc(4px * var(--ui-scale));
   color: var(--dim);
-  line-height: 18px;
+  line-height: calc(18px * var(--ui-scale));
 }
 
 .tile .actions button:hover {
@@ -818,14 +819,14 @@ html.dragging-card .tile .term {
   gap: 6px;
   /* It starts two columns in: room for that and a margin on the right. */
   max-width: min(560px, calc(100% - 40px));
-  height: 22px;
-  padding: 0 3px 0 9px;
+  height: calc(22px * var(--ui-scale));
+  padding: 0 calc(3px * var(--ui-scale)) 0 calc(9px * var(--ui-scale));
   transform: translateY(-100%);
   border: 1px solid var(--line-hi);
   border-radius: 999px;
   background: var(--panel);
   color: var(--dim);
-  font: 11px/1 var(--mono);
+  font: calc(11px * var(--ui-scale))/1 var(--mono);
   white-space: nowrap;
   box-shadow: 0 4px 12px rgb(0 0 0 / 0.22);
   animation: prompt-pill-in 0.14s ease-out;
@@ -878,11 +879,11 @@ html.dragging-card .tile .term {
 
 .prompt-pill .beta {
   flex: none;
-  padding: 0 5px;
+  padding: 0 calc(5px * var(--ui-scale));
   border: 1px solid var(--line-hi);
   border-radius: 999px;
-  font-size: 9px;
-  line-height: 13px;
+  font-size: calc(9px * var(--ui-scale));
+  line-height: calc(13px * var(--ui-scale));
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -891,20 +892,20 @@ html.dragging-card .tile .term {
 .prompt-pill kbd {
   flex: none;
   margin-right: 3px;
-  padding: 0 5px;
+  padding: 0 calc(5px * var(--ui-scale));
   border-radius: 5px;
   background: var(--bg);
   color: var(--dim);
-  font-size: 10px;
-  line-height: 14px;
+  font-size: calc(10px * var(--ui-scale));
+  line-height: calc(14px * var(--ui-scale));
 }
 
 .prompt-pill button {
   flex: none;
   display: flex;
   align-items: center;
-  height: 18px;
-  padding: 0 7px;
+  height: calc(18px * var(--ui-scale));
+  padding: 0 calc(7px * var(--ui-scale));
   border: 0;
   border-radius: 999px;
   background: none;
@@ -917,7 +918,7 @@ html.dragging-card .tile .term {
 }
 
 .prompt-pill button.x {
-  width: 18px;
+  width: calc(18px * var(--ui-scale));
   padding: 0;
   justify-content: center;
   color: var(--dim);
@@ -935,7 +936,7 @@ html.dragging-card .tile .term {
 .prompt-pill button.go {
   gap: 6px;
   height: 100%;
-  padding: 0 3px 0 9px;
+  padding: 0 calc(3px * var(--ui-scale)) 0 calc(9px * var(--ui-scale));
   color: var(--dim);
 }
 
@@ -1023,13 +1024,13 @@ html.dragging-card .tile .term {
 /* naming a tile in its header */
 .tile header input.rename {
   width: 100%;
-  height: 16px;
+  height: calc(16px * var(--ui-scale));
   font: inherit;
   color: var(--fg);
   background: var(--bg);
   border: 1px solid var(--accent);
   border-radius: 3px;
-  padding: 0 4px;
+  padding: 0 calc(4px * var(--ui-scale));
 }
 
 /* folded (⌘J): only the header, with the last line of output */
@@ -1097,7 +1098,7 @@ html.dragging-card .tile .term {
   width: 100%;
   height: auto;
   min-height: 0;
-  padding: 7px 0;
+  padding: calc(7px * var(--ui-scale)) 0;
   gap: 8px;
   writing-mode: vertical-rl;
   cursor: pointer;
@@ -1156,7 +1157,7 @@ html.dragging-card .tile .term {
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 0 10px;
+  padding: 0 calc(10px * var(--ui-scale));
   border-top: 1px solid var(--line);
   color: var(--dim);
   white-space: nowrap;
@@ -1167,15 +1168,15 @@ html.dragging-card .tile .term {
 .bottom .here {
   flex: 0 1 auto;
   max-width: 28ch;
-  padding: 0 6px;
+  padding: 0 calc(6px * var(--ui-scale));
   overflow: hidden;
   text-overflow: ellipsis;
   border-radius: 3px;
   background: var(--proj);
   color: var(--bg);
-  font-size: 10px;
+  font-size: calc(10px * var(--ui-scale));
   font-weight: 700;
-  line-height: 14px;
+  line-height: calc(14px * var(--ui-scale));
 }
 
 .bottom .here[hidden] {
@@ -1214,7 +1215,7 @@ html.dragging-card .tile .term {
   flex-shrink: 0;
   display: flex;
   margin-left: -6px;
-  padding: 2px;
+  padding: calc(2px * var(--ui-scale));
   background: none;
   border: 0;
   color: var(--dim);
@@ -1222,8 +1223,8 @@ html.dragging-card .tile .term {
 }
 
 .bottom .pin svg {
-  width: 12px;
-  height: 12px;
+  width: calc(12px * var(--ui-scale));
+  height: calc(12px * var(--ui-scale));
 }
 
 .bottom .pin:hover {
@@ -1274,14 +1275,14 @@ html.dragging-card .tile .term {
   background: var(--bg);
   border: 1px solid var(--line-hi);
   border-radius: 3px;
-  padding: 4px 6px;
+  padding: calc(4px * var(--ui-scale)) calc(6px * var(--ui-scale));
   outline: none;
 }
 
 .palette input {
-  font-size: 14px !important;
+  font-size: calc(14px * var(--ui-scale)) !important;
   margin: 8px;
-  padding: 8px 10px !important;
+  padding: calc(8px * var(--ui-scale)) calc(10px * var(--ui-scale)) !important;
 }
 
 .palette .list {
@@ -1293,7 +1294,7 @@ html.dragging-card .tile .term {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 4px 12px;
+  padding: calc(4px * var(--ui-scale)) calc(12px * var(--ui-scale));
   cursor: pointer;
   white-space: nowrap;
 }
@@ -1307,7 +1308,7 @@ html.dragging-card .tile .term {
 }
 
 .palette .row .name {
-  min-width: 180px;
+  min-width: calc(180px * var(--ui-scale));
 }
 
 .palette .row .path {
@@ -1318,7 +1319,7 @@ html.dragging-card .tile .term {
 }
 
 .palette .row .age {
-  width: 28px;
+  width: calc(28px * var(--ui-scale));
   text-align: right;
   color: var(--dim);
 }
@@ -1329,8 +1330,8 @@ html.dragging-card .tile .term {
 
 /* ⌘S: saved conversations on top, under their name */
 .palette.conversations .section {
-  padding: 6px 12px 2px;
-  font-size: 10px;
+  padding: calc(6px * var(--ui-scale)) calc(12px * var(--ui-scale)) calc(2px * var(--ui-scale));
+  font-size: calc(10px * var(--ui-scale));
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--dim);
@@ -1349,10 +1350,10 @@ html.dragging-card .tile .term {
 }
 
 .palette.conversations .row .name input.rename {
-  width: 260px;
+  width: calc(260px * var(--ui-scale));
   margin: 0;
   font-size: inherit !important;
-  padding: 1px 4px !important;
+  padding: calc(1px * var(--ui-scale)) calc(4px * var(--ui-scale)) !important;
 }
 
 .palette.conversations .conv-act {
@@ -1360,7 +1361,7 @@ html.dragging-card .tile .term {
   background: none;
   color: var(--dim);
   cursor: pointer;
-  padding: 0 2px;
+  padding: 0 calc(2px * var(--ui-scale));
   visibility: hidden;
 }
 
@@ -1378,7 +1379,7 @@ html.dragging-card .tile .term {
 }
 
 .palette .empty {
-  padding: 12px;
+  padding: calc(12px * var(--ui-scale));
   color: var(--dim);
 }
 
@@ -1387,7 +1388,7 @@ html.dragging-card .tile .term {
 }
 
 .palette .agent-pick span {
-  padding: 0 4px;
+  padding: 0 calc(4px * var(--ui-scale));
   border-radius: 3px;
 }
 
@@ -1397,7 +1398,7 @@ html.dragging-card .tile .term {
 }
 
 .palette footer {
-  padding: 6px 12px;
+  padding: calc(6px * var(--ui-scale)) calc(12px * var(--ui-scale));
   border-top: 1px solid var(--line);
   color: var(--dim);
   display: flex;
@@ -1406,18 +1407,18 @@ html.dragging-card .tile .term {
 
 /* ⌘Y: sessions running without a tile */
 .palette.background header {
-  padding: 8px 12px;
+  padding: calc(8px * var(--ui-scale)) calc(12px * var(--ui-scale));
   color: var(--dim);
 }
 
 .palette.background .row .agent {
-  min-width: 90px;
+  min-width: calc(90px * var(--ui-scale));
   color: var(--dim);
 }
 
 .palette.background .row .kill {
-  padding: 0 6px;
-  line-height: 16px;
+  padding: 0 calc(6px * var(--ui-scale));
+  line-height: calc(16px * var(--ui-scale));
   color: var(--dim);
   border-color: transparent;
   background: none;
@@ -1429,7 +1430,7 @@ html.dragging-card .tile .term {
 }
 
 .palette.background .empty {
-  padding: 14px 12px;
+  padding: calc(14px * var(--ui-scale)) calc(12px * var(--ui-scale));
   color: var(--dim);
 }
 
@@ -1443,7 +1444,7 @@ html.dragging-card .tile .term {
 
 /* Three answers side by side */
 .confirm.wide {
-  width: 560px;
+  width: calc(560px * var(--ui-scale));
 }
 
 .confirm .buttons button {
@@ -1459,8 +1460,8 @@ html.dragging-card .tile .term {
 }
 
 .tag {
-  font-size: 10px;
-  padding: 0 5px;
+  font-size: calc(10px * var(--ui-scale));
+  padding: 0 calc(5px * var(--ui-scale));
   border-radius: 3px;
   border: 1px solid var(--line-hi);
 }
@@ -1496,14 +1497,14 @@ html.dragging-card .tile .term {
 
 .settings h2 {
   margin: 0;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-scale));
 }
 
 .settings-head {
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 10px 18px;
+  padding: calc(10px * var(--ui-scale)) calc(18px * var(--ui-scale));
   border-bottom: 1px solid var(--line);
 }
 
@@ -1518,12 +1519,12 @@ html.dragging-card .tile .term {
 }
 
 .settings-nav {
-  width: 190px;
+  width: calc(190px * var(--ui-scale));
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 10px 8px;
+  padding: calc(10px * var(--ui-scale)) calc(8px * var(--ui-scale));
   border-right: 1px solid var(--line);
   overflow-y: auto;
 }
@@ -1532,7 +1533,7 @@ html.dragging-card .tile .term {
   display: flex;
   justify-content: space-between;
   gap: 8px;
-  padding: 5px 10px;
+  padding: calc(5px * var(--ui-scale)) calc(10px * var(--ui-scale));
   text-align: left;
   background: transparent;
   border-color: transparent;
@@ -1554,7 +1555,7 @@ html.dragging-card .tile .term {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 14px 20px;
+  padding: calc(14px * var(--ui-scale)) calc(20px * var(--ui-scale));
   overflow-y: auto;
 }
 
@@ -1586,7 +1587,7 @@ html.dragging-card .tile .term {
 
 .settings-foot {
   margin: 0;
-  padding: 8px 18px;
+  padding: calc(8px * var(--ui-scale)) calc(18px * var(--ui-scale));
   border-top: 1px solid var(--line);
 }
 
@@ -1622,7 +1623,7 @@ html.dragging-card .tile .term {
 }
 
 .settings .shortcut-list button.reset {
-  padding: 0 5px;
+  padding: 0 calc(5px * var(--ui-scale));
   margin-left: 4px;
 }
 
@@ -1651,7 +1652,7 @@ html.dragging-card .tile .term {
 
 .settings h3 {
   margin: 10px 0 0;
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-scale));
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--dim);
@@ -1664,7 +1665,7 @@ html.dragging-card .tile .term {
 }
 
 .settings input[type="number"] {
-  width: 56px;
+  width: calc(56px * var(--ui-scale));
 }
 
 .settings button.recording {
@@ -1678,11 +1679,11 @@ html.dragging-card .tile .term {
   flex-direction: column;
   border: 1px solid var(--line);
   border-radius: 3px;
-  padding: 4px 0;
+  padding: calc(4px * var(--ui-scale)) 0;
 }
 
 .settings .checks label {
-  padding: 2px 8px;
+  padding: calc(2px * var(--ui-scale)) calc(8px * var(--ui-scale));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1717,8 +1718,8 @@ html.dragging-card .tile .term {
 
 .settings .account-row .acct {
   flex: none;
-  width: 8px;
-  height: 8px;
+  width: calc(8px * var(--ui-scale));
+  height: calc(8px * var(--ui-scale));
   border-radius: 50%;
 }
 
@@ -1763,7 +1764,7 @@ html.dragging-card .tile .term {
 }
 
 .settings .small {
-  font-size: 10px;
+  font-size: calc(10px * var(--ui-scale));
 }
 
 /* Options → Heat and coffee → Temperature: the fan steps table and its chart. */
@@ -1777,7 +1778,7 @@ html.dragging-card .tile .term {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 4px;
+  padding: calc(4px * var(--ui-scale));
   border: 1px solid var(--line);
   border-radius: 3px;
 }
@@ -1786,7 +1787,7 @@ html.dragging-card .tile .term {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 2px 6px;
+  padding: calc(2px * var(--ui-scale)) calc(6px * var(--ui-scale));
   border-radius: 3px;
 }
 
@@ -1800,7 +1801,7 @@ html.dragging-card .tile .term {
 
 .settings .fan-step .step-rm {
   margin-left: auto;
-  padding: 0 6px;
+  padding: 0 calc(6px * var(--ui-scale));
 }
 
 .settings .line.wrap {
@@ -1826,7 +1827,7 @@ html.dragging-card .tile .term {
 }
 
 .fan-chart text {
-  font-size: 10px;
+  font-size: calc(10px * var(--ui-scale));
   fill: var(--dim);
 }
 
@@ -1898,14 +1899,15 @@ html.dragging-card .tile .term {
 }
 
 .new-project {
-  width: 560px;
-  padding: 14px 16px;
+  max-width: calc(100vw - 16px);
+  width: calc(560px * var(--ui-scale));
+  padding: calc(14px * var(--ui-scale)) calc(16px * var(--ui-scale));
   gap: 10px;
 }
 
 .new-project h2 {
   margin: 0;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-scale));
 }
 
 .new-project .line {
@@ -1933,7 +1935,7 @@ html.dragging-card .tile .term {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 3px 8px;
+  padding: calc(3px * var(--ui-scale)) calc(8px * var(--ui-scale));
   cursor: pointer;
   white-space: nowrap;
 }
@@ -1950,12 +1952,12 @@ html.dragging-card .tile .term {
 }
 
 .new-project .gh-status {
-  padding: 3px 8px;
+  padding: calc(3px * var(--ui-scale)) calc(8px * var(--ui-scale));
   color: var(--dim);
 }
 
 .new-project .gh-chosen button {
-  padding: 0 6px;
+  padding: 0 calc(6px * var(--ui-scale));
 }
 
 .new-project [hidden] {
@@ -1969,8 +1971,9 @@ html.dragging-card .tile .term {
 }
 
 .confirm {
-  width: 420px;
-  padding: 14px 16px;
+  max-width: calc(100vw - 16px);
+  width: calc(420px * var(--ui-scale));
+  padding: calc(14px * var(--ui-scale)) calc(16px * var(--ui-scale));
 }
 
 .confirm p {
@@ -1991,11 +1994,12 @@ button.danger {
 /* ---- notices: cards under the top bar, the bell's history (notices.ts, ui.ts toast) ---- */
 /* top right, away from where you type at the bottom of the terminals */
 .notices {
+  max-width: calc(100vw - 16px);
   position: fixed;
   top: 34px;
   right: 10px;
   z-index: 30;
-  width: 340px;
+  width: calc(340px * var(--ui-scale));
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -2008,7 +2012,7 @@ button.danger {
   grid-template-columns: 12px minmax(0, 1fr) 16px;
   column-gap: 8px;
   align-items: start;
-  padding: 7px 6px 8px 9px;
+  padding: calc(7px * var(--ui-scale)) calc(6px * var(--ui-scale)) calc(8px * var(--ui-scale)) calc(9px * var(--ui-scale));
   background: var(--panel);
   border: 1px solid var(--line-hi);
   border-radius: 5px;
@@ -2020,8 +2024,8 @@ button.danger {
 
 .notice-icon {
   flex: none;
-  width: 12px;
-  height: 12px;
+  width: calc(12px * var(--ui-scale));
+  height: calc(12px * var(--ui-scale));
   margin-top: 2px;
   fill: none;
   stroke: currentColor;
@@ -2071,16 +2075,16 @@ button.danger {
 }
 
 .notice-acts button {
-  padding: 0 7px;
-  line-height: 18px;
+  padding: 0 calc(7px * var(--ui-scale));
+  line-height: calc(18px * var(--ui-scale));
 }
 
 .notice-x {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
+  width: calc(16px * var(--ui-scale));
+  height: calc(16px * var(--ui-scale));
   padding: 0;
   border: 0;
   background: none;
@@ -2153,13 +2157,13 @@ button.danger {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  height: 16px;
-  padding: 0 5px 0 4px;
+  height: calc(16px * var(--ui-scale));
+  padding: 0 calc(5px * var(--ui-scale)) 0 calc(4px * var(--ui-scale));
   border-radius: 4px;
   background: none;
   color: var(--dim);
-  font-size: 10px;
-  line-height: 14px;
+  font-size: calc(10px * var(--ui-scale));
+  line-height: calc(14px * var(--ui-scale));
 }
 
 .notice-bell .notice-icon {
@@ -2172,18 +2176,19 @@ button.danger {
 }
 
 .notice-dot {
-  width: 6px;
-  height: 6px;
+  width: calc(6px * var(--ui-scale));
+  height: calc(6px * var(--ui-scale));
   border-radius: 50%;
   background: var(--danger);
 }
 
 .notice-history {
+  max-width: calc(100vw - 16px);
   position: fixed;
   right: 6px;
   bottom: 26px;
   z-index: 30;
-  width: 420px;
+  width: calc(420px * var(--ui-scale));
   max-height: min(60vh, 440px);
   display: flex;
   flex-direction: column;
@@ -2197,7 +2202,7 @@ button.danger {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 8px 6px 10px;
+  padding: calc(6px * var(--ui-scale)) calc(8px * var(--ui-scale)) calc(6px * var(--ui-scale)) calc(10px * var(--ui-scale));
   border-bottom: 1px solid var(--line);
 }
 
@@ -2217,12 +2222,12 @@ button.danger {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
-  padding: 6px 8px 6px 10px;
+  padding: calc(6px * var(--ui-scale)) calc(8px * var(--ui-scale)) calc(6px * var(--ui-scale)) calc(10px * var(--ui-scale));
   border-bottom: 1px solid var(--line);
 }
 
 .notice-filter {
-  padding: 1px 7px;
+  padding: calc(1px * var(--ui-scale)) calc(7px * var(--ui-scale));
   border: 1px solid var(--line);
   border-radius: 9px;
   background: none;
@@ -2252,7 +2257,7 @@ button.danger {
   grid-template-columns: 36px 12px minmax(0, 1fr) auto;
   column-gap: 8px;
   align-items: start;
-  padding: 7px 8px 7px 10px;
+  padding: calc(7px * var(--ui-scale)) calc(8px * var(--ui-scale)) calc(7px * var(--ui-scale)) calc(10px * var(--ui-scale));
   border-bottom: 1px solid var(--line);
 }
 
@@ -2289,7 +2294,7 @@ button.danger {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 6px 8px 6px 14px;
+  padding: calc(6px * var(--ui-scale)) calc(8px * var(--ui-scale)) calc(6px * var(--ui-scale)) calc(14px * var(--ui-scale));
   background: var(--panel);
   border: 1px solid var(--line-hi);
   border-radius: 6px;
@@ -2319,7 +2324,7 @@ button.danger {
 .strip {
   flex: none;
   display: flex;
-  height: 24px;
+  height: calc(24px * var(--ui-scale));
   border-bottom: 1px solid var(--line);
   background: var(--bg);
 }
@@ -2334,7 +2339,7 @@ button.danger {
   display: flex;
   align-items: center;
   gap: 5px;
-  padding: 0 10px;
+  padding: 0 calc(10px * var(--ui-scale));
   border: 0;
   border-right: 1px solid var(--line);
   border-bottom: 2px solid transparent;
@@ -2378,8 +2383,8 @@ button.danger {
 }
 
 .strip-tab .dot {
-  width: 6px;
-  height: 6px;
+  width: calc(6px * var(--ui-scale));
+  height: calc(6px * var(--ui-scale));
   background: var(--idle);
 }
 
@@ -2401,7 +2406,7 @@ button.danger {
   position: relative;
   flex: none;
   width: 42%;
-  min-width: 280px;
+  min-width: calc(280px * var(--ui-scale));
   display: flex;
   flex-direction: column;
   border-left: 1px solid var(--line-hi);
@@ -2417,24 +2422,24 @@ button.danger {
   left: -4px;
   top: 0;
   bottom: 0;
-  width: 7px;
+  width: calc(7px * var(--ui-scale));
   cursor: col-resize;
   z-index: 2;
 }
 
 .side-head {
-  height: 26px;
+  height: calc(26px * var(--ui-scale));
   flex: none;
   display: flex;
   align-items: center;
   gap: 2px;
-  padding: 0 4px;
+  padding: 0 calc(4px * var(--ui-scale));
   border-bottom: 1px solid var(--line);
 }
 
 .side-head button {
-  padding: 0 6px;
-  line-height: 18px;
+  padding: 0 calc(6px * var(--ui-scale));
+  line-height: calc(18px * var(--ui-scale));
   background: none;
   border: none;
   color: var(--dim);
@@ -2447,13 +2452,13 @@ button.danger {
 .side-address {
   flex: 1;
   min-width: 0;
-  height: 18px;
+  height: calc(18px * var(--ui-scale));
   font: inherit;
   color: var(--fg);
   background: var(--bg);
   border: 1px solid var(--line);
   border-radius: 3px;
-  padding: 0 6px;
+  padding: 0 calc(6px * var(--ui-scale));
   user-select: text;
 }
 
@@ -2475,12 +2480,12 @@ button.danger {
 /* ---- rail: the other sessions while the side panel is open ---- */
 .rail {
   flex: none;
-  width: 240px;
+  width: calc(240px * var(--ui-scale));
   overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 6px;
+  padding: calc(6px * var(--ui-scale));
   border-right: 1px solid var(--line-hi);
   background: var(--bg);
 }
@@ -2491,7 +2496,7 @@ button.danger {
 
 .mini {
   flex: none;
-  padding: 6px 8px;
+  padding: calc(6px * var(--ui-scale)) calc(8px * var(--ui-scale));
   border: 1px solid var(--line);
   border-left: 3px solid var(--proj, var(--line-hi));
   border-radius: 4px;
@@ -2519,8 +2524,8 @@ button.danger {
 }
 
 .mini .dot {
-  width: 6px;
-  height: 6px;
+  width: calc(6px * var(--ui-scale));
+  height: calc(6px * var(--ui-scale));
   flex: none;
   border-radius: 50%;
   background: var(--idle);
@@ -2549,7 +2554,7 @@ button.danger {
 
 .mini-line {
   color: var(--dim);
-  font-size: 10px;
+  font-size: calc(10px * var(--ui-scale));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2602,7 +2607,7 @@ button.danger {
   flex-direction: column;
   align-items: flex-start;
   gap: 5px;
-  padding: 7px 9px;
+  padding: calc(7px * var(--ui-scale)) calc(9px * var(--ui-scale));
   border: 1px solid var(--line-hi);
   border-radius: 5px;
   text-align: left;
@@ -2619,20 +2624,20 @@ button.danger {
 }
 
 .theme .swatches i {
-  width: 12px;
-  height: 12px;
+  width: calc(12px * var(--ui-scale));
+  height: calc(12px * var(--ui-scale));
   border-radius: 2px;
 }
 
 .lock-password {
-  width: 180px;
-  height: 22px;
+  width: calc(180px * var(--ui-scale));
+  height: calc(22px * var(--ui-scale));
   font: inherit;
   color: var(--fg);
   background: var(--bg);
   border: 1px solid var(--line-hi);
   border-radius: 3px;
-  padding: 0 6px;
+  padding: 0 calc(6px * var(--ui-scale));
   user-select: text;
 }
 
@@ -2654,7 +2659,7 @@ button.danger {
 
 .side-tree {
   flex: none;
-  width: 250px;
+  width: calc(250px * var(--ui-scale));
   display: flex;
   flex-direction: column;
   border-left: 1px solid var(--line);
@@ -2667,13 +2672,13 @@ button.danger {
 
 .tree-filter {
   margin: 8px;
-  height: 24px;
+  height: calc(24px * var(--ui-scale));
   font: inherit;
   color: var(--fg);
   background: var(--bg);
   border: 1px solid var(--line-hi);
   border-radius: 5px;
-  padding: 0 8px;
+  padding: 0 calc(8px * var(--ui-scale));
   user-select: text;
 }
 
@@ -2685,14 +2690,14 @@ button.danger {
 .tree-list {
   flex: 1;
   overflow: auto;
-  padding: 0 4px 8px;
+  padding: 0 calc(4px * var(--ui-scale)) calc(8px * var(--ui-scale));
 }
 
 .tree-row {
   display: flex;
   align-items: center;
   gap: 4px;
-  height: 22px;
+  height: calc(22px * var(--ui-scale));
   padding-right: 8px;
   border-radius: 4px;
   white-space: nowrap;
@@ -2710,7 +2715,7 @@ button.danger {
 }
 
 .tree-icon {
-  width: 12px;
+  width: calc(12px * var(--ui-scale));
   flex: none;
   color: var(--dim);
   text-align: center;
@@ -2724,8 +2729,8 @@ button.danger {
 .tree-row:not(.dir) .tree-icon::before {
   content: "";
   display: inline-block;
-  width: 7px;
-  height: 9px;
+  width: calc(7px * var(--ui-scale));
+  height: calc(9px * var(--ui-scale));
   border: 1px solid var(--dim);
   border-radius: 1px;
 }
@@ -2744,7 +2749,7 @@ button.danger {
 }
 
 .tree-empty {
-  padding: 8px 10px;
+  padding: calc(8px * var(--ui-scale)) calc(10px * var(--ui-scale));
 }
 
 .folder-card {
@@ -2755,13 +2760,13 @@ button.danger {
 }
 
 .folder-icon {
-  width: 34px;
-  height: 34px;
+  width: calc(34px * var(--ui-scale));
+  height: calc(34px * var(--ui-scale));
   color: var(--dim);
 }
 
 .folder-name {
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-scale));
   color: var(--fg);
 }
 
@@ -2774,20 +2779,21 @@ button.danger {
 }
 
 .folder-actions button {
-  padding: 4px 10px;
+  padding: calc(4px * var(--ui-scale)) calc(10px * var(--ui-scale));
   border-radius: 5px;
 }
 
 /* ---- CPU panel under the temperature chip (cpu-view.ts, cpu-popover.ts) ---- */
 /* the usage popover's frame (.up-host, .up, .up-nib, .up-head, .up-foot), narrower */
 .up.cpu {
-  width: 400px;
+  max-width: calc(100vw - 16px);
+  width: calc(400px * var(--ui-scale));
 }
 
 .cpu-gauges {
   display: flex;
   justify-content: space-around;
-  padding: 10px 0 2px;
+  padding: calc(10px * var(--ui-scale)) 0 calc(2px * var(--ui-scale));
 }
 
 .cpu-gauge {
@@ -2799,20 +2805,20 @@ button.danger {
 }
 
 .cpu-gauge svg {
-  width: 74px;
-  height: 74px;
+  width: calc(74px * var(--ui-scale));
+  height: calc(74px * var(--ui-scale));
 }
 
 .cpu-gauge text {
   fill: var(--fg);
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-scale));
   font-weight: 600;
 }
 
 .cpu-gauge figcaption {
   color: var(--dim);
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--ui-scale));
 }
 
 .cpu-track,
@@ -2850,7 +2856,7 @@ button.danger {
   gap: 10px;
   margin: 14px 0 6px;
   color: var(--dim);
-  font-size: 10px;
+  font-size: calc(10px * var(--ui-scale));
   font-weight: 600;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -2867,7 +2873,7 @@ button.danger {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  padding: 2px 0;
+  padding: calc(2px * var(--ui-scale)) 0;
 }
 
 .cpu-row > span:first-child {
@@ -2882,8 +2888,8 @@ button.danger {
 
 .cpu-dot {
   display: inline-block;
-  width: 8px;
-  height: 8px;
+  width: calc(8px * var(--ui-scale));
+  height: calc(8px * var(--ui-scale));
   margin-right: 7px;
   border-radius: 2px;
 }
@@ -2903,12 +2909,12 @@ button.danger {
 /* what desk does about the heat */
 .cpu-state {
   margin-top: 8px;
-  padding: 6px 8px;
+  padding: calc(6px * var(--ui-scale)) calc(8px * var(--ui-scale));
   border: 1px solid transparent;
   border-radius: 5px;
   background: var(--line);
   color: var(--dim);
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--ui-scale));
 }
 
 .cpu-state p {
@@ -2934,13 +2940,13 @@ button.danger {
 .cpu-tip {
   min-height: 1.3em;
   margin: 0 0 4px;
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--ui-scale));
 }
 
 .cpu-chart {
   display: block;
   width: 100%;
-  height: 64px;
+  height: calc(64px * var(--ui-scale));
   border-radius: 4px;
   background: color-mix(in srgb, var(--line) 45%, transparent);
 }
@@ -2969,7 +2975,7 @@ button.danger {
   display: flex;
   justify-content: space-between;
   margin-top: 2px;
-  font-size: 10px;
+  font-size: calc(10px * var(--ui-scale));
 }
 
 .cpu-proc .cpu-name {
@@ -2979,16 +2985,16 @@ button.danger {
 }
 
 .cpu-proc.head {
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--ui-scale));
 }
 
 .cpu-tile {
   max-width: 45%;
-  padding: 0 6px;
+  padding: 0 calc(6px * var(--ui-scale));
   overflow: hidden;
   background: none;
   color: var(--dim);
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--ui-scale));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -3028,7 +3034,7 @@ button.danger {
   position: relative;
   display: flex;
   flex-direction: column;
-  width: 580px;
+  width: calc(580px * var(--ui-scale));
   max-width: calc(100vw - 16px);
   max-height: inherit;
   background: var(--panel);
@@ -3036,12 +3042,13 @@ button.danger {
   border-radius: 8px;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--ui-scale));
   color: var(--fg);
 }
 
 .up.all {
-  width: 900px;
+  max-width: calc(100vw - 16px);
+  width: calc(900px * var(--ui-scale));
 }
 
 /* the nib points at the chip; usage-popover.ts sets --nib from the right edge */
@@ -3049,8 +3056,8 @@ button.danger {
   position: absolute;
   top: -6px;
   right: var(--nib, 24px);
-  width: 10px;
-  height: 10px;
+  width: calc(10px * var(--ui-scale));
+  height: calc(10px * var(--ui-scale));
   background: var(--panel);
   border-left: 1px solid var(--line-hi);
   border-top: 1px solid var(--line-hi);
@@ -3062,7 +3069,7 @@ button.danger {
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  padding: 9px 14px;
+  padding: calc(9px * var(--ui-scale)) calc(14px * var(--ui-scale));
 }
 
 .up-head {
@@ -3075,8 +3082,8 @@ button.danger {
 
 .up-title .acct {
   display: inline-block;
-  width: 7px;
-  height: 7px;
+  width: calc(7px * var(--ui-scale));
+  height: calc(7px * var(--ui-scale));
   margin-right: 5px;
   border-radius: 50%;
 }
@@ -3084,7 +3091,7 @@ button.danger {
 .up-foot {
   border-top: 1px solid var(--line);
   color: var(--dim);
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--ui-scale));
 }
 
 .up-dim {
@@ -3094,12 +3101,12 @@ button.danger {
 .up-tabs {
   display: flex;
   gap: 16px;
-  padding: 0 14px;
+  padding: 0 calc(14px * var(--ui-scale));
   border-bottom: 1px solid var(--line);
 }
 
 .up-tabs button {
-  padding: 8px 0 6px;
+  padding: calc(8px * var(--ui-scale)) 0 calc(6px * var(--ui-scale));
   background: none;
   border: 0;
   border-bottom: 2px solid transparent;
@@ -3114,8 +3121,8 @@ button.danger {
 
 .up-dot {
   display: inline-block;
-  width: 7px;
-  height: 7px;
+  width: calc(7px * var(--ui-scale));
+  height: calc(7px * var(--ui-scale));
   margin-left: 5px;
   border-radius: 50%;
   background: var(--waiting);
@@ -3127,17 +3134,17 @@ button.danger {
 }
 
 .up-count {
-  padding: 0 6px;
+  padding: 0 calc(6px * var(--ui-scale));
   border-radius: 8px;
   background: var(--line);
   color: var(--dim);
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--ui-scale));
 }
 
 /* never sideways: a few px too wide would shift the whole view under a scrollbar */
 .up-body {
   overflow: hidden auto;
-  padding: 4px 14px 10px;
+  padding: calc(4px * var(--ui-scale)) calc(14px * var(--ui-scale)) calc(10px * var(--ui-scale));
 }
 
 .up-cols {
@@ -3155,14 +3162,14 @@ button.danger {
 }
 
 .up-opt {
-  padding: 2px 10px 8px;
+  padding: calc(2px * var(--ui-scale)) calc(10px * var(--ui-scale)) calc(8px * var(--ui-scale));
   border: 1px dashed var(--line-hi);
   border-radius: 6px;
 }
 
 .up h4 {
   margin: 0 0 6px;
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--ui-scale));
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -3186,7 +3193,7 @@ button.danger {
 .up-bar {
   position: relative;
   flex: 1;
-  height: 8px;
+  height: calc(8px * var(--ui-scale));
   border-radius: 4px;
   background: var(--line);
 }
@@ -3221,8 +3228,8 @@ button.danger {
 }
 
 .up-pct {
-  min-width: 44px;
-  font-size: 18px;
+  min-width: calc(44px * var(--ui-scale));
+  font-size: calc(18px * var(--ui-scale));
   font-weight: 700;
   text-align: right;
 }
@@ -3241,10 +3248,10 @@ button.danger {
 /* as wide as the bar, so --x lines the ▲ up with its tick */
 .up-elapsed {
   position: relative;
-  height: 14px;
+  height: calc(14px * var(--ui-scale));
   margin: 3px 54px 4px 0;
   color: var(--dim);
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--ui-scale));
 }
 
 .up-elapsed span {
@@ -3262,8 +3269,8 @@ button.danger {
 
 .up-icon {
   flex: none;
-  width: 12px;
-  height: 12px;
+  width: calc(12px * var(--ui-scale));
+  height: calc(12px * var(--ui-scale));
   margin-top: 1px;
 }
 
@@ -3287,8 +3294,8 @@ p.up-model {
 }
 
 .up-table th {
-  padding: 4px 6px;
-  font-size: 10.5px;
+  padding: calc(4px * var(--ui-scale)) calc(6px * var(--ui-scale));
+  font-size: calc(10.5px * var(--ui-scale));
   font-weight: 600;
   text-align: left;
   vertical-align: bottom;
@@ -3302,7 +3309,7 @@ p.up-model {
 }
 
 .up-table td {
-  padding: 5px 6px;
+  padding: calc(5px * var(--ui-scale)) calc(6px * var(--ui-scale));
   border-top: 1px solid var(--line);
   white-space: nowrap;
 }
@@ -3335,8 +3342,8 @@ p.up-model {
 
 .up-st {
   display: inline-block;
-  width: 7px;
-  height: 7px;
+  width: calc(7px * var(--ui-scale));
+  height: calc(7px * var(--ui-scale));
   margin-right: 6px;
   border-radius: 50%;
   background: var(--idle);
@@ -3357,7 +3364,7 @@ p.up-model {
 .up-mini {
   display: inline-block;
   position: relative;
-  width: 36px;
+  width: calc(36px * var(--ui-scale));
   height: 5px;
   margin-right: 6px;
   border-radius: 3px;
@@ -3381,7 +3388,7 @@ p.up-model {
   display: flex;
   align-items: flex-end;
   gap: 1px;
-  height: 64px;
+  height: calc(64px * var(--ui-scale));
   border-bottom: 1px solid var(--line-hi);
 }
 
@@ -3463,7 +3470,7 @@ p.up-model {
   bottom: 0;
   left: 3px;
   color: var(--dim);
-  font-size: 10px;
+  font-size: calc(10px * var(--ui-scale));
 }
 
 /* near now: the time on the line's left, inside the chart */
@@ -3477,7 +3484,7 @@ p.up-model {
   justify-content: space-between;
   margin: 16px 0 0;
   color: var(--dim);
-  font-size: 10px;
+  font-size: calc(10px * var(--ui-scale));
 }
 
 .up-day {
@@ -3494,7 +3501,7 @@ p.up-model {
 }
 
 .up-day.none .up-track {
-  height: 7px;
+  height: calc(7px * var(--ui-scale));
 }
 
 .up-day > span:last-child {
@@ -3509,7 +3516,7 @@ p.up-model {
 }
 
 .up-wd {
-  height: 7px;
+  height: calc(7px * var(--ui-scale));
   min-width: 1px;
   border-radius: 2px;
   background: var(--accent);

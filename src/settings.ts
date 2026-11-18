@@ -2,6 +2,7 @@
 // hand-added folders.
 import { getVersion } from "@tauri-apps/api/app";
 import { DEFAULT_THEME, THEMES } from "./themes";
+import { UI_SCALES, uiScale } from "./ui-scale";
 import {
   api,
   type AccountInfo,
@@ -76,6 +77,8 @@ export interface SettingsContext {
   setLinkClick: (mode: LinkClick) => void;
   /** The usage popover's layout (Options, AI stats). */
   setUsageLayout: (v: UsageLayout) => void;
+  /** The size of the window's own text and bars (ui-scale.ts). */
+  setUiScale: (v: number) => void;
   /** How a session's share of the 5-hour window is worked out. */
   setUsageShare: (v: UsageShare) => void;
   setFontSize: (px: number) => void;
@@ -677,6 +680,7 @@ export class Settings {
     const hotkey = hotkeyLabel(layout.dropdownHotkey || DEFAULT_HOTKEY());
     const off = layout.dropdown ? "" : "disabled";
     const linkClick: LinkClick = layout.linkClick === "browser" || layout.linkClick === "none" ? layout.linkClick : "desk";
+    const uiScaleNow = uiScale(layout.uiScale);
     const usageLayout: UsageLayout = layout.usageLayout === "all" ? "all" : "tabs";
     const usageShare: UsageShare = layout.usageShare === "transcripts" ? "transcripts" : "cost";
     const linkHint = t(
@@ -705,6 +709,12 @@ export class Settings {
       [
         "look",
         section(
+          t("settings.uiScale"),
+          `<div class="line" data-row><span class="seg">${UI_SCALES.map(
+            (v) => `<button class="${uiScaleNow === v ? "sel" : ""}" data-ui-scale="${v}">${Math.round(v * 100)}%</button>`,
+          ).join("")}</span> <span class="dim">${t("settings.uiScaleHint")}</span></div>`,
+        ) +
+          section(
           t("settings.theme"),
           `<div class="themes">${THEMES.map(
             (t) => `<button class="theme ${t.id === (layout.theme || DEFAULT_THEME) ? "sel" : ""}" data-theme="${t.id}" style="background:${t.bg};color:${t.fg}">
@@ -1024,6 +1034,12 @@ export class Settings {
       this.ctx.setLanguage((e.target as HTMLSelectElement).value as Language);
       this.render();
     });
+    box.querySelectorAll<HTMLButtonElement>("[data-ui-scale]").forEach((b) =>
+      b.addEventListener("click", () => {
+        this.ctx.setUiScale(uiScale(Number(b.dataset.uiScale)));
+        this.render();
+      }),
+    );
     box.querySelectorAll<HTMLButtonElement>("[data-usage-layout]").forEach((b) =>
       b.addEventListener("click", () => {
         this.ctx.setUsageLayout(b.dataset.usageLayout === "all" ? "all" : "tabs");
