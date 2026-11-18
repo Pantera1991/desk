@@ -278,9 +278,86 @@ pub fn image_rm(hosts: &[DockerHost], host: &str, image: &str) -> Result<(), Str
     run(&docker, &["-H", &h.url, "image", "rm", image], Duration::from_secs(30)).map(|_| ())
 }
 
+/// Agent id of a tile that runs a `docker` command built by `tile_command`.
+pub const DOCKER_AGENT: &str = "docker";
+
+/// The command line of a Docker tile. Only a saved server and validated names
+/// get in, each single-quoted, so a stored layout cannot inject a command.
+pub fn tile_command(tile: &DockerTile, hosts: &[DockerHost]) -> Result<String, String> {
+    use crate::tmux::shell_quote;
+    let h = hosts
+        .iter()
+        .find(|h| h.name == tile.host)
+        .ok_or_else(|| tr!("nieznany serwer Dockera", "unknown Docker server").to_string())?;
+    if !valid_url(&h.url) {
+        return Err(tr!("nieprawidłowy adres serwera", "invalid server address").into());
+    }
+    if !valid_name(&tile.target) {
+        return Err(tr!("nieprawidłowa nazwa", "invalid name").into());
+    }
+    let head = format!("docker -H {}", shell_quote(&h.url));
+    let target = shell_quote(&tile.target);
+    Ok(match tile.kind {
+        DockerTileKind::Logs => format!("{head} logs -f --tail 500 {target}"),
+        DockerTileKind::ProjectLogs => format!("{head} compose -p {target} logs -f --tail 200"),
+        DockerTileKind::Shell => format!(
+            "{head} exec -it {target} sh -c 'command -v bash >/dev/null && exec bash || exec sh'"
+        ),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn host() -> Vec<DockerHost> {
+        vec![DockerHost { name: "Docker1".into(), url: "tcp://192.0.2.10:2375".into() }]
+    }
+    fn tile(target: &str, kind: DockerTileKind) -> DockerTile {
+        DockerTile { host: "Docker1".into(), target: target.into(), kind }
+    }
+
+    #[test]
+    fn builds_logs_command() {
+        assert_eq!(
+            tile_command(&tile("web-app-1", DockerTileKind::Logs), &host()).unwrap(),
+            "docker -H 'tcp://192.0.2.10:2375' logs -f --tail 500 'web-app-1'"
+        );
+    }
+
+    #[test]
+    fn builds_project_logs_command() {
+        assert_eq!(
+            tile_command(&tile("web", DockerTileKind::ProjectLogs), &host()).unwrap(),
+            "docker -H 'tcp://192.0.2.10:2375' compose -p 'web' logs -f --tail 200"
+        );
+    }
+
+    #[test]
+    fn builds_shell_command() {
+        assert_eq!(
+            tile_command(&tile("web-app-1", DockerTileKind::Shell), &host()).unwrap(),
+            "docker -H 'tcp://192.0.2.10:2375' exec -it 'web-app-1' sh -c 'command -v bash >/dev/null && exec bash || exec sh'"
+        );
+    }
+
+    #[test]
+    fn refuses_unknown_host() {
+        let mut t = tile("web", DockerTileKind::Logs);
+        t.host = "Other".into();
+        assert!(tile_command(&t, &host()).is_err());
+    }
+
+    #[test]
+    fn refuses_bad_target() {
+        assert!(tile_command(&tile("x; rm -rf ~", DockerTileKind::Logs), &host()).is_err());
+    }
+
+    #[test]
+    fn refuses_invalid_stored_url() {
+        let hosts = vec![DockerHost { name: "Docker1".into(), url: "tcp://a b; rm".into() }];
+        assert!(tile_command(&tile("web", DockerTileKind::Logs), &hosts).is_err());
+    }
 
     #[test]
     fn parses_ps_lines() {

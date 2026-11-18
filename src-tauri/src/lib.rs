@@ -222,7 +222,19 @@ fn open_session(
             .then(|| hooks::last_conversation(&app.hooks.state_dir, &slug))
             .flatten()
     });
-    let command = if agent == RUN_AGENT {
+    let command = if agent == docker::DOCKER_AGENT {
+        // A command desk builds itself from a saved server and validated names.
+        if restore {
+            return Err(tr!(
+                "kafelek Dockera nie wraca po restarcie",
+                "a Docker tile does not come back after a restart"
+            )
+            .into());
+        }
+        let tile: docker::DockerTile = serde_json::from_str(&command.unwrap_or_default())
+            .map_err(|e| format!("invalid Docker tile: {e}"))?;
+        docker::tile_command(&tile, &layout.docker_hosts)?
+    } else if agent == RUN_AGENT {
         // Only a command the project itself defines (see project::run_targets).
         let command = command.unwrap_or_default();
         if !project::run_targets(dir)
