@@ -269,6 +269,20 @@ pub fn compose_dirs(paths: &[String]) -> Vec<String> {
 /// Agent id of a tile that runs a `docker` command built by `tile_command`.
 pub const DOCKER_AGENT: &str = "docker";
 
+/// Whether a Docker tile with no live session may start its command. A deploy
+/// (`compose up`) starts only from a click confirmed in the Docker panel, so
+/// reopening a finished one from anywhere else never runs it again.
+pub fn may_start(tile: &DockerTile, start_deploy: bool) -> Result<(), String> {
+    if tile.kind == DockerTileKind::Deploy && !start_deploy {
+        return Err(tr!(
+            "Wdróż ponownie z panelu Dockera.",
+            "Deploy again from the Docker panel."
+        )
+        .into());
+    }
+    Ok(())
+}
+
 /// The command line of a Docker tile. Only a saved server and validated names
 /// get in, each single-quoted, so a stored layout cannot inject a command.
 pub fn tile_command(tile: &DockerTile, hosts: &[DockerHost], dir: &Path) -> Result<String, String> {
@@ -530,5 +544,14 @@ not json
         assert!(restart(&hosts(), "nope", "web").is_err());
         assert!(restart(&hosts(), "Docker1", "a;b").is_err());
         assert!(restart(&hosts(), "Docker1", "-x").is_err());
+    }
+
+    #[test]
+    fn deploy_starts_only_when_confirmed() {
+        assert!(may_start(&tile("shop", DockerTileKind::Deploy), false).is_err());
+        assert!(may_start(&tile("shop", DockerTileKind::Deploy), true).is_ok());
+        for kind in [DockerTileKind::Logs, DockerTileKind::Shell, DockerTileKind::ProjectLogs] {
+            assert!(may_start(&tile("shop", kind), false).is_ok());
+        }
     }
 }

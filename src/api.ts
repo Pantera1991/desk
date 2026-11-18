@@ -560,7 +560,17 @@ export const api = {
   /** `resume`: a Claude conversation's id, to pick it up again (⌘S). */
   /** `restore`: a tile of the saved layout at startup; Claude resumes its last conversation if the session is gone. */
   /** `account`: the Claude account (accounts.ts) a new Claude session starts on. */
-  openSession: (path: string, agent: string, instance: number, command?: string, resume?: string, restore = false, account?: string) =>
+  /** `startDeploy`: a deploy confirmed in the Docker panel this very click; else Rust refuses to start `compose up` (a live session still attaches). */
+  openSession: (
+    path: string,
+    agent: string,
+    instance: number,
+    command: string | undefined,
+    resume: string | undefined,
+    restore: boolean,
+    account: string | undefined,
+    startDeploy: boolean,
+  ) =>
     invoke<string>("open_session", {
       path,
       agent,
@@ -569,6 +579,7 @@ export const api = {
       resume: resume ?? null,
       restore,
       account: account || null,
+      startDeploy,
     }),
   /** The project's newest Claude conversations (⌘S). */
   /** `saved`: ids of the project's saved conversations, listed however old. */

@@ -192,6 +192,7 @@ fn open_session(
     resume: Option<String>,
     restore: bool,
     account: Option<String>,
+    start_deploy: bool,
 ) -> Result<String, String> {
     let dir = Path::new(&path);
     if !dir.is_dir() {
@@ -239,6 +240,9 @@ fn open_session(
                     format!("invalid Docker tile: {e}")
                 )
             })?;
+        // No live session (reattaching returned above): a deploy starts only
+        // from a click confirmed in the Docker panel, whatever the UI believed.
+        docker::may_start(&tile, start_deploy)?;
         docker::tile_command(&tile, &layout.docker_hosts, dir)?
     } else if agent == RUN_AGENT {
         // Only a command the project itself defines (see project::run_targets).

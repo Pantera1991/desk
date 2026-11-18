@@ -647,7 +647,8 @@ export class App {
     }
     try {
       const command = spec.agent === "docker" ? JSON.stringify(this.layout.docker[key]) : this.layout.runs[key];
-      const slug = await api.openSession(spec.path, spec.agent, spec.instance, command, resume, restore, account);
+      // Only the confirmed click may start a deploy: Rust checks tmux itself, so a stale `running` cannot re-run one.
+      const slug = await api.openSession(spec.path, spec.agent, spec.instance, command, resume, restore, account, confirmed);
       this.running.add(key);
       // A session started anew under a slug used before: the old state names
       // another conversation (a name given now would save that one).
@@ -677,6 +678,13 @@ export class App {
       this.tiles.set(key, tile);
       return tile;
     } catch (err) {
+      // A deploy Rust would not start (its session had ended after all): forgotten like one refused above, one toast.
+      if (spec.agent === "docker" && blockedDeploy(this.layout.docker[key], false, confirmed)) {
+        this.running.delete(key);
+        this.forgetKey(key);
+        this.closed = this.closed.filter((c) => c.key !== key);
+        this.save();
+      }
       toast(t("app.openFailed", { agent: spec.agent, path: spec.path, err: String(err) }), { kind: "error", topic: "sessions" });
       return null;
     }
@@ -924,7 +932,7 @@ export class App {
     this.layout.projectAccounts[tile.path] = to.id;
     this.save();
     try {
-      await api.openSession(tile.path, tile.agent, tile.instance, undefined, undefined, false, to.id);
+      await api.openSession(tile.path, tile.agent, tile.instance, undefined, undefined, false, to.id, false);
     } catch (err) {
       return toast(t("app.openFailed", { agent: tile.agent, path: tile.path, err: String(err) }), { kind: "error", topic: "sessions" });
     }
