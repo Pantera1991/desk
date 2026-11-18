@@ -2,7 +2,7 @@
 // their containers, containers without compose, images, networks, volumes).
 // Pure: open branches and busy buttons come in as sets. Data: docker.rs;
 // behaviour: docker-popover.ts.
-import type { DockerContainer, DockerHostView, DockerImage, DockerNamed, DockerOverview } from "./api";
+import type { DockerHost, DockerContainer, DockerHostView, DockerImage, DockerNamed, DockerOverview } from "./api";
 import { t, tn } from "./i18n";
 import { escapeHtml as esc } from "./notices";
 
@@ -97,4 +97,22 @@ export function renderDocker(o: DockerOverview | null, open: ReadonlySet<string>
   if (!o.cli) return `<div class="dk-empty">${esc(t("docker.noCli"))}</div>`;
   if (o.hosts.length === 0) return `<div class="dk-empty">${esc(t("docker.noHosts"))}</div>`;
   return o.hosts.map((h) => hostBranch(o, h, open, busy)).join("");
+}
+
+/** The same rule as Rust's valid_url (docker.rs): `tcp://` or `unix://`, then
+ *  ASCII alphanumerics and `.:/_-[]@%` only, so Rust never refuses what Options took. */
+const URL_RULE = /^(?:tcp|unix):\/\/[A-Za-z0-9.:/_\-[\]@%]+$/;
+
+/** Options → Docker: null when the servers can be saved, else the message to show. */
+export function checkHosts(hosts: DockerHost[]): string | null {
+  const seen = new Set<string>();
+  for (const h of hosts) {
+    const name = h.name.trim();
+    if (!name) return t("settings.dockerNameEmpty");
+    if (!URL_RULE.test(h.url.trim())) return t("settings.dockerUrlBad", { name });
+    const key = name.toLowerCase();
+    if (seen.has(key)) return t("settings.dockerNameDup", { name });
+    seen.add(key);
+  }
+  return null;
 }

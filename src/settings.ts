@@ -8,6 +8,7 @@ import {
   type AgentInfo,
   type ClaudeAccount,
   type CoffeeStatus,
+  type DockerHost,
   type FanInfo,
   type FanStep,
   type Layout,
@@ -22,6 +23,7 @@ import {
 import { accountColor, withAccount, withoutAccount } from "./accounts";
 import type { LinkClick } from "./links";
 import { partsHtml, withPart } from "./cpu-parts";
+import { checkHosts } from "./docker-view";
 import { PLATFORM, shortcut } from "./platform";
 import { rows, shortPath } from "./projects";
 import { search, type SearchItem } from "./settings-search";
@@ -119,10 +121,12 @@ export interface SettingsContext {
   removeAgent: (id: string) => Promise<void>;
   /** Claude accounts changed (accounts.ts): saved at once, Rust reads them. */
   setAccounts: (change: Pick<Layout, "claudeAccounts" | "tileAccounts" | "projectAccounts">) => Promise<void>;
+  /** Docker servers changed in Options: saved at once, the 🐳 chip follows. Never contacts them. */
+  setDockerHosts: (hosts: DockerHost[]) => Promise<void>;
 }
 
 /** The groups of Options, in the sidebar's order. */
-export type Group = "general" | "look" | "window" | "terminal" | "projects" | "claude" | "stats" | "power" | "keys";
+export type Group = "general" | "look" | "window" | "terminal" | "projects" | "claude" | "stats" | "power" | "docker" | "keys";
 
 const GROUP_NAMES: Record<Group, MessageKey> = {
   general: "settings.general",
@@ -133,6 +137,7 @@ const GROUP_NAMES: Record<Group, MessageKey> = {
   claude: "settings.claude",
   stats: "settings.stats",
   power: "settings.power",
+  docker: "settings.docker",
   keys: "settings.keys",
 };
 
@@ -153,6 +158,38 @@ function waitLabel(seconds: number): string {
 }
 
 export class Settings {
+  private dockerRowHtml(h: DockerHost): string {
+    return `<div class="line docker-host"><input type="text" data-k="docker-name" value="${escapeHtml(h.name)}" placeholder="${t("settings.dockerName")}" spellcheck="false" /><input type="text" data-k="docker-url" value="${escapeHtml(h.url)}" placeholder="${t("settings.dockerUrl")}" spellcheck="false" /><button data-k="docker-rm" title="${t("settings.dockerRemove")}">✕</button></div>`;
+  }
+
+  /** Docker servers: rows live in the DOM; Zapisz saves only what checkHosts accepts. */
+  private bindDocker(box: HTMLElement): void {
+    const rows = box.querySelector<HTMLElement>('[data-k="docker-rows"]')!;
+    const error = box.querySelector<HTMLElement>('[data-k="docker-error"]')!;
+    rows.addEventListener("click", (e) => {
+      if ((e.target as HTMLElement).closest('[data-k="docker-rm"]')) (e.target as HTMLElement).closest(".docker-host")!.remove();
+    });
+    box.querySelector('[data-k="docker-add"]')!.addEventListener("click", () => {
+      rows.insertAdjacentHTML("beforeend", this.dockerRowHtml({ name: "", url: "" }));
+      rows.querySelector<HTMLInputElement>(".docker-host:last-child [data-k=docker-name]")?.focus();
+    });
+    box.querySelector('[data-k="docker-save"]')!.addEventListener("click", () => {
+      const hosts = [...rows.querySelectorAll<HTMLElement>(".docker-host")].map((r) => ({
+        name: r.querySelector<HTMLInputElement>('[data-k="docker-name"]')!.value.trim(),
+        url: r.querySelector<HTMLInputElement>('[data-k="docker-url"]')!.value.trim(),
+      }));
+      const problem = checkHosts(hosts);
+      error.textContent = problem ?? "";
+      if (problem) return;
+      void this.ctx
+        .setDockerHosts(hosts)
+        .then(() => toast(t("settings.dockerSaved"), { kind: "ok" }))
+        .catch((err) => {
+          error.textContent = String(err);
+        });
+    });
+  }
+
   /** Pasted WireGuard config for prompt rewriting: saved by Rust to an
    *  owner-only file; the field is emptied after saving, only the server shows. */
   private bindVpn(box: HTMLElement): void {
@@ -876,6 +913,18 @@ export class Settings {
           section(t("settings.cpuPanel"), partsHtml(layout.cpuHidden, PLATFORM)),
       ],
       [
+        "docker",
+        section(
+          "",
+          `<p class="dim small" data-row>${t("settings.dockerAbout")}</p>
+      <div class="docker-hosts">
+        <div data-k="docker-rows">${(layout.dockerHosts ?? []).map((h) => this.dockerRowHtml(h)).join("")}</div>
+        <div class="line"><button data-k="docker-add">${t("settings.dockerAdd")}</button><button data-k="docker-save">${t("settings.dockerSave")}</button><span class="vpn-error" data-k="docker-error"></span></div>
+      </div>`,
+          "row",
+        ),
+      ],
+      [
         "keys",
         section("", `<p class="dim small" data-row>${t("settings.keysAbout")}</p>`) +
           `<div class="shortcut-list">${section(
@@ -1069,6 +1118,7 @@ export class Settings {
       });
     }
     this.bindVpn(box);
+    this.bindDocker(box);
     box.querySelectorAll<HTMLInputElement>("[data-auto]").forEach((cb) =>
       cb.addEventListener("change", () => this.ctx.toggleAutostart(cb.dataset.auto!)),
     );

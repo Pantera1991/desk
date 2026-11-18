@@ -1739,7 +1739,8 @@ html.dragging-card .tile .term {
   align-items: stretch;
 }
 
-.settings .prompt-ai .vpn-error {
+.settings .prompt-ai .vpn-error,
+.settings .docker-hosts .vpn-error {
   color: var(--danger);
   white-space: pre-wrap;
 }

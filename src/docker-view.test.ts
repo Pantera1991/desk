@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { DockerContainer, DockerHostView, DockerImage, DockerOverview } from "./api";
-import { health, imageTarget, removeQuestion, renderDocker } from "./docker-view";
+import { checkHosts, health, imageTarget, removeQuestion, renderDocker } from "./docker-view";
 import { setLanguage, t } from "./i18n";
 
 const c = (name: string, state: string, project: string | null = null): DockerContainer => ({
@@ -99,5 +99,24 @@ describe("docker view", () => {
     const html = renderDocker(o, new Set(["host:h", "nocompose:h"]), none);
     expect(html).not.toContain("<b>");
     expect(html).toContain("&#60;b&#62;");
+  });
+});
+
+describe("checkHosts", () => {
+  const h = (name: string, url: string) => ({ name, url });
+  beforeEach(() => setLanguage("en"));
+  it("accepts an empty list and good servers", () => {
+    expect(checkHosts([])).toBeNull();
+    expect(checkHosts([h("Docker1", "tcp://192.0.2.10:2375")])).toBeNull();
+    expect(checkHosts([h("v6", "tcp://[::1]:2375"), h("sock", "unix:///var/run/docker.sock")])).toBeNull();
+  });
+  it("refuses a bad scheme, an empty rest and unsafe characters", () => {
+    for (const url of ["http://x", "tcp://", "unix://", "tcp://x';calc;'", "tcp://a b", ""]) {
+      expect(checkHosts([h("a", url)])).toBe(t("settings.dockerUrlBad", { name: "a" }));
+    }
+  });
+  it("refuses an empty name and duplicates, ignoring case and spaces", () => {
+    expect(checkHosts([h("  ", "tcp://x:1")])).toBe(t("settings.dockerNameEmpty"));
+    expect(checkHosts([h("A", "tcp://x:1"), h(" a ", "tcp://y:1")])).toBe(t("settings.dockerNameDup", { name: "a" }));
   });
 });

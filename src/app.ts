@@ -392,6 +392,12 @@ export class App {
         await this.saveNow();
       },
       setAccounts: (change) => this.setAccounts(change),
+      setDockerHosts: (hosts) => {
+        this.layout.dockerHosts = hosts;
+        this.renderChrome();
+        clearTimeout(this.saveTimer);
+        return this.persist();
+      },
     });
   }
 
