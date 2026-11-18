@@ -52,9 +52,10 @@ pub fn run(program: &Path, args: &[&str], timeout: Duration) -> Result<String, S
         if !text.is_empty() {
             return Err(text);
         }
+        let name = program.file_name().map_or_else(|| program.to_string_lossy(), |n| n.to_string_lossy());
         Err(match status.code() {
-            Some(n) => tr!(format!("docker zakończył się kodem {n}"), format!("docker exited with code {n}")),
-            None => tr!("docker został przerwany".to_string(), "docker was terminated".to_string()),
+            Some(n) => tr!(format!("{name} zakończył się kodem {n}"), format!("{name} exited with code {n}")),
+            None => tr!(format!("{name} został przerwany"), format!("{name} was terminated")),
         })
     }
 }
@@ -90,7 +91,8 @@ mod tests {
     fn run_failure_without_stderr_names_the_exit_code() {
         let e = run(Path::new("sh"), &["-c", "exit 3"], Duration::from_secs(2)).unwrap_err();
         assert!(e.contains('3'), "{e}");
-        assert!(!e.is_empty());
+        assert!(e.contains("sh"), "{e}");
+        assert!(!e.contains("docker"), "{e}");
     }
 
     #[cfg(unix)]

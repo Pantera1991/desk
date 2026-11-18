@@ -26,6 +26,7 @@ const COMMANDS: &[&str] = &[
     "preview_file",
     "run_targets",
     "git_switch",
+    "git_status_summary",
     "list_projects",
     "list_sessions",
     "thermal_status",

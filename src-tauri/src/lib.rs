@@ -239,7 +239,7 @@ fn open_session(
                     format!("invalid Docker tile: {e}")
                 )
             })?;
-        docker::tile_command(&tile, &layout.docker_hosts)?
+        docker::tile_command(&tile, &layout.docker_hosts, dir)?
     } else if agent == RUN_AGENT {
         // Only a command the project itself defines (see project::run_targets).
         let command = command.unwrap_or_default();
@@ -732,6 +732,11 @@ fn git_branches(path: String) -> Result<Vec<String>, String> {
     git::branches(Path::new(&path))
 }
 
+#[tauri::command(async)]
+fn git_status_summary(path: String) -> Option<git::GitSummary> {
+    git::summary(Path::new(&path))
+}
+
 #[tauri::command]
 fn git_switch(path: String, branch: String) -> Result<(), String> {
     git::switch(Path::new(&path), &branch)
@@ -1024,6 +1029,7 @@ pub fn run() {
             preview_file,
             run_targets,
             git_switch,
+            git_status_summary,
             list_projects,
             list_sessions,
             thermal_status,

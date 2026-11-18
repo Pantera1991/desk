@@ -26,6 +26,31 @@ pub fn branch(work_tree: &Path) -> Option<String> {
     parse_head(&head)
 }
 
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitSummary {
+    pub branch: Option<String>,
+    /// Changed or untracked paths (lines of `git status --porcelain`).
+    pub dirty: usize,
+}
+
+/// Branch and number of changed paths; `None` when it is not a repository,
+/// `git` is missing, fails or does not answer within 3 s.
+pub fn summary(work_tree: &Path) -> Option<GitSummary> {
+    let git = crate::agents::which("git")?;
+    let dir = work_tree.to_str()?;
+    let out = crate::proc::run(
+        &git,
+        &["-C", dir, "status", "--porcelain"],
+        std::time::Duration::from_secs(3),
+    )
+    .ok()?;
+    Some(GitSummary {
+        branch: branch(work_tree),
+        dirty: out.lines().filter(|l| !l.trim().is_empty()).count(),
+    })
+}
+
 pub fn parse_head(head: &str) -> Option<String> {
     let head = head.trim();
     if let Some(r) = head.strip_prefix("ref:") {
@@ -194,5 +219,33 @@ mod tests {
         assert_eq!(branch(&main).as_deref(), Some("main"));
         assert_eq!(branch(&wt).as_deref(), Some("feature"));
         assert_eq!(branch(tmp.path()), None);
+    }
+
+    #[test]
+    fn summary_counts_changed_and_untracked_paths() {
+        let tmp = tempfile::tempdir().unwrap();
+        let d = tmp.path();
+        let g = |args: &[&str]| {
+            let st = std::process::Command::new("git").arg("-C").arg(d).args(args).output().unwrap();
+            assert!(st.status.success(), "{args:?}");
+        };
+        g(&["init", "-q"]);
+        g(&["config", "user.name", "t"]);
+        g(&["config", "user.email", "t@example.com"]);
+        g(&["config", "commit.gpgsign", "false"]);
+        std::fs::write(d.join("a.txt"), "1").unwrap();
+        g(&["add", "a.txt"]);
+        g(&["commit", "-q", "-m", "init"]);
+        std::fs::write(d.join("a.txt"), "2").unwrap();
+        std::fs::write(d.join("b.txt"), "new").unwrap();
+        let s = summary(d).unwrap();
+        assert_eq!(s.dirty, 2);
+        assert!(s.branch.is_some());
+    }
+
+    #[test]
+    fn summary_of_a_plain_folder_is_none() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert_eq!(summary(tmp.path()), None);
     }
 }

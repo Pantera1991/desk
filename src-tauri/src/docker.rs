@@ -28,6 +28,7 @@ pub enum DockerTileKind {
     Logs,
     ProjectLogs,
     Shell,
+    Deploy,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -251,12 +252,16 @@ pub fn restart(hosts: &[DockerHost], host: &str, container: &str) -> Result<(), 
     run(&docker, &["-H", &h.url, "restart", container], Duration::from_secs(30)).map(|_| ())
 }
 
+/// Compose file names a deploy tile accepts in the project folder.
+pub const COMPOSE_FILES: [&str; 4] =
+    ["compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"];
+
 /// Agent id of a tile that runs a `docker` command built by `tile_command`.
 pub const DOCKER_AGENT: &str = "docker";
 
 /// The command line of a Docker tile. Only a saved server and validated names
 /// get in, each single-quoted, so a stored layout cannot inject a command.
-pub fn tile_command(tile: &DockerTile, hosts: &[DockerHost]) -> Result<String, String> {
+pub fn tile_command(tile: &DockerTile, hosts: &[DockerHost], dir: &Path) -> Result<String, String> {
     use crate::tmux::shell_quote;
     let h = hosts
         .iter()
@@ -268,11 +273,21 @@ pub fn tile_command(tile: &DockerTile, hosts: &[DockerHost]) -> Result<String, S
     if !valid_name(&tile.target) {
         return Err(tr!("nieprawidłowa nazwa", "invalid name").into());
     }
+    if tile.kind == DockerTileKind::Deploy
+        && (!dir.is_dir() || !COMPOSE_FILES.iter().any(|f| dir.join(f).is_file()))
+    {
+        return Err(tr!(
+            "w folderze nie ma pliku compose",
+            "the folder has no compose file"
+        )
+        .into());
+    }
     let head = format!("docker -H {}", shell_quote(&h.url));
     let target = shell_quote(&tile.target);
     Ok(match tile.kind {
         DockerTileKind::Logs => format!("{head} logs -f --tail 500 {target}"),
         DockerTileKind::ProjectLogs => format!("{head} compose -p {target} logs -f --tail 200"),
+        DockerTileKind::Deploy => format!("{head} compose -p {target} up -d --build"),
         DockerTileKind::Shell => format!(
             "{head} exec -it {target} sh -c 'command -v bash >/dev/null && exec bash || exec sh'"
         ),
@@ -293,7 +308,7 @@ mod tests {
     #[test]
     fn builds_logs_command() {
         assert_eq!(
-            tile_command(&tile("web-app-1", DockerTileKind::Logs), &host()).unwrap(),
+            tile_command(&tile("web-app-1", DockerTileKind::Logs), &host(), Path::new(".")).unwrap(),
             "docker -H 'tcp://192.0.2.10:2375' logs -f --tail 500 'web-app-1'"
         );
     }
@@ -301,7 +316,7 @@ mod tests {
     #[test]
     fn builds_project_logs_command() {
         assert_eq!(
-            tile_command(&tile("web", DockerTileKind::ProjectLogs), &host()).unwrap(),
+            tile_command(&tile("web", DockerTileKind::ProjectLogs), &host(), Path::new(".")).unwrap(),
             "docker -H 'tcp://192.0.2.10:2375' compose -p 'web' logs -f --tail 200"
         );
     }
@@ -309,7 +324,7 @@ mod tests {
     #[test]
     fn builds_shell_command() {
         assert_eq!(
-            tile_command(&tile("web-app-1", DockerTileKind::Shell), &host()).unwrap(),
+            tile_command(&tile("web-app-1", DockerTileKind::Shell), &host(), Path::new(".")).unwrap(),
             "docker -H 'tcp://192.0.2.10:2375' exec -it 'web-app-1' sh -c 'command -v bash >/dev/null && exec bash || exec sh'"
         );
     }
@@ -318,22 +333,68 @@ mod tests {
     fn refuses_unknown_host() {
         let mut t = tile("web", DockerTileKind::Logs);
         t.host = "Other".into();
-        assert!(tile_command(&t, &host()).is_err());
+        assert!(tile_command(&t, &host(), Path::new(".")).is_err());
     }
 
     #[test]
     fn refuses_bad_target() {
-        assert!(tile_command(&tile("x; rm -rf ~", DockerTileKind::Logs), &host()).is_err());
+        assert!(tile_command(&tile("x; rm -rf ~", DockerTileKind::Logs), &host(), Path::new(".")).is_err());
     }
 
     #[test]
     fn refuses_invalid_stored_url() {
         let hosts = vec![DockerHost { name: "Docker1".into(), url: "tcp://a b; rm".into() }];
-        assert!(tile_command(&tile("web", DockerTileKind::Logs), &hosts).is_err());
+        assert!(tile_command(&tile("web", DockerTileKind::Logs), &hosts, Path::new(".")).is_err());
         for url in ["tcp://x';calc;'", "tcp://a$b", "tcp://a`b", "http://192.0.2.10:2375"] {
             let hosts = vec![DockerHost { name: "Docker1".into(), url: url.into() }];
-            assert!(tile_command(&tile("web", DockerTileKind::Logs), &hosts).is_err(), "{url}");
+            assert!(tile_command(&tile("web", DockerTileKind::Logs), &hosts, Path::new(".")).is_err(), "{url}");
         }
+    }
+
+    fn deploy_dir(file: Option<&str>) -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static N: AtomicUsize = AtomicUsize::new(0);
+        let d = std::env::temp_dir().join(format!("desk-deploy-{}-{}", std::process::id(), N.fetch_add(1, Ordering::SeqCst)));
+        std::fs::create_dir_all(&d).unwrap();
+        if let Some(f) = file {
+            std::fs::write(d.join(f), "services: {}\n").unwrap();
+        }
+        d
+    }
+
+    #[test]
+    fn builds_deploy_command() {
+        let d = deploy_dir(Some("docker-compose.yml"));
+        assert_eq!(
+            tile_command(&tile("mm-general", DockerTileKind::Deploy), &host(), &d).unwrap(),
+            "docker -H 'tcp://192.0.2.10:2375' compose -p 'mm-general' up -d --build"
+        );
+    }
+
+    #[test]
+    fn deploy_refuses_dir_without_compose_file() {
+        let d = deploy_dir(None);
+        assert!(tile_command(&tile("mm-general", DockerTileKind::Deploy), &host(), &d).is_err());
+    }
+
+    #[test]
+    fn deploy_refuses_missing_dir() {
+        let d = deploy_dir(None).join("nope");
+        assert!(tile_command(&tile("mm-general", DockerTileKind::Deploy), &host(), &d).is_err());
+    }
+
+    #[test]
+    fn deploy_refuses_unknown_host() {
+        let d = deploy_dir(Some("compose.yaml"));
+        let mut t = tile("mm-general", DockerTileKind::Deploy);
+        t.host = "Other".into();
+        assert!(tile_command(&t, &host(), &d).is_err());
+    }
+
+    #[test]
+    fn deploy_refuses_bad_target() {
+        let d = deploy_dir(Some("compose.yaml"));
+        assert!(tile_command(&tile("x; rm", DockerTileKind::Deploy), &host(), &d).is_err());
     }
 
     #[test]
