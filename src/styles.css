@@ -35,7 +35,7 @@ body,
 
 #app {
   display: grid;
-  grid-template-rows: 28px minmax(0, 1fr) 22px;
+  grid-template-rows: calc(28px * var(--ui-scale)) minmax(0, 1fr) calc(22px * var(--ui-scale));
   /* Without minmax(0, …) the column grows to the xterm canvas width and the
      rightmost lane spills out of the window. */
   grid-template-columns: minmax(0, 1fr);
@@ -597,8 +597,8 @@ html.dragging-card .tile .term {
 
 /* ---- tiles ---- */
 .tile {
+  flex: 1 1 0;
   min-height: 80px;
-  min-height: calc(80px * var(--ui-scale));
   min-width: 0;
   overflow: hidden;
   display: flex;
@@ -1065,12 +1065,12 @@ html.dragging-card .tile .term {
    `flex: none` alone would make it as wide as its header's text (the last
    line of output), leaving the other sessions of the card no room. */
 .card-body.row > .tile.minimized {
-  flex: 0 0 26px;
+  flex: 0 0 calc(26px * var(--ui-scale));
 }
 
 /* a lane of folded tiles only: a narrow strip, labels read top to bottom */
 .lane.folded {
-  flex-basis: 26px;
+  flex-basis: calc(26px * var(--ui-scale));
   flex-shrink: 0;
 }
 
@@ -1281,7 +1281,7 @@ html.dragging-card .tile .term {
 
 .palette input {
   font-size: calc(14px * var(--ui-scale)) !important;
-  margin: 8px;
+  margin: calc(8px * var(--ui-scale));
   padding: calc(8px * var(--ui-scale)) calc(10px * var(--ui-scale)) !important;
 }
 
@@ -1304,7 +1304,7 @@ html.dragging-card .tile .term {
 }
 
 .palette .row.child {
-  padding-left: 26px;
+  padding-left: calc(26px * var(--ui-scale));
 }
 
 .palette .row .name {
@@ -1690,7 +1690,7 @@ html.dragging-card .tile .term {
 }
 
 .settings .checks label.child {
-  padding-left: 24px;
+  padding-left: calc(24px * var(--ui-scale));
 }
 
 .settings .agents {
@@ -2009,7 +2009,7 @@ button.danger {
 .notice {
   position: relative;
   display: grid;
-  grid-template-columns: 12px minmax(0, 1fr) 16px;
+  grid-template-columns: calc(12px * var(--ui-scale)) minmax(0, 1fr) calc(16px * var(--ui-scale));
   column-gap: 8px;
   align-items: start;
   padding: calc(7px * var(--ui-scale)) calc(6px * var(--ui-scale)) calc(8px * var(--ui-scale)) calc(9px * var(--ui-scale));
@@ -2254,7 +2254,7 @@ button.danger {
 
 .notice-row {
   display: grid;
-  grid-template-columns: 36px 12px minmax(0, 1fr) auto;
+  grid-template-columns: calc(36px * var(--ui-scale)) calc(12px * var(--ui-scale)) minmax(0, 1fr) auto;
   column-gap: 8px;
   align-items: start;
   padding: calc(7px * var(--ui-scale)) calc(8px * var(--ui-scale)) calc(7px * var(--ui-scale)) calc(10px * var(--ui-scale));
@@ -2406,7 +2406,7 @@ button.danger {
   position: relative;
   flex: none;
   width: 42%;
-  min-width: calc(280px * var(--ui-scale));
+  min-width: 280px;
   display: flex;
   flex-direction: column;
   border-left: 1px solid var(--line-hi);
