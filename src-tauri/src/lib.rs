@@ -12,6 +12,7 @@ pub mod claude_projects;
 pub mod coffee;
 pub mod conversations;
 pub mod discovery;
+pub mod docker;
 pub mod drag;
 pub mod dropdown;
 pub mod env;
@@ -606,6 +607,17 @@ async fn project_files(path: String) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Containers, images, networks and volumes of the saved Docker servers.
+#[tauri::command(async)]
+fn docker_overview(app: State<'_, App>) -> docker::Overview {
+    docker::overview(&layout::load(&app.layout_path).docker_hosts)
+}
+
+#[tauri::command(async)]
+fn docker_image_rm(app: State<'_, App>, host: String, image: String) -> Result<(), String> {
+    docker::image_rm(&layout::load(&app.layout_path).docker_hosts, &host, &image)
+}
+
 /// One folder of the project, opened in the tree (`node_modules/`...).
 #[tauri::command]
 async fn project_dir(path: String, rel: String) -> Result<Vec<String>, String> {
@@ -1025,6 +1037,8 @@ pub fn run() {
             claude_accounts,
             usage_details,
             usage_models,
+            docker_overview,
+            docker_image_rm,
             quit_desk,
         ])
         .on_window_event(|window, event| {

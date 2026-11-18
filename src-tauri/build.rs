@@ -62,6 +62,8 @@ const COMMANDS: &[&str] = &[
     "claude_accounts",
     "usage_models",
     "usage_details",
+    "docker_overview",
+    "docker_image_rm",
     "quit_desk",
 ];
 
