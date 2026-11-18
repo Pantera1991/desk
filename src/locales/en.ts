@@ -634,6 +634,7 @@ export const en: Messages = {
   "docker.health.down": "stopped",
   "docker.rmTag": "Remove the tag {image} from {host}? The image also has {others}, so nothing will be freed from disk.",
   "docker.rmImage": "Remove image {image} ({size}) from {host}?",
+  "docker.removed": "Removed image {image} from {host}.",
   "docker.tileLogs": "logs: {name}",
   "docker.tileShell": "sh: {name}",
   "top.docker": "Docker",

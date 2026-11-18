@@ -43,6 +43,10 @@ export class DockerPopover {
   private overview: DockerOverview | null = null;
   private error: string | null = null;
   private pending = false;
+  /** Bumped on close: a call still in flight from before belongs to no one. */
+  private gen = 0;
+  /** The confirmation of a removal is up (its overlay is not part of the panel). */
+  private confirming = false;
   /** Asked again right after the call in flight (a removal finished meanwhile). */
   private again = false;
   private timer: ReturnType<typeof setInterval> | undefined;
@@ -63,14 +67,14 @@ export class DockerPopover {
     this.el.addEventListener("click", (e) => void this.click(e.target as HTMLElement));
     const leave = (e: Event) => {
       const target = e.target instanceof Element ? e.target : null;
-      if (this.shown && target && !this.el.contains(target) && !target.closest(CHIP)) this.close();
+      if (this.shown && !this.confirming && target && !this.el.contains(target) && !target.closest(CHIP)) this.close();
     };
     document.addEventListener("mousedown", leave, true);
     document.addEventListener("focusin", leave, true);
     window.addEventListener(
       "keydown",
       (e) => {
-        if (this.shown && e.key === "Escape") {
+        if (this.shown && !this.confirming && e.key === "Escape") {
           e.preventDefault();
           e.stopImmediatePropagation();
           this.close();
@@ -92,7 +96,10 @@ export class DockerPopover {
     this.overview = null;
     this.error = null;
     this.fetch();
-    this.timer = setInterval(() => this.fetch(), DOCKER_EVERY_MS);
+    // A tick never queues behind a slow call: it is skipped.
+    this.timer = setInterval(() => {
+      if (!this.pending) this.fetch();
+    }, DOCKER_EVERY_MS);
     this.refresh();
   }
 
@@ -101,6 +108,8 @@ export class DockerPopover {
     this.shown = false;
     clearInterval(this.timer);
     this.again = false;
+    this.gen++;
+    this.pending = false;
     this.el.hidden = true;
     this.el.innerHTML = this.html = "";
     this.chip()?.removeAttribute("aria-expanded");
@@ -154,11 +163,20 @@ export class DockerPopover {
 
   private async remove(host: string, image: string, question: string): Promise<void> {
     const key = `${host}|${image}`;
-    if (this.busy.has(key) || !(await confirmBox(question, t("docker.remove")))) return;
+    if (this.busy.has(key) || this.confirming) return;
+    this.confirming = true;
+    let ok: boolean;
+    try {
+      ok = await confirmBox(question, t("docker.remove"));
+    } finally {
+      this.confirming = false;
+    }
+    if (!ok) return;
     this.busy.add(key);
     this.refresh();
     try {
       await this.ctx.removeImage(host, image);
+      toast(t("docker.removed", { image, host }), { kind: "ok" });
     } catch (err) {
       toast(String(err), { kind: "error" });
     }
@@ -169,11 +187,13 @@ export class DockerPopover {
 
   /** One request at a time; asked for while one is in flight, it follows right after. */
   private fetch(): void {
+    if (!this.shown) return;
     if (this.pending) {
       this.again = true;
       return;
     }
     this.pending = true;
+    const gen = this.gen;
     let call: Promise<DockerOverview>;
     try {
       call = this.ctx.overview();
@@ -182,15 +202,16 @@ export class DockerPopover {
     }
     call
       .then((o) => {
-        if (!this.shown) return;
+        if (gen !== this.gen) return;
         this.overview = o;
         this.error = null;
       })
       // Shown in the panel; asked again in 5 s.
       .catch((err) => {
-        if (this.shown) this.error = String(err);
+        if (gen === this.gen) this.error = String(err);
       })
       .finally(() => {
+        if (gen !== this.gen) return;
         this.pending = false;
         this.refresh();
         if (this.again && this.shown) {
