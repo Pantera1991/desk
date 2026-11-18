@@ -170,11 +170,11 @@ function imageRow(host: string, img: DockerImage, all: DockerImage[], busy: Read
     : `<span class="dk-badge dk-unused">${esc(t("docker.unused"))}</span>`;
   const off = inUse || busy.has(`${host}|${target}`);
   const hint = inUse ? ` title="${esc(t("docker.inUseHint"))}"` : "";
-  return `<div class="dk-row dk-img"><span class="dk-name">${esc(label)}</span>${badge}<span class="dk-size">${esc(img.size)}</span><span class="dk-age">${esc(img.created)}</span><button type="button" class="dk-btn" data-d="rm" data-host="${esc(host)}" data-target="${esc(target)}" data-question="${esc(q)}"${hint}${off ? " disabled" : ""}>${esc(t("docker.remove"))}</button></div>`;
+  return `<div class="dk-container"><div class="dk-row dk-img"><span class="dk-name">${esc(label)}</span><button type="button" class="dk-btn" data-d="rm" data-host="${esc(host)}" data-target="${esc(target)}" data-question="${esc(q)}"${hint}${off ? " disabled" : ""}>${esc(t("docker.remove"))}</button></div><div class="dk-sub">${badge} · ${esc(img.size)} · ${esc(img.created)}</div></div>`;
 }
 
 function namedRow(n: DockerNamed): string {
-  return `<div class="dk-row"><span class="dk-name">${esc(n.name)}</span><span class="dk-image">${esc(n.driver)}</span></div>`;
+  return `<div class="dk-container"><div class="dk-row"><span class="dk-name">${esc(n.name)}</span></div><div class="dk-sub">${esc(n.driver)}</div></div>`;
 }
 
 function group(id: string, label: string, count: number, body: string, open: ReadonlySet<string>): string {

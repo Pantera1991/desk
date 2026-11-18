@@ -315,6 +315,32 @@ describe("image usage", () => {
     expect(html).not.toMatch(/<button[^>]*data-d="rm"[^>]*disabled/);
   });
 
+  it("image row: name and button on line one, badge, size and age on line two", () => {
+    const o = ov([host("h", { images: [img("web", "1.4")] })]);
+    const html = renderDocker(o, new Set(["host:h", "images:h"]), none, new Map());
+    const row = html.match(/<div class="dk-container">[\s\S]*?<\/div><\/div>/)?.[0] ?? "";
+    const sub = row.match(/<div class="dk-sub">([\s\S]*?)<\/div>/)?.[1] ?? "";
+    const line1 = row.slice(0, row.indexOf('<div class="dk-sub">'));
+    expect(line1).toContain("web:1.4");
+    expect(line1).toMatch(/data-d="rm"/);
+    expect(line1).not.toContain("nieużywany");
+    expect(sub).toContain("dk-badge");
+    expect(sub).toContain("nieużywany");
+    expect(sub).toContain("412 MB");
+    expect(sub).toContain("3 days ago");
+    expect(sub).not.toContain("web:1.4");
+    expect(sub).not.toContain("<button");
+  });
+
+  it("network and volume rows: name on line one, driver on line two", () => {
+    const o = ov([host("h", { networks: [{ name: "bridge", driver: "drv-net" }], volumes: [{ name: "data", driver: "drv-vol" }] })]);
+    const html = renderDocker(o, new Set(["host:h", "networks:h", "volumes:h"]), none, new Map());
+    for (const [name, driver] of [["bridge", "drv-net"], ["data", "drv-vol"]]) {
+      const row = html.match(new RegExp(`<div class="dk-container"><div class="dk-row"><span class="dk-name">${name}</span></div><div class="dk-sub">([\\s\\S]*?)</div></div>`));
+      expect(row?.[1]).toBe(driver);
+    }
+  });
+
   it("maps in-use errors", () => {
     const raw = 'Error response from daemon: conflict: unable to remove repository reference "web:1.4" (must force) - container 9223 is using its referenced image 99';
     expect(rmErrorMessage(raw, "web:1.4")).toBe("Nie usunięto web:1.4: używa go kontener. Najpierw zatrzymaj albo usuń kontener.");
