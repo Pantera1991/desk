@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { DockerContainer, DockerHostView, DockerImage, DockerOverview } from "./api";
-import { checkHosts, draftAdd, draftRemove, draftRows, draftSet, flipOpen, health, isOpen, imageTarget, removeQuestion, renderDocker, deployFolder, deployQuestion, restartQuestion, findDeployTile, findDeploySession, blockedDeploy } from "./docker-view";
+import { checkHosts, draftAdd, draftRemove, draftRows, draftSet, flipOpen, health, isOpen, imageTarget, removeQuestion, renderDocker, deployFolder, deployQuestion, restartQuestion, findDockerTile, findDockerSession, blockedDeploy } from "./docker-view";
 import { setLanguage, t } from "./i18n";
 
 const c = (name: string, state: string, project: string | null = null, workingDir: string | null = null): DockerContainer => ({
@@ -186,39 +186,63 @@ describe("Options draft", () => {
   });
 });
 
-describe("findDeployTile", () => {
+describe("findDockerTile", () => {
   const docker = {
     "/a#docker:1": { host: "srv", target: "shop", kind: "deploy" as const },
     "/a#docker:2": { host: "srv", target: "shop", kind: "logs" as const },
     "/b#docker:1": { host: "other", target: "shop", kind: "deploy" as const },
   };
   it("finds the open deploy tile of the same host and project", () => {
-    expect(findDeployTile(docker, ["/a#docker:1", "/b#docker:1"], "srv", "shop")).toBe("/a#docker:1");
-    expect(findDeployTile(docker, ["/b#docker:1"], "other", "shop")).toBe("/b#docker:1");
+    expect(findDockerTile(docker, ["/a#docker:1", "/b#docker:1"], "srv", "shop", "deploy")).toBe("/a#docker:1");
+    expect(findDockerTile(docker, ["/b#docker:1"], "other", "shop", "deploy")).toBe("/b#docker:1");
   });
   it("ignores closed tiles, other kinds and other hosts", () => {
-    expect(findDeployTile(docker, [], "srv", "shop")).toBeNull();
-    expect(findDeployTile(docker, ["/a#docker:2"], "srv", "shop")).toBeNull();
-    expect(findDeployTile(docker, ["/a#docker:1"], "srv", "api")).toBeNull();
+    expect(findDockerTile(docker, [], "srv", "shop", "deploy")).toBeNull();
+    expect(findDockerTile(docker, ["/a#docker:2"], "srv", "shop", "deploy")).toBeNull();
+    expect(findDockerTile(docker, ["/a#docker:1"], "srv", "api", "deploy")).toBeNull();
   });
 });
 
-describe("findDeploySession", () => {
+describe("findDockerTile / findDockerSession for logs and shells", () => {
+  const docker = {
+    "/a#docker:1": { host: "srv", target: "web", kind: "logs" as const },
+    "/a#docker:2": { host: "srv", target: "shop", kind: "projectLogs" as const },
+    "/a#docker:3": { host: "srv", target: "web", kind: "shell" as const },
+  };
+  const all = Object.keys(docker);
+  it("finds a tile of the same kind, host and target", () => {
+    expect(findDockerTile(docker, all, "srv", "web", "logs")).toBe("/a#docker:1");
+    expect(findDockerTile(docker, all, "srv", "shop", "projectLogs")).toBe("/a#docker:2");
+    expect(findDockerTile(docker, all, "srv", "web", "shell")).toBe("/a#docker:3");
+  });
+  it("does not find another kind, host or target", () => {
+    expect(findDockerTile(docker, all, "srv", "web", "projectLogs")).toBeNull();
+    expect(findDockerTile(docker, all, "other", "web", "logs")).toBeNull();
+    expect(findDockerTile(docker, all, "srv", "db", "shell")).toBeNull();
+  });
+  it("reattaches a running session whose tile was closed", () => {
+    expect(findDockerSession(docker, [], all, "srv", "web", "logs")).toEqual({ key: "/a#docker:1", open: false });
+    expect(findDockerSession(docker, ["/a#docker:3"], all, "srv", "web", "shell")).toEqual({ key: "/a#docker:3", open: true });
+    expect(findDockerSession(docker, [], all, "srv", "web", "projectLogs")).toBeNull();
+  });
+});
+
+describe("findDockerSession", () => {
   const docker = {
     "/a#docker:1": { host: "srv", target: "shop", kind: "deploy" as const },
     "/a#docker:2": { host: "srv", target: "shop", kind: "logs" as const },
     "/b#docker:1": { host: "other", target: "shop", kind: "deploy" as const },
   };
   it("prefers the open tile", () => {
-    expect(findDeploySession(docker, ["/a#docker:1"], ["/a#docker:1"], "srv", "shop")).toEqual({ key: "/a#docker:1", open: true });
+    expect(findDockerSession(docker, ["/a#docker:1"], ["/a#docker:1"], "srv", "shop", "deploy")).toEqual({ key: "/a#docker:1", open: true });
   });
   it("finds a deploy still running in tmux whose tile was closed", () => {
-    expect(findDeploySession(docker, [], ["/a#docker:1", "/a#docker:2"], "srv", "shop")).toEqual({ key: "/a#docker:1", open: false });
+    expect(findDockerSession(docker, [], ["/a#docker:1", "/a#docker:2"], "srv", "shop", "deploy")).toEqual({ key: "/a#docker:1", open: false });
   });
   it("ignores ended sessions, other kinds and other hosts", () => {
-    expect(findDeploySession(docker, [], [], "srv", "shop")).toBeNull();
-    expect(findDeploySession(docker, [], ["/a#docker:2"], "srv", "shop")).toBeNull();
-    expect(findDeploySession(docker, [], ["/b#docker:1"], "srv", "shop")).toBeNull();
+    expect(findDockerSession(docker, [], [], "srv", "shop", "deploy")).toBeNull();
+    expect(findDockerSession(docker, [], ["/a#docker:2"], "srv", "shop", "deploy")).toBeNull();
+    expect(findDockerSession(docker, [], ["/b#docker:1"], "srv", "shop", "deploy")).toBeNull();
   });
 });
 

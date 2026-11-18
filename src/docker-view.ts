@@ -59,24 +59,31 @@ export function deployFolder(project: string, containers: DockerContainer[], ope
   return named.length === 1 ? named[0] : null;
 }
 
-/** The open deploy tile of a project on a server (its layout key), if any. */
-export function findDeployTile(docker: Record<string, DockerTile>, openKeys: readonly string[], host: string, project: string): string | null {
-  return openKeys.find((k) => docker[k]?.kind === "deploy" && docker[k].host === host && docker[k].target === project) ?? null;
+/** The tile of that kind for a target on a server (its layout key), if any among `openKeys`. */
+export function findDockerTile(
+  docker: Record<string, DockerTile>,
+  openKeys: readonly string[],
+  host: string,
+  target: string,
+  kind: DockerTile["kind"],
+): string | null {
+  return openKeys.find((k) => docker[k]?.kind === kind && docker[k].host === host && docker[k].target === target) ?? null;
 }
 
-/** The deploy session of a project on a server: its open tile, else one still
+/** The session of that kind for a target on a server: its open tile, else one still
  *  running in tmux whose tile was closed (⌘Q keeps the session), to attach
- *  again instead of starting a second `compose up`. */
-export function findDeploySession(
+ *  again instead of starting a second one (a second `compose up`, a twin logs tile). */
+export function findDockerSession(
   docker: Record<string, DockerTile>,
   openKeys: readonly string[],
   runningKeys: readonly string[],
   host: string,
-  project: string,
+  target: string,
+  kind: DockerTile["kind"],
 ): { key: string; open: boolean } | null {
-  const open = findDeployTile(docker, openKeys, host, project);
+  const open = findDockerTile(docker, openKeys, host, target, kind);
   if (open !== null) return { key: open, open: true };
-  const running = findDeployTile(docker, runningKeys, host, project);
+  const running = findDockerTile(docker, runningKeys, host, target, kind);
   return running === null ? null : { key: running, open: false };
 }
 

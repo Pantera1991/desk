@@ -54,7 +54,7 @@ import { usageHtml } from "./usage";
 import { UsagePopover } from "./usage-popover";
 import { CpuPopover } from "./cpu-popover";
 import { DockerPanel } from "./docker-panel";
-import { blockedDeploy, findDeploySession } from "./docker-view";
+import { blockedDeploy, findDockerSession } from "./docker-view";
 import {
   DEFAULT_EMERGENCY,
   DEFAULT_FAN_MARGIN,
@@ -229,17 +229,7 @@ export class App {
         open: (tile, title, path) => this.openDockerTile(tile, title, path),
         removeImage: (host, image) => api.dockerImageRm(host, image),
         restart: (host, container) => api.dockerRestart(host, container),
-        focusDeploy: (host, project) => {
-          if (!this.layout) return false;
-          const open = [...this.tiles.keys()];
-          const found = findDeploySession(this.layout.docker, open, [...this.running].filter((k) => !this.tiles.has(k)), host, project);
-          if (found === null) return false;
-          // Still running in tmux with its tile closed (⌘Q): attached again, not deployed twice.
-          // Through reopen, which asks tmux first: one that ended since the last poll is refused, not re-run.
-          if (found.open) this.setActive(found.key, true);
-          else void this.reopen(found.key, null);
-          return true;
-        },
+        focusDeploy: (host, project) => this.focusDockerTile({ host, target: project, kind: "deploy" }),
       },
     );
     // Opening, closing or resizing the panel changes the grid's width: lay out again.
@@ -754,6 +744,20 @@ export class App {
     void this.poll();
   }
 
+  /** Focuses the Docker tile of the same kind, host and target; one whose tile was
+   *  closed but whose tmux session still runs is attached again. False when none. */
+  private focusDockerTile(tile: DockerTile): boolean {
+    if (!this.layout) return false;
+    const open = [...this.tiles.keys()];
+    const found = findDockerSession(this.layout.docker, open, [...this.running].filter((k) => !this.tiles.has(k)), tile.host, tile.target, tile.kind);
+    if (found === null) return false;
+    // Still running in tmux with its tile closed (⌘Q): attached again, not started twice.
+    // Through reopen, which asks tmux first: one that ended since the last poll is refused, not re-run.
+    if (found.open) this.setActive(found.key, true);
+    else void this.reopen(found.key, null);
+    return true;
+  }
+
   /** ⌘U: run one of the project's commands (dev server, tests...) in its card. */
   private async runInProject(path: string): Promise<void> {
     const name = path.split(/[\\/]/).filter(Boolean).pop() ?? path;
@@ -772,6 +776,8 @@ export class App {
    *  deploy, confirmed in the panel), else of the project the container belongs
    *  to (the home folder when none matches). */
   private async openDockerTile(tile: DockerTile, title: string, folder?: string): Promise<void> {
+    // A second click on the same logs or shell goes to the tile that is already there.
+    if (tile.kind !== "deploy" && this.focusDockerTile(tile)) return;
     // A deploy runs from the folder it was asked for, never from a guess.
     const path = folder ?? (await this.dockerFolder(tile));
     const taken = [...(await api.listSessions()), ...this.tiles.values()];
