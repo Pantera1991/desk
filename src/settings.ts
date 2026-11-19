@@ -2,7 +2,7 @@
 // hand-added folders.
 import { getVersion } from "@tauri-apps/api/app";
 import { DEFAULT_THEME, THEMES } from "./themes";
-import { UI_SCALES, uiScale } from "./ui-scale";
+import { TILE_ICON_SCALES, UI_SCALES, tileIconScale, uiScale } from "./ui-scale";
 import {
   api,
   type AccountInfo,
@@ -81,6 +81,8 @@ export interface SettingsContext {
   setUsageLayout: (v: UsageLayout) => void;
   /** The size of the window's own text and bars (ui-scale.ts). */
   setUiScale: (v: number) => void;
+  /** The size of the buttons in a tile's header (ui-scale.ts). */
+  setTileIconScale: (v: number) => void;
   /** How a session's share of the 5-hour window is worked out. */
   setUsageShare: (v: UsageShare) => void;
   setFontSize: (px: number) => void;
@@ -736,6 +738,7 @@ export class Settings {
     const off = layout.dropdown ? "" : "disabled";
     const linkClick: LinkClick = layout.linkClick === "browser" || layout.linkClick === "none" ? layout.linkClick : "desk";
     const uiScaleNow = uiScale(layout.uiScale);
+    const tileIconNow = tileIconScale(layout.tileIconScale);
     const usageLayout: UsageLayout = layout.usageLayout === "all" ? "all" : "tabs";
     const usageShare: UsageShare = layout.usageShare === "transcripts" ? "transcripts" : "cost";
     const linkHint = t(
@@ -769,6 +772,12 @@ export class Settings {
             (v) => `<button class="${uiScaleNow === v ? "sel" : ""}" data-ui-scale="${v}">${Math.round(v * 100)}%</button>`,
           ).join("")}</span> <span class="dim">${t("settings.uiScaleHint")}</span></div>`,
         ) +
+          section(
+            t("settings.tileIconScale"),
+            `<div class="line" data-row><span class="seg">${TILE_ICON_SCALES.map(
+              (v) => `<button class="${tileIconNow === v ? "sel" : ""}" data-tile-icon-scale="${v}">${Math.round(v * 100)}%</button>`,
+            ).join("")}</span> <span class="dim">${t("settings.tileIconScaleHint")}</span></div>`,
+          ) +
           section(
           t("settings.theme"),
           `<div class="themes">${THEMES.map(
@@ -1101,6 +1110,12 @@ export class Settings {
       this.ctx.setLanguage((e.target as HTMLSelectElement).value as Language);
       this.render();
     });
+    box.querySelectorAll<HTMLButtonElement>("[data-tile-icon-scale]").forEach((b) =>
+      b.addEventListener("click", () => {
+        this.ctx.setTileIconScale(tileIconScale(Number(b.dataset.tileIconScale)));
+        this.render();
+      }),
+    );
     box.querySelectorAll<HTMLButtonElement>("[data-ui-scale]").forEach((b) =>
       b.addEventListener("click", () => {
         this.ctx.setUiScale(uiScale(Number(b.dataset.uiScale)));

@@ -59,6 +59,9 @@ pub struct Layout {
     /// Size of the window's own text and bars (not terminals), one of
     /// 0.9, 1, 1.1, 1.25, 1.5; see uiScale in src/ui-scale.ts.
     pub ui_scale: f64,
+    /// Size of the buttons in a tile's header, on top of `ui_scale`: one of
+    /// 1, 1.25, 1.5, 1.75; see tileIconScale in src/ui-scale.ts.
+    pub tile_icon_scale: f64,
     /// Session keys whose tiles are folded to their header (⌘J).
     pub minimized: Vec<String>,
     /// Names given to tiles by hand, by session key.
@@ -181,6 +184,7 @@ impl Default for Layout {
             link_click: "desk".into(),
             font_size: 11.5,
             ui_scale: 1.0,
+            tile_icon_scale: 1.0,
             minimized: Vec::new(),
             titles: Default::default(),
             saved: Default::default(),
@@ -405,6 +409,17 @@ mod tests {
         assert_eq!(load(&p).link_click, "desk");
         std::fs::write(&p, r#"{"version":1,"linkClick":"none"}"#).unwrap();
         assert_eq!(load(&p).link_click, "none");
+    }
+
+    #[test]
+    fn tile_icon_scale_is_one_in_old_files_and_round_trips() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("layout.json");
+        std::fs::write(&p, r#"{"version":1}"#).unwrap();
+        assert_eq!(load(&p).tile_icon_scale, 1.0);
+        let l = Layout { tile_icon_scale: 1.5, ..Layout::default() };
+        save(&p, &l).unwrap();
+        assert_eq!(load(&p).tile_icon_scale, 1.5);
     }
 
     #[test]

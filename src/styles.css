@@ -648,7 +648,8 @@ html.dragging-card .tile .term {
 }
 
 .tile header {
-  height: calc(20px * var(--ui-scale));
+  /* Taller when the tile icons are enlarged (Options → Appearance), so they fit. */
+  height: calc(max(20px, 15px * var(--tile-icon-scale, 1)) * var(--ui-scale));
   flex: none;
   display: flex;
   align-items: center;
@@ -764,9 +765,10 @@ html.dragging-card .tile .term {
 .tile .actions button {
   border: 0;
   background: none;
-  padding: 0 calc(4px * var(--ui-scale));
+  padding: 0 calc(4px * var(--ui-scale) * var(--tile-icon-scale, 1));
   color: var(--dim);
-  line-height: calc(18px * var(--ui-scale));
+  font-size: calc(11px * var(--ui-scale) * var(--tile-icon-scale, 1));
+  line-height: calc(18px * var(--ui-scale) * min(var(--tile-icon-scale, 1), 1.3));
 }
 
 .tile .actions button:hover {

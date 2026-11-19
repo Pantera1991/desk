@@ -48,6 +48,8 @@ export interface Layout {
   fontSize: number;
   /** Size of the window's own text and bars, not terminals (ui-scale.ts). */
   uiScale: number;
+  /** Size of the tile header buttons (ui-scale.ts). */
+  tileIconScale: number;
   /** Session keys whose tiles are folded to their header. */
   minimized: string[];
   /** Names given to tiles by hand, by session key. */

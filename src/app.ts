@@ -67,7 +67,7 @@ import {
 import { brandHtml, browserHtml, coffeeHtml, dockerHtml } from "./topbar";
 import { UpdateChecker, type UpdateOutcome } from "./updates";
 import { accountById, accountColor, accountFor, hasAccounts } from "./accounts";
-import { applyUiScale, uiScale } from "./ui-scale";
+import { applyTileIconScale, applyUiScale, tileIconScale, uiScale } from "./ui-scale";
 
 const POLL_MS = 3000;
 /** The last new version a notice announced: each one once, also after a restart. */
@@ -313,6 +313,11 @@ export class App {
         applyUiScale(v);
         this.save();
       },
+      setTileIconScale: (v) => {
+        this.layout.tileIconScale = tileIconScale(v);
+        applyTileIconScale(v);
+        this.save();
+      },
       setUsageLayout: (v) => {
         this.layout.usageLayout = v;
         this.save();
@@ -537,6 +542,7 @@ export class App {
       thermalColors: boot.layout.thermalColors ?? null,
       cpuHidden: boot.layout.cpuHidden ?? [],
       uiScale: uiScale(boot.layout.uiScale),
+      tileIconScale: tileIconScale(boot.layout.tileIconScale),
       usageLayout: boot.layout.usageLayout === "all" ? "all" : "tabs",
       usageShare: boot.layout.usageShare === "transcripts" ? "transcripts" : "cost",
       language,
@@ -544,6 +550,7 @@ export class App {
     };
     setCustomKeys(this.layout.keys);
     applyUiScale(this.layout.uiScale);
+    applyTileIconScale(this.layout.tileIconScale);
     if (language !== boot.layout.language) this.save();
     this.applyTheme();
     // Another app (iTerm's hotkey window...) may hold ⌘` already.
