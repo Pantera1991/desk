@@ -46,6 +46,7 @@ pub mod tmux;
 pub mod wg_tunnel;
 mod window_place;
 pub mod update;
+pub mod upload;
 pub mod usage;
 pub mod usage_history;
 pub mod usage_sessions;
@@ -244,6 +245,24 @@ fn open_session(
         // from a click confirmed in the Docker panel, whatever the UI believed.
         docker::may_start(&tile, start_deploy)?;
         docker::tile_command(&tile, &layout.docker_hosts, dir)?
+    } else if agent == upload::UPLOAD_AGENT {
+        // Like Docker: a command desk builds itself, never after a restart.
+        if restore {
+            return Err(tr!(
+                "kafelek wysyłki nie wraca po restarcie",
+                "an upload tile does not come back after a restart"
+            )
+            .into());
+        }
+        let tile: upload::UploadTile = serde_json::from_str(&command.unwrap_or_default())
+            .map_err(|e| {
+                tr!(
+                    format!("nieprawidłowy kafelek wysyłki: {e}"),
+                    format!("invalid upload tile: {e}")
+                )
+            })?;
+        upload::may_start(start_deploy)?;
+        upload::tile_command(&tile, &layout.upload_hosts, dir, &home)?
     } else if agent == RUN_AGENT {
         // Only a command the project itself defines (see project::run_targets).
         let command = command.unwrap_or_default();
@@ -643,6 +662,28 @@ fn docker_image_rm(app: State<'_, App>, host: String, image: String) -> Result<(
 #[tauri::command(async)]
 fn docker_restart(app: State<'_, App>, host: String, container: String) -> Result<(), String> {
     docker::restart(&layout::load(&app.layout_path).docker_hosts, &host, &container)
+}
+
+#[tauri::command]
+fn upload_tools() -> upload::UploadTools {
+    upload::tools()
+}
+
+#[tauri::command(async)]
+fn upload_suggestions() -> Vec<String> {
+    upload::suggestions()
+}
+
+/// Size in bytes of a project file and its name on the server, refused when it leaves the project.
+#[tauri::command(async)]
+fn upload_file_size(path: String, file: String) -> Result<upload::UploadFile, String> {
+    upload::file_info(Path::new(&path), &file)
+}
+
+/// Whether the session still has a running rsync (closing it asks first).
+#[tauri::command(async)]
+fn upload_running(app: State<'_, App>, slug: String) -> bool {
+    app.sessions.runs(&slug, upload::is_rsync)
 }
 
 /// The folders (of open cards) that hold a compose file: a deploy may run there.
@@ -1079,6 +1120,10 @@ pub fn run() {
             docker_overview,
             docker_image_rm,
             docker_restart,
+            upload_tools,
+            upload_suggestions,
+            upload_file_size,
+            upload_running,
             compose_dirs,
             quit_desk,
         ])

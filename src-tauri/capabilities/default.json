@@ -75,6 +75,10 @@
     "allow-docker-overview",
     "allow-docker-image-rm",
     "allow-docker-restart",
+    "allow-upload-tools",
+    "allow-upload-suggestions",
+    "allow-upload-file-size",
+    "allow-upload-running",
     "allow-compose-dirs",
     "allow-git-status-summary",
     "allow-quit-desk"

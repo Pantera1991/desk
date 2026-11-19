@@ -137,6 +137,10 @@ pub struct Layout {
     pub docker_hosts: Vec<crate::docker::DockerHost>,
     /// Docker tiles (logs, shell), by session key.
     pub docker: std::collections::BTreeMap<String, crate::docker::DockerTile>,
+    /// Servers of the upload panel (upload.rs).
+    pub upload_hosts: Vec<crate::upload::UploadHost>,
+    /// Upload tiles (one file to one server), by session key.
+    pub uploads: std::collections::BTreeMap<String, crate::upload::UploadTile>,
 }
 
 /// The temperature chip is yellow from `warm` and red from `hot`, °C.
@@ -212,6 +216,8 @@ impl Default for Layout {
             usage_share: "cost".into(),
             docker_hosts: Vec::new(),
             docker: Default::default(),
+            upload_hosts: Vec::new(),
+            uploads: Default::default(),
         }
     }
 }
@@ -330,6 +336,27 @@ mod tests {
         assert_eq!(back.docker_hosts, l.docker_hosts);
         assert_eq!(back.docker, l.docker);
         assert!(std::fs::read_to_string(&p).unwrap().contains("\"projectLogs\""));
+    }
+
+    #[test]
+    fn upload_fields_default_empty_and_round_trip() {
+        use crate::upload::{UploadHost, UploadTile};
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("layout.json");
+        std::fs::write(&p, r#"{"version":1}"#).unwrap();
+        let old = load(&p);
+        assert!(old.upload_hosts.is_empty() && old.uploads.is_empty());
+        let l = Layout {
+            upload_hosts: vec![UploadHost { host: "example-dev".into(), user: "deploy".into(), key: "~/.ssh/server.key".into() }],
+            uploads: [("upload:1".to_string(), UploadTile { host: "example-dev".into(), user: "deploy".into(), file: "dump.sql".into() })].into(),
+            ..Layout::default()
+        };
+        save(&p, &l).unwrap();
+        let back = load(&p);
+        assert_eq!(back.upload_hosts, l.upload_hosts);
+        assert_eq!(back.uploads, l.uploads);
+        let json = std::fs::read_to_string(&p).unwrap();
+        assert!(json.contains("\"uploadHosts\"") && json.contains("\"uploads\""));
     }
 
     #[test]
