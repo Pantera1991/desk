@@ -506,6 +506,8 @@ export const pl = {
   "settings.promptAiVpnSave": "Zapisz VPN",
   "settings.promptAiVpnNone": "brak zapisanej konfiguracji",
   "settings.promptAiVpnEmpty": "Najpierw wklej konfigurację tunelu (.conf).",
+  "settings.uiScale": "Wielkość interfejsu",
+  "settings.uiScaleHint": "pasek górny i dolny, panele, Opcje; terminale mają własną czcionkę",
   "settings.theme": "Motyw",
   "settings.autostart": "Start z aplikacją",
   "settings.filter": "Filtruj projekty…",

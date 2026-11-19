@@ -56,6 +56,9 @@ pub struct Layout {
     pub link_click: String,
     /// Terminal font size in px (⌘= / ⌘- / ⌘0, Options).
     pub font_size: f64,
+    /// Size of the window's own text and bars (not terminals), one of
+    /// 0.9, 1, 1.1, 1.25, 1.5; see uiScale in src/ui-scale.ts.
+    pub ui_scale: f64,
     /// Session keys whose tiles are folded to their header (⌘J).
     pub minimized: Vec<String>,
     /// Names given to tiles by hand, by session key.
@@ -177,6 +180,7 @@ impl Default for Layout {
             browser: "auto".into(),
             link_click: "desk".into(),
             font_size: 11.5,
+            ui_scale: 1.0,
             minimized: Vec::new(),
             titles: Default::default(),
             saved: Default::default(),
@@ -401,6 +405,17 @@ mod tests {
         assert_eq!(load(&p).link_click, "desk");
         std::fs::write(&p, r#"{"version":1,"linkClick":"none"}"#).unwrap();
         assert_eq!(load(&p).link_click, "none");
+    }
+
+    #[test]
+    fn ui_scale_is_one_in_old_files_and_round_trips() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("layout.json");
+        std::fs::write(&p, r#"{"version":1}"#).unwrap();
+        assert_eq!(load(&p).ui_scale, 1.0);
+        let l = Layout { ui_scale: 1.25, ..Layout::default() };
+        save(&p, &l).unwrap();
+        assert_eq!(load(&p).ui_scale, 1.25);
     }
 
     #[test]

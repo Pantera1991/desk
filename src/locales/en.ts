@@ -507,6 +507,8 @@ export const en: Messages = {
   "settings.promptAiVpnSave": "Save VPN",
   "settings.promptAiVpnNone": "no config saved",
   "settings.promptAiVpnEmpty": "Paste the tunnel config (.conf) first.",
+  "settings.uiScale": "Interface size",
+  "settings.uiScaleHint": "top and bottom bars, panels, Options; terminals keep their own font",
   "settings.theme": "Theme",
   "settings.autostart": "Start with the app",
   "settings.filter": "Filter projects…",

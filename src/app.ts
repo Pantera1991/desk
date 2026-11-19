@@ -67,6 +67,7 @@ import {
 import { brandHtml, browserHtml, coffeeHtml, dockerHtml } from "./topbar";
 import { UpdateChecker, type UpdateOutcome } from "./updates";
 import { accountById, accountColor, accountFor, hasAccounts } from "./accounts";
+import { applyUiScale, uiScale } from "./ui-scale";
 
 const POLL_MS = 3000;
 /** The last new version a notice announced: each one once, also after a restart. */
@@ -307,6 +308,11 @@ export class App {
         this.layout.linkClick = mode;
         this.save();
       },
+      setUiScale: (v) => {
+        this.layout.uiScale = uiScale(v);
+        applyUiScale(v);
+        this.save();
+      },
       setUsageLayout: (v) => {
         this.layout.usageLayout = v;
         this.save();
@@ -530,12 +536,14 @@ export class App {
       emergencyAt: boot.layout.emergencyAt ?? DEFAULT_EMERGENCY,
       thermalColors: boot.layout.thermalColors ?? null,
       cpuHidden: boot.layout.cpuHidden ?? [],
+      uiScale: uiScale(boot.layout.uiScale),
       usageLayout: boot.layout.usageLayout === "all" ? "all" : "tabs",
       usageShare: boot.layout.usageShare === "transcripts" ? "transcripts" : "cost",
       language,
       lanes: L.restore(boot.layout.lanes, boot.layout.autostart, boot.layout.lanes.length),
     };
     setCustomKeys(this.layout.keys);
+    applyUiScale(this.layout.uiScale);
     if (language !== boot.layout.language) this.save();
     this.applyTheme();
     // Another app (iTerm's hotkey window...) may hold ⌘` already.
