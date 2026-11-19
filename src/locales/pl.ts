@@ -383,7 +383,7 @@ export const pl = {
   "key.terminal": "terminal (zwykły shell) w projekcie aktywnego kafelka",
   "key.files": "pliki projektu",
   "key.docker": "panel Dockera",
-  "key.upload": "panel Wysyłka",
+  "key.upload": "panel rsync",
   "key.run": "uruchom (dev serwer, testy...)",
   "key.chat": "rozmowa (czat bez projektu)",
   "key.sessions": "zapisane i ostatnie rozmowy Claude w projekcie aktywnego kafelka",

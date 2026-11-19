@@ -384,7 +384,7 @@ export const en: Messages = {
   "key.terminal": "terminal (plain shell) in the active tile's project",
   "key.files": "project files",
   "key.docker": "Docker panel",
-  "key.upload": "Upload panel",
+  "key.upload": "rsync panel",
   "key.run": "run (dev server, tests...)",
   "key.chat": "chat (no project)",
   "key.sessions": "saved and recent Claude conversations in the active tile's project",
