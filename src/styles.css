@@ -3606,24 +3606,47 @@ p.up-model {
   white-space: nowrap;
 }
 
-.dk-badge {
+/* Image row, line two: who uses it (or "nieużywany") on the left, age on the right. */
+.dk-img-sub {
+  display: flex;
+  align-items: center;
+  gap: calc(8px * var(--ui-scale, 1));
+  padding-left: calc(16px * var(--ui-scale, 1));
+}
+
+.dk-img .dk-size {
   font-size: calc(11px * var(--ui-scale, 1));
-  padding: 0 calc(6px * var(--ui-scale, 1));
-  border-radius: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.dk-age {
+  margin-left: auto;
+  flex-shrink: 0;
   white-space: nowrap;
-  max-width: 40%;
+}
+
+.dk-badge {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .dk-inuse {
   color: var(--dim);
-  border: 1px solid currentColor;
+}
+
+.dk-inuse::before {
+  content: "● ";
+  color: #4cc38a;
 }
 
 .dk-unused {
+  flex-shrink: 0;
   color: var(--accent);
+  padding: 0 calc(6px * var(--ui-scale, 1));
   border: 1px solid currentColor;
+  border-radius: 8px;
 }
 
 .dk-up {
