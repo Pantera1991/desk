@@ -165,12 +165,13 @@ function imageRow(host: string, img: DockerImage, all: DockerImage[], busy: Read
   const q = removeQuestion(host, img, all);
   const users = imageUsers(img, containers);
   const inUse = users.length > 0;
+  const usedBy = t("docker.inUse", { names: users.join(", ") });
   const badge = inUse
-    ? `<span class="dk-badge dk-inuse">${esc(t("docker.inUse", { names: users.join(", ") }))}</span>`
+    ? `<span class="dk-badge dk-inuse" title="${esc(usedBy)}">${esc(usedBy)}</span>`
     : `<span class="dk-badge dk-unused">${esc(t("docker.unused"))}</span>`;
   const off = inUse || busy.has(`${host}|${target}`);
   const hint = inUse ? ` title="${esc(t("docker.inUseHint"))}"` : "";
-  return `<div class="dk-container"><div class="dk-row dk-img"><span class="dk-name">${esc(label)}</span><button type="button" class="dk-btn" data-d="rm" data-host="${esc(host)}" data-target="${esc(target)}" data-question="${esc(q)}"${hint}${off ? " disabled" : ""}>${esc(t("docker.remove"))}</button></div><div class="dk-sub">${badge} · ${esc(img.size)} · ${esc(img.created)}</div></div>`;
+  return `<div class="dk-container"><div class="dk-row dk-img"><span class="dk-name" title="${esc(label)}">${esc(label)}</span><span class="dk-size">${esc(img.size)}</span><button type="button" class="dk-btn" data-d="rm" data-host="${esc(host)}" data-target="${esc(target)}" data-question="${esc(q)}"${hint}${off ? " disabled" : ""}>${esc(t("docker.remove"))}</button></div><div class="dk-sub dk-img-sub">${badge}<span class="dk-age">${esc(img.created)}</span></div></div>`;
 }
 
 function namedRow(n: DockerNamed): string {

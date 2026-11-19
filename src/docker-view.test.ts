@@ -315,18 +315,18 @@ describe("image usage", () => {
     expect(html).not.toMatch(/<button[^>]*data-d="rm"[^>]*disabled/);
   });
 
-  it("image row: name and button on line one, badge, size and age on line two", () => {
+  it("image row: name, size and button on line one, badge and age on line two", () => {
     const o = ov([host("h", { images: [img("web", "1.4")] })]);
     const html = renderDocker(o, new Set(["host:h", "images:h"]), none, new Map());
     const row = html.match(/<div class="dk-container">[\s\S]*?<\/div><\/div>/)?.[0] ?? "";
-    const sub = row.match(/<div class="dk-sub">([\s\S]*?)<\/div>/)?.[1] ?? "";
-    const line1 = row.slice(0, row.indexOf('<div class="dk-sub">'));
+    const sub = row.match(/<div class="dk-sub dk-img-sub">([\s\S]*?)<\/div>/)?.[1] ?? "";
+    const line1 = row.slice(0, row.indexOf('<div class="dk-sub'));
     expect(line1).toContain("web:1.4");
+    expect(line1).toContain("412 MB");
     expect(line1).toMatch(/data-d="rm"/);
     expect(line1).not.toContain("nieużywany");
     expect(sub).toContain("dk-badge");
     expect(sub).toContain("nieużywany");
-    expect(sub).toContain("412 MB");
     expect(sub).toContain("3 days ago");
     expect(sub).not.toContain("web:1.4");
     expect(sub).not.toContain("<button");
