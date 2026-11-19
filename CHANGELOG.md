@@ -1,5 +1,20 @@
 # Zmiany
 
+## 0.2.9 (2026-11-19)
+
+- **Panel Dockera.** Serwery Dockera z sieci (np. `tcp://serwer:2375`) widać teraz w bocznym
+  panelu obok plików: ⇧⌘G na macOS, Ctrl+Shift+G na Linuksie i Windows albo przycisk 🐳 w górnym
+  pasku. Drzewo jak w PhpStorm: serwer → projekty compose → kontenery, do tego kontenery bez
+  compose, obrazy, sieci i woluminy, z kropką stanu przy każdym. Logi i powłoka kontenera
+  otwierają się w kafelku, a drugie kliknięcie przenosi do już otwartego. Restart kontenera
+  i „Wdróż” projektu compose (`compose up -d --build` z folderu projektu otwartego w desk) zawsze
+  pytają najpierw; przy wdrożeniu widać ścieżkę, gałąź i liczbę niezacommitowanych zmian. Obraz
+  używany przez kontener ma dopisek „w użyciu” i nie da się go usunąć, nieużywany ma znaczek
+  „nieużywany”. Serwery dodajesz w Opcje → Docker. Zamknięty panel nic nie robi w tle.
+- **Wielkość interfejsu.** Opcje → Wygląd → „Wielkość interfejsu” (90–150%) powiększa paski,
+  panele, Opcje i okna dialogowe od razu, bez restartu. Terminale w kafelkach zostają przy
+  swojej czcionce, która ma osobne ustawienie.
+
 ## 0.2.8 (2026-11-18)
 
 - **desk nie zjada już procesora w spoczynku.** Na Linuksie obserwator folderu `state/` reagował
