@@ -1,7 +1,7 @@
 // The Upload side panel: pure helpers (checking servers, Options drafts, size,
 // confirm question, start gate) and the panel's top and bottom as HTML. The
 // file tree is mounted separately. Data: upload.rs; behaviour: upload-panel.ts.
-import type { UploadHost, UploadTile } from "./api";
+import type { UploadHost, UploadMethod, UploadTile } from "./api";
 import { t, tn } from "./i18n";
 import { escapeHtml as esc } from "./notices";
 
@@ -40,12 +40,17 @@ export function uploadDraftRows(draft: UploadHost[] | null, saved: UploadHost[])
   return (draft ?? saved).map((h) => ({ ...h }));
 }
 
-export function uploadDraftSet(rows: UploadHost[], i: number, field: "host" | "user" | "key", value: string): UploadHost[] {
+export function uploadDraftSet(rows: UploadHost[], i: number, field: "host" | "user" | "key" | "method", value: string): UploadHost[] {
   return rows.map((h, j) => (j === i ? { ...h, [field]: value } : { ...h }));
 }
 
 export function uploadDraftAdd(rows: UploadHost[]): UploadHost[] {
-  return [...rows.map((h) => ({ ...h })), { host: "", user: "", key: "" }];
+  return [...rows.map((h) => ({ ...h })), { host: "", user: "", key: "", method: "rsync" }];
+}
+
+/** A server's upload program: scp only when Options say so. */
+export function methodOf(h: UploadHost | undefined): UploadMethod {
+  return h?.method === "scp" ? "scp" : "rsync";
 }
 
 export function uploadDraftRemove(rows: UploadHost[], i: number): UploadHost[] {
@@ -105,7 +110,7 @@ export function openPlan(existing: "running" | "finished" | null): "focus" | "re
 
 export interface UploadBar {
   project: string | null;
-  tools: { rsync: boolean; ssh: boolean } | null;
+  tools: { rsync: boolean; scp: boolean; ssh: boolean } | null;
   hosts: UploadHost[];
   host: string | null;
   file: string | null;
@@ -126,7 +131,10 @@ export function barTopHtml(s: UploadBar): string {
 /** The panel's bottom, under the tree: what is missing, or the selected file and "Wyślij". */
 export function barBottomHtml(s: UploadBar): string {
   if (s.project === null) return `<div class="ul-empty">${esc(t("upload.noProject"))}</div>`;
-  if (s.tools !== null && (!s.tools.rsync || !s.tools.ssh)) return `<div class="ul-empty">${esc(t("upload.noTools"))}</div>`;
+  if (s.tools !== null) {
+    const tool = methodOf(s.hosts.find((h) => hostLabel(h) === s.host) ?? s.hosts[0]);
+    if (!s.tools[tool] || !s.tools.ssh) return `<div class="ul-empty">${esc(t("upload.noTools", { tool }))}</div>`;
+  }
   if (s.file === null) return `<div class="ul-empty">${esc(t("upload.pickFile"))}</div>`;
   return `<div class="ul-bottom"><span class="ul-file" title="${esc(s.file)}">${esc(s.file)}</span><button data-u="send">${esc(t("upload.send"))}</button></div>`;
 }

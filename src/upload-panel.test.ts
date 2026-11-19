@@ -8,7 +8,7 @@ vi.mock("./ui", () => ({
   toast: (...a: unknown[]) => toast(...a),
 }));
 
-const uploadTools = vi.fn<() => Promise<{ rsync: boolean; ssh: boolean }>>();
+const uploadTools = vi.fn<() => Promise<{ rsync: boolean; scp: boolean; ssh: boolean }>>();
 const uploadFileSize = vi.fn<(path: string, file: string) => Promise<{ size: number; name: string }>>();
 vi.mock("./api", () => ({ api: { uploadTools: () => uploadTools(), uploadFileSize: (p: string, f: string) => uploadFileSize(p, f) } }));
 
@@ -67,7 +67,7 @@ beforeEach(() => {
   choice.mockReset();
   toast.mockReset();
   tree.load = vi.fn<(p: string | null) => Promise<void>>().mockResolvedValue(undefined);
-  uploadTools.mockReset().mockResolvedValue({ rsync: true, ssh: true });
+  uploadTools.mockReset().mockResolvedValue({ rsync: true, scp: true, ssh: true });
   uploadFileSize.mockReset().mockResolvedValue({ size: 2048, name: "a.sql" });
 });
 afterEach(() => vi.unstubAllGlobals());

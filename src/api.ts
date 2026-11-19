@@ -116,7 +116,12 @@ export interface UploadHost {
   host: string;
   user: string;
   key: string;
+  /** How files go to this server; missing in older layouts means rsync. */
+  method?: UploadMethod;
 }
+
+/** rsync (resumable, needs rsync on the server) or scp (for servers without it). */
+export type UploadMethod = "rsync" | "scp";
 
 /** An Upload tile: one file of the project sent to `user@host`. */
 export interface UploadTile {
@@ -561,7 +566,7 @@ export interface PtyExit {
 export const api = {
   bootstrap: () => invoke<Bootstrap>("bootstrap"),
   /** Which of rsync and ssh are installed. */
-  uploadTools: () => invoke<{ rsync: boolean; ssh: boolean }>("upload_tools"),
+  uploadTools: () => invoke<{ rsync: boolean; scp: boolean; ssh: boolean }>("upload_tools"),
   /** Host names from /etc/hosts, to suggest in Options (none on Windows). */
   uploadSuggestions: () => invoke<string[]>("upload_suggestions"),
   /** Size in bytes of a project file and the name it gets on the server (the

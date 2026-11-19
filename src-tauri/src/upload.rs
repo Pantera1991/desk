@@ -12,6 +12,18 @@ pub struct UploadHost {
     pub user: String,
     #[serde(default)]
     pub key: String,
+    /// How the file goes: rsync (resumable) or scp (for servers without rsync).
+    #[serde(default)]
+    pub method: Method,
+}
+
+/// The program a server's uploads run; rsync unless Options say scp.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Method {
+    #[default]
+    Rsync,
+    Scp,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -122,7 +134,7 @@ pub fn tile_command(
     if !valid_key(&h.key) {
         return Err(tr!("nieprawidłowa ścieżka klucza", "invalid key path").into());
     }
-    let mut ssh = String::from("ssh");
+    let mut ssh = String::new();
     if !h.key.is_empty() {
         let key = expand_key(&h.key, home);
         let key = key.to_str().filter(|k| valid_key(k)).ok_or_else(|| {
@@ -132,19 +144,24 @@ pub fn tile_command(
             )
             .to_string()
         })?;
-        ssh.push_str(&format!(" -i {key} -o IdentitiesOnly=yes"));
+        ssh.push_str(&format!("-i {key} -o IdentitiesOnly=yes "));
     }
-    ssh.push_str(" -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no");
+    ssh.push_str("-o PasswordAuthentication=no -o KbdInteractiveAuthentication=no");
     let file = resolve_file(dir, &tile.file)?;
     let file = file
         .to_str()
         .ok_or_else(|| tr!("nieprawidłowy plik", "invalid file").to_string())?;
-    Ok(format!(
-        "rsync -z --partial --progress -e {} -- {} {}",
-        shell_quote(&ssh),
-        shell_quote(file),
-        shell_quote(&format!("{}@{}:", h.user, h.host)),
-    ))
+    let target = shell_quote(&format!("{}@{}:", h.user, h.host));
+    // The ssh options hold only checked characters (no spaces in the key path),
+    // so scp may take them as they are.
+    Ok(match h.method {
+        Method::Rsync => format!(
+            "rsync -z --partial --progress -e {} -- {} {target}",
+            shell_quote(&format!("ssh {ssh}")),
+            shell_quote(file),
+        ),
+        Method::Scp => format!("scp {ssh} -- {} {target}", shell_quote(file)),
+    })
 }
 
 /// Server names worth suggesting from an `/etc/hosts` text: in file order,
@@ -179,20 +196,22 @@ pub fn suggestions() -> Vec<String> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct UploadTools {
     pub rsync: bool,
+    pub scp: bool,
     pub ssh: bool,
 }
 
 pub fn tools() -> UploadTools {
     UploadTools {
         rsync: crate::agents::which("rsync").is_some(),
+        scp: crate::agents::which("scp").is_some(),
         ssh: crate::agents::which("ssh").is_some(),
     }
 }
 
 /// rsync by its process name: `rsync`, macOS's `openrsync`, or a build
 /// named after it (`rsync_samba`).
-pub fn is_rsync(name: &str) -> bool {
-    name == "openrsync" || name.starts_with("rsync")
+pub fn is_transfer(name: &str) -> bool {
+    name == "openrsync" || name == "scp" || name.starts_with("rsync")
 }
 
 /// True when a process whose name `is` matches runs in the trees under
@@ -211,7 +230,7 @@ mod tests {
     const SSH_OFF: &str = "-o PasswordAuthentication=no -o KbdInteractiveAuthentication=no";
 
     fn hosts() -> Vec<UploadHost> {
-        vec![UploadHost { host: "example-dev".into(), user: "deploy".into(), key: "~/.ssh/server.key".into() }]
+        vec![UploadHost { host: "example-dev".into(), user: "deploy".into(), key: "~/.ssh/server.key".into(), ..Default::default() }]
     }
     fn tile(file: &str) -> UploadTile {
         UploadTile { host: "example-dev".into(), user: "deploy".into(), file: file.into() }
@@ -237,6 +256,32 @@ mod tests {
                 canon(&tmp)
             )
         );
+    }
+
+    #[test]
+    fn builds_scp_command() {
+        let tmp = project();
+        let mut h = hosts();
+        h[0].method = Method::Scp;
+        let cmd = tile_command(&tile("dumps/a.sql"), &h, tmp.path(), Path::new("/home/u")).unwrap();
+        assert_eq!(
+            cmd,
+            format!(
+                "scp -i /home/u/.ssh/server.key -o IdentitiesOnly=yes {SSH_OFF} -- '{}/dumps/a.sql' 'deploy@example-dev:'",
+                canon(&tmp)
+            )
+        );
+        h[0].key = String::new();
+        let cmd = tile_command(&tile("dumps/a.sql"), &h, tmp.path(), Path::new("/home/u")).unwrap();
+        assert_eq!(cmd, format!("scp {SSH_OFF} -- '{}/dumps/a.sql' 'deploy@example-dev:'", canon(&tmp)));
+    }
+
+    #[test]
+    fn method_defaults_to_rsync_and_reads_scp() {
+        let old: UploadHost = serde_json::from_str(r#"{"host":"example-dev","user":"deploy","key":""}"#).unwrap();
+        assert_eq!(old.method, Method::Rsync);
+        let scp: UploadHost = serde_json::from_str(r#"{"host":"example-dev","user":"deploy","key":"","method":"scp"}"#).unwrap();
+        assert_eq!(scp.method, Method::Scp);
     }
 
     #[test]
@@ -307,7 +352,7 @@ mod tests {
         let tmp = project();
         let home = Path::new("/home/u");
         let row = |host: &str, user: &str, key: &str| {
-            let h = vec![UploadHost { host: host.into(), user: user.into(), key: key.into() }];
+            let h = vec![UploadHost { host: host.into(), user: user.into(), key: key.into(), ..Default::default() }];
             let t = UploadTile { host: host.into(), user: user.into(), file: "dumps/a.sql".into() };
             tile_command(&t, &h, tmp.path(), home)
         };
@@ -315,7 +360,7 @@ mod tests {
         assert!(row("example", "-oProxy", "").is_err());
         assert!(row("example", "deploy", "~/k'ey").is_err());
         let t = UploadTile { host: "example".into(), user: "deploy".into(), file: "dumps/a.sql".into() };
-        let h = vec![UploadHost { host: "example".into(), user: "deploy".into(), key: "~/.ssh/k".into() }];
+        let h = vec![UploadHost { host: "example".into(), user: "deploy".into(), key: "~/.ssh/k".into(), ..Default::default() }];
         assert!(tile_command(&t, &h, tmp.path(), Path::new("/home/jan kowalski")).is_err());
         assert!(row("example", "deploy", "~/.ssh/k").is_ok());
         assert!(row("example", "deploy", "/keys/id").is_ok());
@@ -374,40 +419,40 @@ mod tests {
             proc(1012, 1011, "ssh"),
             proc(1020, 1, "rsync"),
         ];
-        assert!(runs_in(&[1010], &table, is_rsync));
+        assert!(runs_in(&[1010], &table, is_transfer));
         assert!(runs_in(&[1010], &table, |n| n == "ssh"));
-        assert!(!runs_in(&[1030], &table, is_rsync));
+        assert!(!runs_in(&[1030], &table, is_transfer));
     }
 
     #[test]
     fn runs_in_ignores_other_trees() {
         let table = vec![proc(1010, 1, "bash"), proc(1020, 1, "rsync")];
-        assert!(!runs_in(&[1010], &table, is_rsync));
+        assert!(!runs_in(&[1010], &table, is_transfer));
     }
 
     #[test]
     fn runs_in_false_after_rsync_exits() {
         let table = vec![proc(1010, 1, "bash")];
-        assert!(!runs_in(&[1010], &table, is_rsync));
+        assert!(!runs_in(&[1010], &table, is_transfer));
         // No process table (ps failed): read as not running.
-        assert!(!runs_in(&[1010], &[], is_rsync));
+        assert!(!runs_in(&[1010], &[], is_transfer));
     }
 
     #[test]
     fn runs_in_knows_macos_openrsync() {
         let table = vec![proc(1010, 1, "zsh"), proc(1011, 1010, "openrsync"), proc(1012, 1011, "ssh")];
-        assert!(runs_in(&[1010], &table, is_rsync));
+        assert!(runs_in(&[1010], &table, is_transfer));
         let table = vec![proc(1010, 1, "zsh"), proc(1011, 1010, "rsync_samba")];
-        assert!(runs_in(&[1010], &table, is_rsync));
+        assert!(runs_in(&[1010], &table, is_transfer));
     }
 
     #[test]
-    fn is_rsync_names() {
-        for name in ["rsync", "openrsync", "rsync_samba"] {
-            assert!(is_rsync(name), "{name}");
+    fn is_transfer_names() {
+        for name in ["rsync", "openrsync", "rsync_samba", "scp"] {
+            assert!(is_transfer(name), "{name}");
         }
         for name in ["ssh", "zsh", "xrsync", "open"] {
-            assert!(!is_rsync(name), "{name}");
+            assert!(!is_transfer(name), "{name}");
         }
     }
 }

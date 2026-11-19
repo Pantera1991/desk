@@ -20,6 +20,7 @@ import {
   type ThermalStatus,
   type UsageLayout,
   type UploadHost,
+  type UploadMethod,
   type UsageShare,
 } from "./api";
 import { accountColor, withAccount, withoutAccount } from "./accounts";
@@ -27,7 +28,7 @@ import type { LinkClick } from "./links";
 import { partsHtml, withPart } from "./cpu-parts";
 import { checkHosts, draftAdd, draftRemove, draftRows, draftSet } from "./docker-view";
 import { PLATFORM, shortcut } from "./platform";
-import { checkUploadHosts, uploadDraftAdd, uploadDraftRemove, uploadDraftRows, uploadDraftSet } from "./upload-view";
+import { checkUploadHosts, methodOf, uploadDraftAdd, uploadDraftRemove, uploadDraftRows, uploadDraftSet } from "./upload-view";
 import { rows, shortPath } from "./projects";
 import { search, type SearchItem } from "./settings-search";
 import { escapeHtml } from "./tile";
@@ -222,7 +223,7 @@ export class Settings {
   private uploadSuggested: string[] | null = null;
 
   private uploadRowHtml(h: UploadHost): string {
-    return `<div class="line upload-host"><input type="text" data-k="upload-host" list="upload-hosts" value="${escapeHtml(h.host)}" placeholder="${t("settings.uploadHost")}" spellcheck="false" /><input type="text" data-k="upload-user" value="${escapeHtml(h.user)}" placeholder="${t("settings.uploadUser")}" spellcheck="false" /><input type="text" data-k="upload-key" value="${escapeHtml(h.key)}" placeholder="${t("settings.uploadKey")}" spellcheck="false" /><button data-k="upload-rm" title="${t("settings.uploadRemove")}">✕</button></div>`;
+    return `<div class="line upload-host"><input type="text" data-k="upload-host" list="upload-hosts" value="${escapeHtml(h.host)}" placeholder="${t("settings.uploadHost")}" spellcheck="false" /><input type="text" data-k="upload-user" value="${escapeHtml(h.user)}" placeholder="${t("settings.uploadUser")}" spellcheck="false" /><input type="text" data-k="upload-key" value="${escapeHtml(h.key)}" placeholder="${t("settings.uploadKey")}" spellcheck="false" /><select data-k="upload-method" title="${t("settings.uploadMethod")}">${(["rsync", "scp"] as const).map((m) => `<option value="${m}"${methodOf(h) === m ? " selected" : ""}>${m}</option>`).join("")}</select><button data-k="upload-rm" title="${t("settings.uploadRemove")}">✕</button></div>`;
   }
 
   private uploadOptionsHtml(): string {
@@ -253,9 +254,10 @@ export class Settings {
       row.remove();
     });
     rows.addEventListener("input", (e) => {
-      const input = e.target as HTMLInputElement;
+      const input = e.target as HTMLInputElement | HTMLSelectElement;
       const row = input.closest(".upload-host");
-      const field = input.dataset.k === "upload-host" ? "host" : input.dataset.k === "upload-user" ? "user" : input.dataset.k === "upload-key" ? "key" : null;
+      const fields = { "upload-host": "host", "upload-user": "user", "upload-key": "key", "upload-method": "method" } as const;
+      const field = fields[input.dataset.k as keyof typeof fields] ?? null;
       if (row && field) this.uploadDraft = uploadDraftSet(current(), index(row), field, input.value);
     });
     box.querySelector('[data-k="upload-add"]')!.addEventListener("click", () => {
@@ -268,6 +270,7 @@ export class Settings {
         host: r.querySelector<HTMLInputElement>('[data-k="upload-host"]')!.value.trim(),
         user: r.querySelector<HTMLInputElement>('[data-k="upload-user"]')!.value.trim(),
         key: r.querySelector<HTMLInputElement>('[data-k="upload-key"]')!.value.trim(),
+        method: methodOf({ host: "", user: "", key: "", method: r.querySelector<HTMLSelectElement>('[data-k="upload-method"]')!.value as UploadMethod }),
       }));
       const problem = checkUploadHosts(hosts);
       error.textContent = problem ?? "";

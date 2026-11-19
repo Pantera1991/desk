@@ -1751,6 +1751,7 @@ html.dragging-card .tile .term {
   flex-grow: 1.6;
 }
 
+.settings .upload-host select,
 .settings .upload-host button {
   flex: none;
 }

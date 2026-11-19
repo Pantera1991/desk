@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { UploadHost, UploadTile } from "./api";
-import { barBottomHtml, barHtml, barTopHtml, blockedUpload, checkUploadHosts, closePlan, findUploadSession, formatSize, hostLabel, openPlan, quitPlan, uploadDraftAdd, uploadDraftRemove, uploadDraftRows, uploadDraftSet, uploadQuestion } from "./upload-view";
+import { barBottomHtml, barHtml, barTopHtml, blockedUpload, checkUploadHosts, closePlan, findUploadSession, formatSize, hostLabel, methodOf, openPlan, quitPlan, uploadDraftAdd, uploadDraftRemove, uploadDraftRows, uploadDraftSet, uploadQuestion } from "./upload-view";
 import { setLanguage, t } from "./i18n";
 
 const h = (host: string, user = "deploy", key = ""): UploadHost => ({ host, user, key });
-const ok = { rsync: true, ssh: true };
+const ok = { rsync: true, scp: true, ssh: true };
 
 describe("upload view", () => {
   beforeEach(() => setLanguage("pl"));
@@ -93,14 +93,26 @@ describe("upload view", () => {
     expect(openPlan(null)).toBe("new");
   });
 
+  it("needs the selected server's own program: rsync, or scp when Options say so", () => {
+    const rsyncHost = h("example-dev");
+    const scpHost = { ...h("example-old"), method: "scp" as const };
+    const noRsync = { ...ok, rsync: false };
+    const bar = (host: typeof rsyncHost) => barHtml({ project: "desk", tools: noRsync, hosts: [rsyncHost, scpHost], host: hostLabel(host), file: "a.sql" });
+    expect(bar(rsyncHost)).toContain(t("upload.noTools", { tool: "rsync" }));
+    expect(bar(scpHost)).toContain('data-u="send"');
+    expect(methodOf(rsyncHost)).toBe("rsync");
+    expect(methodOf(scpHost)).toBe("scp");
+    expect(methodOf(undefined)).toBe("rsync");
+  });
+
   it("renders the bar in its four states", () => {
     const base = { project: "desk", tools: ok, hosts: [h("example<b>")], host: null, file: null };
     const none = barHtml({ ...base, project: null });
     expect(none).toContain(t("upload.noProject"));
     expect(none).not.toContain("<select");
     expect(none).not.toContain('data-u="send"');
-    const tools = barHtml({ ...base, tools: { rsync: true, ssh: false }, file: "a.sql" });
-    expect(tools).toContain(t("upload.noTools"));
+    const tools = barHtml({ ...base, tools: { ...ok, ssh: false }, file: "a.sql" });
+    expect(tools).toContain(t("upload.noTools", { tool: "rsync" }));
     expect(tools).not.toContain('data-u="send"');
     const pick = barHtml(base);
     expect(pick).toContain(t("upload.pickFile"));

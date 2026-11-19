@@ -347,7 +347,7 @@ mod tests {
         let old = load(&p);
         assert!(old.upload_hosts.is_empty() && old.uploads.is_empty());
         let l = Layout {
-            upload_hosts: vec![UploadHost { host: "example-dev".into(), user: "deploy".into(), key: "~/.ssh/server.key".into() }],
+            upload_hosts: vec![UploadHost { host: "example-dev".into(), user: "deploy".into(), key: "~/.ssh/server.key".into(), ..Default::default() }],
             uploads: [("upload:1".to_string(), UploadTile { host: "example-dev".into(), user: "deploy".into(), file: "dump.sql".into() })].into(),
             ..Layout::default()
         };

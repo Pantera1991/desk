@@ -35,7 +35,7 @@ export class UploadPanel {
   private bar: HTMLElement;
   private tree: FileTree;
   private shown = false;
-  private tools: { rsync: boolean; ssh: boolean } | null = null;
+  private tools: { rsync: boolean; scp: boolean; ssh: boolean } | null = null;
   private toolsCall = false;
   private file: string | null = null;
   /** The project the tree shows: another one clears the selected file. */

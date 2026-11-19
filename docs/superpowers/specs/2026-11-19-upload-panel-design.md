@@ -57,9 +57,12 @@ Wybrał użytkownik: 1.
   - **użytkownik:** wymagany;
   - **klucz:** opcjonalna ścieżka do pliku, np. `~/.ssh/server.key`. Pusta oznacza domyślne klucze
     `ssh` (`~/.ssh/id_*`).
+  - **metoda:** `rsync` (domyślnie) albo `scp`, dla serwera, na którym nie ma `rsync`. Przy `scp`
+    komenda to `scp <te same opcje ssh> -- '<abs plik>' '<user>@<serwer>:'`; przerwanej wysyłki nie da
+    się dokończyć, idzie od nowa. Panel wymaga na tym komputerze programu wybranego dla serwera.
 - Zapis jak przy serwerach Dockera: wersja robocza, przycisk „Zapisz”, sprawdzenie przed zapisem
   (puste pola, niedozwolone znaki, ta sama para serwer i użytkownik dwa razy).
-- Pole w `layout.json`: `uploadHosts: [{ host, user, key }]`, także w Rust `Layout`, z domyślną pustą
+- Pole w `layout.json`: `uploadHosts: [{ host, user, key, method }]` (brak `method` = `rsync`), także w Rust `Layout`, z domyślną pustą
   listą. Stare pliki bez tego pola działają bez zmian.
 - Podpowiedzi serwerów zwraca nowa komenda Rust, która czyta `/etc/hosts`. Bierze nazwy (bez adresów IP)
   i pomija `localhost`, `ip6-*` oraz nazwy kończące się na `.loc`, `.local` i `.internal`. Na Windowsie

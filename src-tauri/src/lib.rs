@@ -683,7 +683,7 @@ fn upload_file_size(path: String, file: String) -> Result<upload::UploadFile, St
 /// Whether the session still has a running rsync (closing it asks first).
 #[tauri::command(async)]
 fn upload_running(app: State<'_, App>, slug: String) -> bool {
-    app.sessions.runs(&slug, upload::is_rsync)
+    app.sessions.runs(&slug, upload::is_transfer)
 }
 
 /// The folders (of open cards) that hold a compose file: a deploy may run there.
