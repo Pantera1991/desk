@@ -225,6 +225,7 @@ pub fn runs_in(roots: &[u32], table: &[crate::thermal::Proc], is: impl Fn(&str) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use crate::tmux::shell_quote;
 
     #[cfg(unix)]
