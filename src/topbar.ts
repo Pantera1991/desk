@@ -15,6 +15,9 @@ const CUP =
 const WHALE =
   '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M.9 6.4h9.6c.4-.9 1-1.2 1.6-1.2-.2-.6-.9-.9-1.5-.7-.1-.6-.5-1-1-1.2-.2.5-.1.9.1 1.2"/><path d="M1.2 6.4c.2 2.2 1.8 3.6 4.4 3.6 2.6 0 4.1-1.3 4.9-3.6"/><path d="M2.6 4.7h1.5v1.7H2.6zM4.4 4.7h1.5v1.7H4.4zM6.2 4.7h1.5v1.7H6.2zM4.4 3h1.5v1.7H4.4z"/></svg>';
 
+const FOLDER =
+  '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M1.2 3.2a.8.8 0 0 1 .8-.8h2.6l1.1 1.2h4.3a.8.8 0 0 1 .8.8v5a.8.8 0 0 1-.8.8H2a.8.8 0 0 1-.8-.8z"/><path d="M1.2 5.2h9.6"/></svg>';
+
 /** "desk" and, once the app said it, its version in small print. `drag` is
  *  the attribute that drags the window by them (none while docked). */
 export function brandHtml(version: string | null, drag: string): string {
@@ -26,6 +29,13 @@ export function brandHtml(version: string | null, drag: string): string {
 export function browserHtml(keys: string): string {
   const title = escapeHtml(t("top.browserTitle", { keys }));
   return `<button class="top-btn icon" data-top="browser" title="${title}" aria-label="${escapeHtml(t("top.browser"))}">${GLOBE}</button>`;
+}
+
+/** The folder that shows the project's files in the side panel (and hides them).
+ *  `keys` is its shortcut, "" when none is set. */
+export function filesHtml(keys: string, pressed: boolean): string {
+  const title = escapeHtml(t("top.filesTitle", { keys: keys ? ` (${keys})` : "" }));
+  return `<button class="top-btn icon" data-top="files" aria-pressed="${pressed}" title="${title}" aria-label="${escapeHtml(t("top.files"))}">${FOLDER}</button>`;
 }
 
 /** The whale that opens the Docker panel; nothing while no server is set up. */

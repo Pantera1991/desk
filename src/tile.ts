@@ -401,6 +401,11 @@ export class Tile {
     this.onAction(this, "attached");
   }
 
+  /** The text selected in the terminal ("" when none). */
+  selectedText(): string {
+    return this.term.getSelection();
+  }
+
   focus(): void {
     this.term.focus();
   }

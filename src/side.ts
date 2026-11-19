@@ -13,6 +13,8 @@ import { isLocal, mention, normalize, rendered, staleView } from "./address";
 import { FileTree, itemsLabel } from "./treeview";
 import { escapeHtml } from "./tile";
 import { createEditor, type Editor } from "./editor";
+import { editorChoice, seedText } from "./find-view";
+import { FindPanel } from "./find-panel";
 
 const WIDTH_KEY = "desk.sideWidth";
 const TREE_KEY = "desk.sideTree";
@@ -29,6 +31,8 @@ export interface SideContext {
   browser(): string;
   /** What a plain click on a terminal link does (Layout.linkClick). */
   linkClick(): string;
+  /** The program that opens files at a line, "" = the panel's own editor (Layout.fileEditor). */
+  fileEditor(): string;
 }
 
 
@@ -69,6 +73,10 @@ export class Side {
   /** A folder card is shown instead of the page (absolute path). */
   private folder: string | null = null;
   private tree: FileTree;
+  /** Find in Files: a popup; a picked hit opens here (or in the program from Options). */
+  private find: FindPanel;
+  /** What had the focus when the search opened; closing it without a file gives it back. */
+  private beforeFind: HTMLElement | null = null;
   /** "Brave" / "Chrome", or null when web pages go to the system browser. */
   private browserName: string | null = null;
   /** The page has a password field: offer the real browser and its password manager. */
@@ -105,9 +113,21 @@ export class Side {
     this.tree = new FileTree({
       file: (rel) => void this.openInTree(rel),
       folder: (rel) => void this.showFolder(rel),
-      edit: (rel) => this.tree.project && void api.openFile(this.tree.project, rel).catch(this.fail),
+      edit: (rel) => void this.openAt(rel, 1, this.tree.project ?? undefined),
     });
-    this.el.querySelector(".side-body")!.appendChild(this.tree.el);
+    this.find = new FindPanel({
+      open: (file, line, project) => {
+        this.find.close();
+        void this.openAt(file, line, project);
+      },
+      closed: (back) => {
+        const before = this.beforeFind;
+        this.beforeFind = null;
+        // Esc or a click outside: typing goes on where it was (the terminal), not into nothing.
+        if (back && before?.isConnected) before.focus();
+      },
+    });
+    this.el.querySelector(".side-body")!.append(this.tree.el);
     this.relabel();
     let treeShown = true;
     try {
@@ -183,6 +203,7 @@ export class Side {
     const hint = this.view.querySelector<HTMLElement>("[data-hint]");
     if (hint) hint.textContent = t("side.empty");
     this.tree.relabel();
+    this.find.relabel();
     if (this.isOpen) this.syncButtons();
   }
 
@@ -194,6 +215,17 @@ export class Side {
 
   get isOpen(): boolean {
     return !this.el.hidden;
+  }
+
+  /** The panel is open with the file tree in it (the top bar's folder is pressed). */
+  get filesShown(): boolean {
+    return this.isOpen && !this.tree.el.hidden;
+  }
+
+  /** The top bar's folder: the project's files, or the panel away when they show. */
+  toggleFiles(): void {
+    if (this.filesShown) this.close();
+    else this.showFiles();
   }
 
   /** `link`, or with `project` a file relative to that project. */
@@ -299,12 +331,54 @@ export class Side {
 
   private toggleTree(): void {
     this.tree.el.hidden = !this.tree.el.hidden;
+    this.rememberTree();
+    if (!this.tree.el.hidden) void this.tree.load(this.ctx.project());
+  }
+
+  private rememberTree(): void {
     try {
       localStorage.setItem(TREE_KEY, this.tree.el.hidden ? "0" : "1");
     } catch {
       // not remembered
     }
-    if (!this.tree.el.hidden) void this.tree.load(this.ctx.project());
+  }
+
+  /**
+   * A project file (relative path) at `line`: in the panel's editor, or in the
+   * program set in Options (Layout.fileEditor).
+   */
+  async openAt(file: string, line: number, project?: string): Promise<void> {
+    project ??= this.ctx.project() ?? this.tree.project ?? undefined;
+    if (!project) return;
+    if (editorChoice(this.ctx.fileEditor()) === "program") {
+      await api.openFileAt(project, file, line).catch((err) => toast(String(err), { kind: "error" }));
+      return;
+    }
+    try {
+      await this.open(file, project);
+    } catch {
+      return; // open() already showed the error
+    }
+    // A rendered document stays a preview until edited; one desk does not edit stays a page, no error.
+    if (!this.editing) await this.edit(true);
+    this.editing?.editor.goTo(line);
+    this.editing?.editor.focus(); // type right away
+  }
+
+  /** ⇧⌘F: the search popup for the active project, the input focused. */
+  showFind(seed?: string): void {
+    const active = document.activeElement;
+    if (!this.find.isOpen && active instanceof HTMLElement && !this.find.el.contains(active)) this.beforeFind = active;
+    const project = this.ctx.project() ?? this.tree.project;
+    this.find.open(project, seed ?? (this.find.isOpen ? undefined : this.editorSelection()));
+  }
+
+  /** A one-line selection in the open editor, if any. */
+  private editorSelection(): string | undefined {
+    const view = this.editing?.editor.view;
+    if (!view) return undefined;
+    const { from, to } = view.state.selection.main;
+    return seedText(view.state.sliceDoc(from, to));
   }
 
   private async openInTree(rel: string): Promise<void> {

@@ -59,6 +59,9 @@ pub struct Layout {
     /// Size of the window's own text and bars (not terminals), one of
     /// 0.9, 1, 1.1, 1.25, 1.5; see uiScale in src/ui-scale.ts.
     pub ui_scale: f64,
+    /// Command of the editor that opens files from Find in Files and the
+    /// tree; "" is the built-in editor (see file_editor.rs).
+    pub file_editor: String,
     /// Session keys whose tiles are folded to their header (⌘J).
     pub minimized: Vec<String>,
     /// Names given to tiles by hand, by session key.
@@ -181,6 +184,7 @@ impl Default for Layout {
             link_click: "desk".into(),
             font_size: 11.5,
             ui_scale: 1.0,
+            file_editor: String::new(),
             minimized: Vec::new(),
             titles: Default::default(),
             saved: Default::default(),
@@ -416,6 +420,17 @@ mod tests {
         let l = Layout { ui_scale: 1.25, ..Layout::default() };
         save(&p, &l).unwrap();
         assert_eq!(load(&p).ui_scale, 1.25);
+    }
+
+    #[test]
+    fn file_editor_defaults_empty_and_round_trips() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("layout.json");
+        std::fs::write(&p, r#"{"version":1}"#).unwrap();
+        assert_eq!(load(&p).file_editor, "");
+        let l = Layout { file_editor: "~/bin/subl".into(), ..Layout::default() };
+        save(&p, &l).unwrap();
+        assert_eq!(load(&p).file_editor, "~/bin/subl");
     }
 
     #[test]

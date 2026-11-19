@@ -55,6 +55,7 @@ import { UsagePopover } from "./usage-popover";
 import { CpuPopover } from "./cpu-popover";
 import { DockerPanel } from "./docker-panel";
 import { blockedDeploy, findDockerSession } from "./docker-view";
+import { seedText } from "./find-view";
 import {
   DEFAULT_EMERGENCY,
   DEFAULT_FAN_MARGIN,
@@ -64,7 +65,7 @@ import {
   thermalHtml,
   thermalToast,
 } from "./thermal";
-import { brandHtml, browserHtml, coffeeHtml, dockerHtml } from "./topbar";
+import { brandHtml, browserHtml, coffeeHtml, dockerHtml, filesHtml } from "./topbar";
 import { UpdateChecker, type UpdateOutcome } from "./updates";
 import { accountById, accountColor, accountFor, hasAccounts } from "./accounts";
 import { applyUiScale, uiScale } from "./ui-scale";
@@ -254,6 +255,7 @@ export class App {
       terminal: (path) => void this.openTerminal(path),
       browser: () => this.layout?.browser ?? "auto",
       linkClick: () => this.layout?.linkClick ?? "desk",
+      fileEditor: () => this.layout?.fileEditor ?? "",
     });
     root.querySelector(".middle")!.append(this.dockerPanel.el, this.side.el);
     this.footer = root.querySelector(".bottom")!;
@@ -303,6 +305,10 @@ export class App {
         this.layout.browser = id;
         this.save();
         void this.side.browserChanged();
+      },
+      setFileEditor: (cmd) => {
+        this.layout.fileEditor = cmd;
+        this.save();
       },
       setLinkClick: (mode) => {
         this.layout.linkClick = mode;
@@ -469,6 +475,10 @@ export class App {
       if (t === "browser") this.side.browse();
       if (t === "thermal") this.cpuPopover.toggle();
       if (t === "docker") this.dockerPanel.toggle();
+      if (t === "files") {
+        this.side.toggleFiles();
+        this.renderChrome(); // the folder's pressed state
+      }
       if (t === "thermal-resume") void this.resumeWork();
       if (t === "update") void this.installUpdate();
       if (t === "leave") void api.dropdownLeave();
@@ -527,6 +537,7 @@ export class App {
       dropdownAnimation: boot.layout.dropdownAnimation ?? 200,
       keys: boot.layout.keys ?? {},
       tmuxMenu: boot.layout.tmuxMenu ?? false,
+      fileEditor: boot.layout.fileEditor ?? "",
       thermalMode: boot.layout.thermalMode ?? "slow",
       thermalLimit: boot.layout.thermalLimit ?? DEFAULT_LIMIT,
       fanSteps: boot.layout.fanSteps?.length ? boot.layout.fanSteps : DEFAULT_STEPS,
@@ -1916,7 +1927,7 @@ export class App {
     }<span class="spacer"${drag}></span>${this.updateHtml()}${usageHtml(this.usage, Date.now(), (id) => {
       const a = this.layout.claudeAccounts.find((x) => x.id === id);
       return a ? { name: a.name, color: accountColor(this.layout, a.id) } : null;
-    })}${thermalHtml(this.thermal, this.layout.thermalColors)}${dockerHtml(this.layout.dockerHosts.length > 0, this.dockerPanel.isOpen)}${browserHtml(keysIn("⌘W"))}${coffeeHtml(this.coffee, PLATFORM)}${this.quitHtml()}`;
+    })}${thermalHtml(this.thermal, this.layout.thermalColors)}${dockerHtml(this.layout.dockerHosts.length > 0, this.dockerPanel.isOpen)}${filesHtml(keyText("files"), this.side.filesShown)}${browserHtml(keysIn("⌘W"))}${coffeeHtml(this.coffee, PLATFORM)}${this.quitHtml()}`;
     this.footer.innerHTML =
       `<span class="here" hidden></span><span class="hints">${hints()
         .map(([k, label]) => `<span><kbd>${k}</kbd> ${escapeHtml(label)}</span>`)
@@ -2154,8 +2165,10 @@ export class App {
     if (!action) return;
     // ⌘S in the side panel's editor saves the file there.
     if (action.type === "sessions" && (e.target as Element | null)?.closest?.(".cm-editor")) return;
-    const overlay = document.querySelector(".overlay") !== null;
-    if (overlay && !["palette", "new", "settings", "close"].includes(action.type)) return; // e.g. ⌘↵ in the palette
+    const overlay = document.querySelector(".overlay");
+    // ⇧⌘F in its own popup gives the input the focus again.
+    const again = action.type === "findInFiles" && overlay?.classList.contains("find-overlay");
+    if (overlay && !again && !["palette", "new", "settings", "close"].includes(action.type)) return; // e.g. ⌘↵ in the palette
     e.preventDefault();
     e.stopPropagation();
     this.run(action);
@@ -2250,6 +2263,10 @@ export class App {
       case "files":
         this.side.showFiles();
         break;
+      case "findInFiles": {
+        this.side.showFind(seedText(this.tiles.get(this.active ?? "")?.selectedText()));
+        break;
+      }
       case "docker":
         if (this.layout.dockerHosts.length > 0) this.dockerPanel.toggle();
         break;

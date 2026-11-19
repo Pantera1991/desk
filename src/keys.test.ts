@@ -46,6 +46,14 @@ describe("actionFor", () => {
     expect(mac(k("0"))).toEqual({ type: "font", step: 0 });
   });
 
+  it("findInFiles is Super+Shift+F on mac and Ctrl+Alt+Shift+F elsewhere", () => {
+    expect(actionFor({ key: "F", code: "KeyF", metaKey: true, ctrlKey: false, shiftKey: true, altKey: false }, "mac")).toEqual({ type: "findInFiles" });
+    const other = { key: "F", code: "KeyF", metaKey: false, ctrlKey: true, shiftKey: true, altKey: true };
+    expect(actionFor(other, "linux")).toEqual({ type: "findInFiles" });
+    expect(actionFor(other, "windows")).toEqual({ type: "findInFiles" });
+    expect(actionFor({ ...other, altKey: false }, "linux")).toEqual({ type: "files" }); // Ctrl+Shift+F stays the files panel's
+  });
+
   it("leaves terminal keys alone", () => {
     expect(mac(k("Escape", { metaKey: false }))).toBeNull();
     expect(mac(k("c"))).toBeNull(); // copy

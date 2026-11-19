@@ -16,11 +16,13 @@ pub mod docker;
 pub mod drag;
 pub mod dropdown;
 pub mod env;
+pub mod file_editor;
 pub mod core_temps;
 pub mod fans;
 pub mod fan_control;
 pub mod git;
 pub mod github;
+pub mod grep;
 pub mod hooks;
 pub mod layout;
 pub mod lock;
@@ -666,6 +668,46 @@ async fn search_files(path: String, query: String) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Find in Files: matching lines of the project's files, matches marked.
+#[tauri::command]
+async fn grep_files(
+    path: String,
+    query: String,
+    case: bool,
+    word: bool,
+    regex: bool,
+) -> Result<grep::GrepResult, String> {
+    let opts = grep::GrepOptions { case, word, regex };
+    tauri::async_runtime::spawn_blocking(move || grep::grep(Path::new(&path), &query, opts))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Find in Files: the text of a project file for the read-only preview.
+#[tauri::command]
+async fn read_project_text(path: String, file: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || grep::read_project_text(Path::new(&path), &file))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Open a project file at a line in the editor chosen in Options, no shell.
+#[tauri::command]
+fn open_file_at(app: State<'_, App>, path: String, file: String, line: u32) -> Result<(), String> {
+    let cmd = layout::load(&app.layout_path).file_editor;
+    // The command first: an empty or refused one says so whatever the file.
+    file_editor::program(&cmd, &env::home())?;
+    let full = project::inside(Path::new(&path), &file)?;
+    file_editor::open(&cmd, &env::home(), &full, line)
+}
+
+/// Options: is this editor command safe and present? (checked before saving,
+/// by the same rules as opening a file)
+#[tauri::command]
+fn check_file_editor(cmd: String) -> Result<(), String> {
+    file_editor::program(&cmd, &env::home()).map(|_| ())
+}
+
 /// The browser web pages go to ("Brave", "Chrome"), or None for the system's.
 #[tauri::command]
 fn browser_name(browser: String) -> Option<&'static str> {
@@ -714,11 +756,6 @@ fn dropped_paths() -> Vec<String> {
 #[tauri::command]
 fn reveal_path(path: String) -> Result<(), String> {
     project::reveal(Path::new(&path))
-}
-
-#[tauri::command]
-fn open_file(path: String, file: String) -> Result<(), String> {
-    project::open_in_editor(Path::new(&path), &file)
 }
 
 #[tauri::command]
@@ -1031,11 +1068,14 @@ pub fn run() {
             project_files,
             project_dir,
             search_files,
+            grep_files,
+            read_project_text,
+            open_file_at,
+            check_file_editor,
             reveal_path,
             browser_name,
             update_check,
             update_install,
-            open_file,
             preview_file,
             run_targets,
             git_switch,

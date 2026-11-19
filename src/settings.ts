@@ -29,6 +29,7 @@ import { PLATFORM, shortcut } from "./platform";
 import { rows, shortPath } from "./projects";
 import { search, type SearchItem } from "./settings-search";
 import { escapeHtml } from "./tile";
+import { editorChoice } from "./find-view";
 import { acceleratorFor, DEFAULT_HOTKEY, hotkeyLabel } from "./hotkey";
 import { LANGUAGES, language, t, type Language, type MessageKey } from "./i18n";
 import { acceleratorsOf, bindingLabel, BINDINGS, clashWith, FIXED, groupLabel, GROUPS, keyText } from "./keys";
@@ -77,6 +78,8 @@ export interface SettingsContext {
   setBrowser: (id: string) => void;
   /** What a plain click on a terminal link does (links.ts). */
   setLinkClick: (mode: LinkClick) => void;
+  /** The program that opens files at a line ("" = the built-in editor); checked before it gets here. */
+  setFileEditor: (cmd: string) => void;
   /** The usage popover's layout (Options, AI stats). */
   setUsageLayout: (v: UsageLayout) => void;
   /** The size of the window's own text and bars (ui-scale.ts). */
@@ -571,6 +574,8 @@ export class Settings {
   private tab: Group = "general";
   /** What is typed in the search field; "" shows the chosen group. */
   private query = "";
+  /** "program" chosen for the file editor while no command is saved yet. */
+  private fileEditorProgram = false;
 
   constructor(private ctx: SettingsContext) {}
 
@@ -600,6 +605,27 @@ export class Settings {
     this.el.querySelector<HTMLInputElement>('[data-k="search"]')?.focus();
     this.projects = await this.ctx.projects();
     this.render();
+  }
+
+  /** Check the program first; save it only when it is found, else say why under the field. */
+  private async saveFileEditor(input: HTMLInputElement, box: HTMLElement): Promise<void> {
+    const cmd = input.value.trim();
+    const err = box.querySelector<HTMLElement>('[data-k="file-editor-err"]');
+    const show = (msg: string) => {
+      if (!err) return;
+      err.textContent = msg;
+      err.hidden = !msg;
+    };
+    if (cmd) {
+      try {
+        await api.checkFileEditor(cmd);
+      } catch (e) {
+        show(String(e));
+        return;
+      }
+    }
+    show("");
+    this.ctx.setFileEditor(cmd);
   }
 
   /** The line about a newer desk again, alone: a check every half hour must
@@ -735,6 +761,7 @@ export class Settings {
     const hotkey = hotkeyLabel(layout.dropdownHotkey || DEFAULT_HOTKEY());
     const off = layout.dropdown ? "" : "disabled";
     const linkClick: LinkClick = layout.linkClick === "browser" || layout.linkClick === "none" ? layout.linkClick : "desk";
+    const program = this.fileEditorProgram || editorChoice(layout.fileEditor) === "program";
     const uiScaleNow = uiScale(layout.uiScale);
     const usageLayout: UsageLayout = layout.usageLayout === "all" ? "all" : "tabs";
     const usageShare: UsageShare = layout.usageShare === "transcripts" ? "transcripts" : "cost";
@@ -818,7 +845,19 @@ export class Settings {
         ["system", t("settings.browserSystem")],
       ]
         .map(([v, label]) => `<option value="${v}" ${(layout.browser || "auto") === v ? "selected" : ""}>${label}</option>`)
-        .join("")}</select></label>`,
+        .join("")}</select></label>
+      <div class="line wrap" data-row><span>${t("settings.fileEditor")}</span><span class="seg">${(
+        [
+          ["builtin", t("settings.fileEditorBuiltin")],
+          ["program", t("settings.fileEditorProgram")],
+        ] as const
+      )
+        .map(([v, label]) => `<button class="${program ? (v === "program" ? "sel" : "") : v === "builtin" ? "sel" : ""}" data-file-editor="${v}">${label}</button>`)
+        .join("")}</span>${
+        program
+          ? `<input type="text" data-k="file-editor" value="${escapeHtml(layout.fileEditor)}" placeholder="subl" spellcheck="false" />`
+          : ""
+      }<span class="dim">${t("settings.fileEditorHint")}</span><div class="field-err" data-k="file-editor-err" hidden></div></div>`,
         ) +
           section(
             t("settings.terminalSection"),
@@ -1128,6 +1167,15 @@ export class Settings {
     box.querySelector<HTMLSelectElement>('[data-k="browser"]')!.addEventListener("change", (e) => {
       this.ctx.setBrowser((e.target as HTMLSelectElement).value);
     });
+    box.querySelectorAll<HTMLButtonElement>("[data-file-editor]").forEach((b) =>
+      b.addEventListener("click", () => {
+        this.fileEditorProgram = b.dataset.fileEditor === "program";
+        if (!this.fileEditorProgram) this.ctx.setFileEditor("");
+        this.render();
+      }),
+    );
+    const fileEditor = box.querySelector<HTMLInputElement>('[data-k="file-editor"]');
+    fileEditor?.addEventListener("change", () => void this.saveFileEditor(fileEditor, box));
     box.querySelector<HTMLInputElement>('[data-k="auto-layout"]')!.addEventListener("change", (e) => {
       this.ctx.setAutoLayout((e.target as HTMLInputElement).checked);
       this.render();

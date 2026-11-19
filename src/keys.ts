@@ -23,6 +23,7 @@ export type Action =
   | { type: "terminal" }
   | { type: "files" }
   | { type: "docker" }
+  | { type: "findInFiles" }
   | { type: "run" }
   | { type: "focus"; index: number }
   | { type: "fullscreen" }
@@ -63,6 +64,8 @@ export const BINDINGS: Binding[] = [
   { id: "sub", group: "window", action: { type: "sub" }, mac: ["Super+KeyD"] },
   { id: "terminal", group: "window", action: { type: "terminal" }, mac: ["Super+KeyT"] },
   { id: "files", group: "window", action: { type: "files" }, mac: ["Super+KeyF"] },
+  // Ctrl+Shift+F elsewhere is the files panel's: Alt joins it here.
+  { id: "findInFiles", group: "window", action: { type: "findInFiles" }, mac: ["Super+Shift+KeyF"], other: ["Control+Alt+Shift+KeyF"] },
   // ⌘G on macOS (Ctrl+G elsewhere) is the prompt rewrite (tile.ts): ⇧ here.
   { id: "docker", group: "window", action: { type: "docker" }, mac: ["Super+Shift+KeyG"], other: ["Control+Shift+KeyG"] },
   { id: "run", group: "window", action: { type: "run" }, mac: ["Super+KeyU"] },

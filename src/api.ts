@@ -13,6 +13,29 @@ export interface Project {
 /** Sessions of a card one under another, side by side, or one at a time. */
 export type CardMode = "stack" | "row" | "tabs";
 
+export interface GrepHit {
+  file: string;
+  line: number;
+  text: string;
+  /** Matches in `text` as [start, end) UTF-16 ranges. */
+  marks: [number, number][];
+  /** UTF-16 units of the line cut off before `text` (0 when not cut; else `text` starts with "…"). */
+  cut: number;
+}
+
+export interface GrepResult {
+  hits: GrepHit[];
+  files: number;
+  /** The search stopped at the cap. */
+  more: boolean;
+}
+
+export interface GrepOptions {
+  case: boolean;
+  word: boolean;
+  regex: boolean;
+}
+
 export interface Layout {
   version: number;
   lanes: string[][];
@@ -70,6 +93,8 @@ export interface Layout {
   tmuxMenu: boolean;
   /** Interface language, "pl" or "en" (i18n.ts); "" until the first launch picks one. */
   language: string;
+  /** Program that opens a Find in Files result at its line; "" is the built-in editor. */
+  fileEditor: string;
   /** Ctrl+G in Claude rewrites the prompt with the company LLM (prompt_ai.rs). */
   promptAi: PromptAi;
   /** Claude accounts (accounts.ts); the first one is the default. */
@@ -549,6 +574,15 @@ export const api = {
   dockerRestart: (host: string, container: string) => invoke<void>("docker_restart", { host, container }),
   /** Branch and dirty count of a local folder; null when it is not a git repository (or git timed out). */
   gitStatusSummary: (path: string) => invoke<GitSummary | null>("git_status_summary", { path }),
+  /** Text search in a project's files (max 500 hits); `marks` are UTF-16 ranges. Rejects with a message (bad regex, may span lines). */
+  grepFiles: (path: string, query: string, o: GrepOptions) =>
+    invoke<GrepResult>("grep_files", { path, query, case: o.case, word: o.word, regex: o.regex }),
+  /** Text of `file` (relative to the project) for the read-only Find preview. Rejects with a message. */
+  readProjectText: (path: string, file: string) => invoke<string>("read_project_text", { path, file }),
+  /** Open `file` (relative to the project) at `line` in the configured file editor. Rejects with a message. */
+  openFileAt: (path: string, file: string, line: number) => invoke<void>("open_file_at", { path, file, line }),
+  /** Check that a file-editor command can be run. Rejects with a message. */
+  checkFileEditor: (cmd: string) => invoke<void>("check_file_editor", { cmd }),
   /** Of the given folders, those holding a compose file (where a deploy may run). */
   composeDirs: (paths: string[]) => invoke<string[]>("compose_dirs", { paths }),
   /** Server of the saved prompt-rewriting VPN config, null when none (the key never leaves Rust). */
@@ -589,7 +623,6 @@ export const api = {
   projectFiles: (path: string) => invoke<string[]>("project_files", { path }),
   /** One folder of a project: files, and folders as `rel/name/`. */
   projectDir: (path: string, rel: string) => invoke<string[]>("project_dir", { path, rel }),
-  openFile: (path: string, file: string) => invoke<void>("open_file", { path, file }),
   previewFile: (path: string, file: string, bounds: PreviewBounds) =>
     invoke<string>("preview_file", { path, file, bounds }),
   runTargets: (path: string) => invoke<RunTarget[]>("run_targets", { path }),
