@@ -227,6 +227,7 @@ mod tests {
     use super::*;
     use crate::tmux::shell_quote;
 
+    #[cfg(unix)]
     const SSH_OFF: &str = "-o PasswordAuthentication=no -o KbdInteractiveAuthentication=no";
 
     fn hosts() -> Vec<UploadHost> {
@@ -241,11 +242,15 @@ mod tests {
         std::fs::write(tmp.path().join("dumps/a.sql"), "x").unwrap();
         tmp
     }
+    #[cfg(unix)]
     fn canon(tmp: &tempfile::TempDir) -> String {
         tmp.path().canonicalize().unwrap().to_str().unwrap().to_string()
     }
 
+    // POSIX paths (`/home/u`, `/` separators): the panel and its commands
+    // exist only on macOS and Linux; Windows has no rsync (see the spec).
     #[test]
+    #[cfg(unix)]
     fn builds_command_with_key() {
         let tmp = project();
         let cmd = tile_command(&tile("dumps/a.sql"), &hosts(), tmp.path(), Path::new("/home/u")).unwrap();
@@ -258,7 +263,10 @@ mod tests {
         );
     }
 
+    // POSIX paths (`/home/u`, `/` separators): the panel and its commands
+    // exist only on macOS and Linux; Windows has no rsync (see the spec).
     #[test]
+    #[cfg(unix)]
     fn builds_scp_command() {
         let tmp = project();
         let mut h = hosts();
@@ -284,7 +292,10 @@ mod tests {
         assert_eq!(scp.method, Method::Scp);
     }
 
+    // POSIX paths (`/home/u`, `/` separators): the panel and its commands
+    // exist only on macOS and Linux; Windows has no rsync (see the spec).
     #[test]
+    #[cfg(unix)]
     fn builds_command_without_key() {
         let tmp = project();
         let mut h = hosts();
@@ -299,7 +310,10 @@ mod tests {
         );
     }
 
+    // POSIX paths (`/home/u`, `/` separators): the panel and its commands
+    // exist only on macOS and Linux; Windows has no rsync (see the spec).
     #[test]
+    #[cfg(unix)]
     fn quotes_odd_file_names() {
         let tmp = project();
         let name = "dump 2024 'old'$x.sql";
@@ -347,7 +361,10 @@ mod tests {
         assert!(tile_command(&tile("dumps/none.sql"), &hosts(), tmp.path(), home).is_err());
     }
 
+    // POSIX paths (`/home/u`, `/` separators): the panel and its commands
+    // exist only on macOS and Linux; Windows has no rsync (see the spec).
     #[test]
+    #[cfg(unix)]
     fn refuses_bad_parts() {
         let tmp = project();
         let home = Path::new("/home/u");
