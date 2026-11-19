@@ -72,6 +72,11 @@
     "allow-claude-accounts",
     "allow-usage-models",
     "allow-usage-details",
+    "allow-docker-overview",
+    "allow-docker-image-rm",
+    "allow-docker-restart",
+    "allow-compose-dirs",
+    "allow-git-status-summary",
     "allow-quit-desk"
   ]
 }

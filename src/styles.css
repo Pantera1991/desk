@@ -1739,7 +1739,8 @@ html.dragging-card .tile .term {
   align-items: stretch;
 }
 
-.settings .prompt-ai .vpn-error {
+.settings .prompt-ai .vpn-error,
+.settings .docker-hosts .vpn-error {
   color: var(--danger);
   white-space: pre-wrap;
 }
@@ -3535,4 +3536,133 @@ p.up-model {
 
 .up-all-sessions {
   margin-top: 14px;
+}
+
+/* ---- Docker side panel (docker-view.ts, docker-panel.ts); frame shared with .side ---- */
+.dock-title {
+  padding: 0 calc(6px * var(--ui-scale, 1));
+  font-weight: 600;
+}
+
+.dock-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden auto;
+  padding: calc(4px * var(--ui-scale, 1)) calc(8px * var(--ui-scale, 1)) calc(10px * var(--ui-scale, 1));
+}
+
+.dk-row {
+  display: flex;
+  align-items: center;
+  gap: calc(8px * var(--ui-scale, 1));
+  padding: calc(3px * var(--ui-scale, 1)) calc(4px * var(--ui-scale, 1));
+  min-width: 0;
+}
+
+.dk-container {
+  min-width: 0;
+}
+
+.dk-sub {
+  color: var(--dim);
+  font-size: calc(11px * var(--ui-scale, 1));
+  padding: 0 calc(4px * var(--ui-scale, 1)) calc(3px * var(--ui-scale, 1)) calc(30px * var(--ui-scale, 1));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dk-toggle {
+  cursor: pointer;
+}
+
+.dk-toggle:hover {
+  background: var(--hover, rgba(255, 255, 255, 0.05));
+}
+
+.dk-children {
+  margin-left: calc(14px * var(--ui-scale, 1));
+}
+
+.dk-caret {
+  width: calc(10px * var(--ui-scale, 1));
+  color: var(--dim);
+}
+
+.dk-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dk-image,
+.dk-status,
+.dk-size,
+.dk-age,
+.dk-count {
+  color: var(--dim);
+  white-space: nowrap;
+}
+
+.dk-badge {
+  font-size: calc(11px * var(--ui-scale, 1));
+  padding: 0 calc(6px * var(--ui-scale, 1));
+  border-radius: 8px;
+  white-space: nowrap;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dk-inuse {
+  color: var(--dim);
+  border: 1px solid currentColor;
+}
+
+.dk-unused {
+  color: var(--accent);
+  border: 1px solid currentColor;
+}
+
+.dk-up {
+  color: #4cc38a;
+}
+
+.dk-partial {
+  color: #e0a030;
+}
+
+.dk-down {
+  color: var(--dim);
+}
+
+.dk-err .dk-error,
+.dk-fail {
+  color: #e5484d;
+}
+
+.dk-btn {
+  font: inherit;
+  padding: calc(1px * var(--ui-scale, 1)) calc(7px * var(--ui-scale, 1));
+  color: var(--fg);
+  background: transparent;
+  border: 1px solid var(--line-hi);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.dk-btn:hover:not(:disabled) {
+  background: var(--hover, rgba(255, 255, 255, 0.08));
+}
+
+.dk-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.dk-empty {
+  padding: calc(10px * var(--ui-scale, 1));
+  color: var(--dim);
 }

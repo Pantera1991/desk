@@ -22,6 +22,7 @@ export type Action =
   | { type: "background" }
   | { type: "terminal" }
   | { type: "files" }
+  | { type: "docker" }
   | { type: "run" }
   | { type: "focus"; index: number }
   | { type: "fullscreen" }
@@ -62,6 +63,8 @@ export const BINDINGS: Binding[] = [
   { id: "sub", group: "window", action: { type: "sub" }, mac: ["Super+KeyD"] },
   { id: "terminal", group: "window", action: { type: "terminal" }, mac: ["Super+KeyT"] },
   { id: "files", group: "window", action: { type: "files" }, mac: ["Super+KeyF"] },
+  // ⌘G on macOS (Ctrl+G elsewhere) is the prompt rewrite (tile.ts): ⇧ here.
+  { id: "docker", group: "window", action: { type: "docker" }, mac: ["Super+Shift+KeyG"], other: ["Control+Shift+KeyG"] },
   { id: "run", group: "window", action: { type: "run" }, mac: ["Super+KeyU"] },
   { id: "chat", group: "window", action: { type: "chat" }, mac: ["Super+KeyR"] },
   { id: "sessions", group: "window", action: { type: "sessions" }, mac: ["Super+KeyS"] },
@@ -119,6 +122,7 @@ const RESERVED: Record<Platform, Record<string, MessageKey>> = {
     "Super+KeyH": "reserved.hide",
     "Super+KeyM": "reserved.minimize",
     "Super+Tab": "reserved.switchApps",
+    "Super+KeyG": "reserved.promptRewrite",
   },
   windows: { "Control+Shift+KeyC": "reserved.copy", "Control+Shift+KeyV": "reserved.paste", "Control+Shift+Escape": "reserved.taskManager" },
   linux: { "Control+Shift+KeyC": "reserved.copy", "Control+Shift+KeyV": "reserved.paste" },

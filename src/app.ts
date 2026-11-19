@@ -11,6 +11,8 @@ import {
   type CoffeeLevel,
   type CoffeeStatus,
   type Conversation,
+  type DockerOverview,
+  type DockerTile,
   type GithubRepo,
   type Layout,
   type Project,
@@ -51,6 +53,8 @@ import { setSaved, syncTile } from "./saved";
 import { usageHtml } from "./usage";
 import { UsagePopover } from "./usage-popover";
 import { CpuPopover } from "./cpu-popover";
+import { DockerPanel } from "./docker-panel";
+import { blockedDeploy, findDockerSession } from "./docker-view";
 import {
   DEFAULT_EMERGENCY,
   DEFAULT_FAN_MARGIN,
@@ -60,7 +64,7 @@ import {
   thermalHtml,
   thermalToast,
 } from "./thermal";
-import { brandHtml, browserHtml, coffeeHtml } from "./topbar";
+import { brandHtml, browserHtml, coffeeHtml, dockerHtml } from "./topbar";
 import { UpdateChecker, type UpdateOutcome } from "./updates";
 import { accountById, accountColor, accountFor, hasAccounts } from "./accounts";
 
@@ -97,6 +101,10 @@ export class App {
   private tmuxMissing = false;
   /** Tiles about to open a conversation again (⌘S): key → Claude session id. */
   private resuming = new Map<string, string>();
+  /** Deploy tiles confirmed in the Docker panel, about to start: the only way a `compose up` session starts (see blockedDeploy). */
+  private confirmedDeploys = new Set<string>();
+  /** Logs/shell tiles being opened (host|target|kind): a fast second click is ignored until the first lands. */
+  private openingDocker = new Set<string>();
   private earlyExits = new Map<number, string>(); // pty-exit that arrived before attach returned
   /** Tiles kept in the saved layout though not open: they failed to open at startup or their session ended with others (see Endings). */
   private missing: Place[] = [];
@@ -165,6 +173,9 @@ export class App {
   private usagePopover: UsagePopover;
   /** The temperature chip's panel (cpu-popover.ts). */
   private cpuPopover: CpuPopover;
+  private dockerPanel: DockerPanel;
+  /** The servers as the panel last saw them (to find a container's compose project). */
+  private dockerLast: DockerOverview | null = null;
 
   constructor(root: HTMLElement) {
     document.documentElement.dataset.platform = PLATFORM; // CSS: room for the macOS traffic lights
@@ -208,6 +219,21 @@ export class App {
       },
       resume: () => void this.resumeWork(),
     });
+    this.dockerPanel = new DockerPanel(
+      () => {
+        if (!this.layout) return;
+        this.render();
+        this.renderChrome();
+      },
+      {
+        overview: async () => (this.dockerLast = await api.dockerOverview()),
+        openPaths: () => [...new Set([...this.tiles.values()].map((t) => t.path))],
+        open: (tile, title, path) => this.openDockerTile(tile, title, path),
+        removeImage: (host, image) => api.dockerImageRm(host, image),
+        restart: (host, container) => api.dockerRestart(host, container),
+        focusDeploy: (host, project) => this.focusDockerTile({ host, target: project, kind: "deploy" }),
+      },
+    );
     // Opening, closing or resizing the panel changes the grid's width: lay out again.
     this.rail = root.querySelector(".rail")!;
     this.strip = root.querySelector(".strip")!;
@@ -228,7 +254,7 @@ export class App {
       browser: () => this.layout?.browser ?? "auto",
       linkClick: () => this.layout?.linkClick ?? "desk",
     });
-    root.querySelector(".middle")!.appendChild(this.side.el);
+    root.querySelector(".middle")!.append(this.dockerPanel.el, this.side.el);
     this.footer = root.querySelector(".bottom")!;
 
     this.palette = new Palette({
@@ -381,6 +407,12 @@ export class App {
         await this.saveNow();
       },
       setAccounts: (change) => this.setAccounts(change),
+      setDockerHosts: (hosts) => {
+        this.layout.dockerHosts = hosts;
+        this.renderChrome();
+        clearTimeout(this.saveTimer);
+        return this.persist();
+      },
     });
   }
 
@@ -430,6 +462,7 @@ export class App {
       const t = (e.target as HTMLElement).closest<HTMLElement>("[data-top]")?.dataset.top;
       if (t === "browser") this.side.browse();
       if (t === "thermal") this.cpuPopover.toggle();
+      if (t === "docker") this.dockerPanel.toggle();
       if (t === "thermal-resume") void this.resumeWork();
       if (t === "update") void this.installUpdate();
       if (t === "leave") void api.dropdownLeave();
@@ -544,6 +577,11 @@ export class App {
     const opened = await Promise.all(keys.map((k) => this.createTile(k, true)));
     keys.forEach((k, i) => {
       if (opened[i]) return;
+      // A Docker tile never comes back (createTile dropped what it kept): not kept for the next start.
+      if (parseKey(k).agent === "docker") {
+        this.layout.lanes = L.remove(this.layout.lanes, k);
+        return;
+      }
       // Keep it in the saved layout (volume not mounted, tmux not ready...) for the next start.
       this.missing.push({ key: k, lane: this.layout.lanes.findIndex((l) => l.includes(k)) });
       this.layout.lanes = L.remove(this.layout.lanes, k);
@@ -584,8 +622,25 @@ export class App {
       account = accountFor(this.layout, key, spec.path);
       if (account && fresh) this.layout.tileAccounts[key] = account;
     }
+    const confirmed = this.confirmedDeploys.delete(key);
+    // A Docker tile is its command's own to start again, never restored: tmux lost it, so it goes.
+    if (spec.agent === "docker" && restore && fresh) {
+      this.forgetKey(key);
+      this.save();
+      return null;
+    }
+    // A deploy that ended runs again only when asked in the Docker panel, never from "Przywróć" or ⌘⇧T.
+    if (spec.agent === "docker" && blockedDeploy(this.layout.docker[key], !fresh, confirmed)) {
+      this.forgetKey(key);
+      this.closed = this.closed.filter((c) => c.key !== key);
+      this.save();
+      toast(t("docker.deployAgain"), { topic: "sessions" });
+      return null;
+    }
     try {
-      const slug = await api.openSession(spec.path, spec.agent, spec.instance, this.layout.runs[key], resume, restore, account);
+      const command = spec.agent === "docker" ? JSON.stringify(this.layout.docker[key]) : this.layout.runs[key];
+      // Only the confirmed click may start a deploy: Rust checks tmux itself, so a stale `running` cannot re-run one.
+      const slug = await api.openSession(spec.path, spec.agent, spec.instance, command, resume, restore, account, confirmed);
       this.running.add(key);
       // A session started anew under a slug used before: the old state names
       // another conversation (a name given now would save that one).
@@ -615,6 +670,13 @@ export class App {
       this.tiles.set(key, tile);
       return tile;
     } catch (err) {
+      // A deploy Rust would not start (its session had ended after all): forgotten like one refused above, one toast.
+      if (spec.agent === "docker" && blockedDeploy(this.layout.docker[key], false, confirmed)) {
+        this.running.delete(key);
+        this.forgetKey(key);
+        this.closed = this.closed.filter((c) => c.key !== key);
+        this.save();
+      }
       toast(t("app.openFailed", { agent: spec.agent, path: spec.path, err: String(err) }), { kind: "error", topic: "sessions" });
       return null;
     }
@@ -684,6 +746,20 @@ export class App {
     void this.poll();
   }
 
+  /** Focuses the Docker tile of the same kind, host and target; one whose tile was
+   *  closed but whose tmux session still runs is attached again. False when none. */
+  private focusDockerTile(tile: DockerTile): boolean {
+    if (!this.layout) return false;
+    const open = [...this.tiles.keys()];
+    const found = findDockerSession(this.layout.docker, open, [...this.running].filter((k) => !this.tiles.has(k)), tile.host, tile.target, tile.kind);
+    if (found === null) return false;
+    // Still running in tmux with its tile closed (⌘Q): attached again, not started twice.
+    // Through reopen, which asks tmux first: one that ended since the last poll is refused, not re-run.
+    if (found.open) this.setActive(found.key, true);
+    else void this.reopen(found.key, null);
+    return true;
+  }
+
   /** ⌘U: run one of the project's commands (dev server, tests...) in its card. */
   private async runInProject(path: string): Promise<void> {
     const name = path.split(/[\\/]/).filter(Boolean).pop() ?? path;
@@ -696,6 +772,53 @@ export class App {
     const key = keyOf({ path, agent: "run", instance: nextInstance(taken, path, "run") });
     this.layout.runs[key] = picked.value;
     await this.openTile(key);
+  }
+
+  /** Logs, a shell or a deploy of Docker in a card: of `folder` when given (a
+   *  deploy, confirmed in the panel), else of the project the container belongs
+   *  to (the home folder when none matches). */
+  private async openDockerTile(tile: DockerTile, title: string, folder?: string): Promise<void> {
+    if (tile.kind === "deploy") return this.openDockerTileNow(tile, title, folder);
+    // A second click on the same logs or shell goes to the tile that is already there,
+    // or is ignored while the first is still being opened (the awaits below).
+    if (this.focusDockerTile(tile)) return;
+    const id = `${tile.host}|${tile.target}|${tile.kind}`;
+    if (this.openingDocker.has(id)) return;
+    this.openingDocker.add(id);
+    try {
+      await this.openDockerTileNow(tile, title, folder);
+    } finally {
+      this.openingDocker.delete(id);
+    }
+  }
+
+  private async openDockerTileNow(tile: DockerTile, title: string, folder?: string): Promise<void> {
+    // A deploy runs from the folder it was asked for, never from a guess.
+    const path = folder ?? (await this.dockerFolder(tile));
+    const taken = [...(await api.listSessions()), ...this.tiles.values()];
+    const key = keyOf({ path, agent: "docker", instance: nextInstance(taken, path, "docker") });
+    this.layout.docker[key] = tile;
+    this.layout.titles[key] = title;
+    if (tile.kind === "deploy") this.confirmedDeploys.add(key);
+    try {
+      await this.openTile(key);
+    } finally {
+      this.confirmedDeploys.delete(key);
+    }
+    // Not opened: nothing may stay under a key the next tile would reuse.
+    if (!this.tiles.has(key)) {
+      this.forgetKey(key);
+      this.save();
+    }
+  }
+
+  /** The project folder named like the container or its compose project, else the home folder. */
+  private async dockerFolder(tile: DockerTile): Promise<string> {
+    const container = this.dockerLast?.hosts.find((h) => h.name === tile.host)?.containers.find((c) => c.name === tile.target);
+    const wanted = [tile.target, container?.project].filter((n): n is string => !!n).map((n) => n.toLowerCase());
+    const projects = await api.listProjects(this.layout.extraFolders).catch(() => []);
+    const base = (p: string) => p.split(/[\\/]/).filter(Boolean).pop()?.toLowerCase() ?? "";
+    return projects.find((p) => wanted.includes(base(p.path)))?.path ?? this.home;
   }
 
   /** A plain shell in a project's card (in the home folder with no tile focused). */
@@ -830,7 +953,7 @@ export class App {
     this.layout.projectAccounts[tile.path] = to.id;
     this.save();
     try {
-      await api.openSession(tile.path, tile.agent, tile.instance, undefined, undefined, false, to.id);
+      await api.openSession(tile.path, tile.agent, tile.instance, undefined, undefined, false, to.id, false);
     } catch (err) {
       return toast(t("app.openFailed", { agent: tile.agent, path: tile.path, err: String(err) }), { kind: "error", topic: "sessions" });
     }
@@ -897,6 +1020,7 @@ export class App {
   private async reopen(key: string, sessionId: string | null): Promise<void> {
     if (this.tiles.has(key)) return this.openTile(key);
     const alive = (await api.listSessions()).some((s) => keyOf(s) === key);
+    if (!alive) this.running.delete(key); // ended meanwhile: starts anew (a deploy is refused, see createTile)
     if (!alive && sessionId && parseKey(key).agent === "claude") this.resuming.set(key, sessionId);
     await this.openTile(key);
   }
@@ -917,16 +1041,22 @@ export class App {
     if (slug) await api.killSession(slug).catch((err) => toast(String(err), { kind: "error", topic: "sessions" }));
     this.running.delete(key);
     this.closed = this.closed.filter((c) => c.key !== key); // killed: nothing to reopen
-    const forgotten = [this.layout.runs, this.layout.cards, this.layout.titles, this.layout.sizes, this.layout.tileAccounts].some((m) => key in m);
+    const forgotten = [this.layout.runs, this.layout.docker, this.layout.cards, this.layout.titles, this.layout.sizes, this.layout.tileAccounts].some((m) => key in m);
     if (forgotten || this.layout.minimized.includes(key)) {
-      delete this.layout.runs[key];
-      delete this.layout.cards[key];
-      delete this.layout.titles[key];
-      delete this.layout.sizes[key];
-      delete this.layout.tileAccounts[key];
-      this.layout.minimized = this.layout.minimized.filter((k) => k !== key);
+      this.forgetKey(key);
       this.save();
     }
+  }
+
+  /** What desk kept in the layout for a tile's key (the caller saves). */
+  private forgetKey(key: string): void {
+    delete this.layout.runs[key];
+    delete this.layout.docker[key];
+    delete this.layout.cards[key];
+    delete this.layout.titles[key];
+    delete this.layout.sizes[key];
+    delete this.layout.tileAccounts[key];
+    this.layout.minimized = this.layout.minimized.filter((k) => k !== key);
   }
 
   /** ⌘Y: the sessions running without a tile (closed with ⌘Q, or left from
@@ -1263,7 +1393,7 @@ export class App {
   private sessionSize(key: string): number {
     const size = this.layout.sizes[key];
     if (size > 0) return size;
-    return ["shell", "run"].includes(parseKey(key).agent) ? AUX_SIZE : 1;
+    return ["shell", "run", "docker"].includes(parseKey(key).agent) ? AUX_SIZE : 1;
   }
 
   /** A card's height until it is resized: what its unfolded sessions need. */
@@ -1771,12 +1901,14 @@ export class App {
     const hide = this.docked
       ? `<span class="dim"> · </span><span class="dropdown-hint" title="${t("top.hideTitle")}"><kbd>${hotkey}</kbd> ${t("top.hide")}</span>`
       : "";
+    // No server left to show: the panel goes with its chip.
+    if (this.layout.dockerHosts.length === 0 && this.dockerPanel.isOpen) this.dockerPanel.close();
     this.top.innerHTML = `${leave}${brandHtml(this.version, drag)}${hide}<span class="dim"${drag}> · ${this.tiles.size} sessions</span>${this.backgroundHtml()}${
       waiting ? `<span class="waiting-pill"${drag}>${t("top.waiting", { n: waiting })}</span>` : ""
     }<span class="spacer"${drag}></span>${this.updateHtml()}${usageHtml(this.usage, Date.now(), (id) => {
       const a = this.layout.claudeAccounts.find((x) => x.id === id);
       return a ? { name: a.name, color: accountColor(this.layout, a.id) } : null;
-    })}${thermalHtml(this.thermal, this.layout.thermalColors)}${browserHtml(keysIn("⌘W"))}${coffeeHtml(this.coffee, PLATFORM)}${this.quitHtml()}`;
+    })}${thermalHtml(this.thermal, this.layout.thermalColors)}${dockerHtml(this.layout.dockerHosts.length > 0, this.dockerPanel.isOpen)}${browserHtml(keysIn("⌘W"))}${coffeeHtml(this.coffee, PLATFORM)}${this.quitHtml()}`;
     this.footer.innerHTML =
       `<span class="here" hidden></span><span class="hints">${hints()
         .map(([k, label]) => `<span><kbd>${k}</kbd> ${escapeHtml(label)}</span>`)
@@ -2109,6 +2241,9 @@ export class App {
         break;
       case "files":
         this.side.showFiles();
+        break;
+      case "docker":
+        if (this.layout.dockerHosts.length > 0) this.dockerPanel.toggle();
         break;
       case "run": {
         const tile = this.tiles.get(this.active ?? "");

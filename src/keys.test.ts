@@ -36,6 +36,8 @@ describe("actionFor", () => {
     expect(mac(k("s"))).toEqual({ type: "sessions" });
     expect(mac(k("t"))).toEqual({ type: "terminal" });
     expect(mac(k("f"))).toEqual({ type: "files" });
+    expect(mac(k("g"))).toBeNull(); // ⌘G is the prompt rewrite (tile.ts)
+    expect(mac(k("G", { shiftKey: true }))).toEqual({ type: "docker" });
     expect(mac(k("u"))).toEqual({ type: "run" });
     expect(mac(k("o"))).toEqual({ type: "settings" });
     expect(mac(k("w"))).toEqual({ type: "preview" });
@@ -66,6 +68,9 @@ describe("actionFor", () => {
     expect(w("Minus", "_")).toEqual({ type: "font", step: -1 });
     expect(w("Escape", "Escape")).toBeNull(); // Task Manager
     expect(w("KeyP", "p", { shiftKey: false })).toBeNull(); // Ctrl+P is the shell's
+    expect(w("KeyG", "G")).toEqual({ type: "docker" });
+    expect(w("KeyG", "g", { shiftKey: false })).toBeNull(); // Ctrl+G is the prompt rewrite
+    expect(actionFor({ key: "G", code: "KeyG", metaKey: false, ctrlKey: true, shiftKey: true, altKey: false }, "linux")).toEqual({ type: "docker" });
     expect(w("KeyZ", "Ż", { altKey: true })).toBeNull(); // AltGr+Shift+Z types Ż
     expect(actionFor(k("p"), "windows")).toBeNull(); // the Windows key is not ⌘
   });
@@ -127,6 +132,8 @@ describe("custom shortcuts", () => {
   it("refuse a key that is taken", () => {
     expect(clashWith("palette", "Super+KeyN", "mac")).toBe("nowy projekt (folder + opcjonalnie git init)");
     expect(clashWith("palette", "Super+KeyC", "mac")).toBe("kopiuj");
+    expect(clashWith("docker", "Super+KeyG", "mac")).toBe(t("reserved.promptRewrite"));
+    expect(t("reserved.promptRewrite")).not.toBe("reserved.promptRewrite");
     expect(clashWith("palette", "Super+Digit4", "mac")).toBe("skok do kafelka");
     expect(clashWith("palette", "Super+KeyP", "mac")).toBeNull(); // its own
     expect(clashWith("palette", "Super+KeyI", "mac")).toBeNull();

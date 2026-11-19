@@ -12,6 +12,7 @@ pub mod claude_projects;
 pub mod coffee;
 pub mod conversations;
 pub mod discovery;
+pub mod docker;
 pub mod drag;
 pub mod dropdown;
 pub mod env;
@@ -32,6 +33,7 @@ pub mod new_project;
 #[cfg(target_os = "linux")]
 mod pam;
 pub mod preview;
+pub mod proc;
 pub mod pricing;
 pub mod project;
 pub mod prompt_ai;
@@ -190,6 +192,7 @@ fn open_session(
     resume: Option<String>,
     restore: bool,
     account: Option<String>,
+    start_deploy: bool,
 ) -> Result<String, String> {
     let dir = Path::new(&path);
     if !dir.is_dir() {
@@ -221,7 +224,27 @@ fn open_session(
             .then(|| hooks::last_conversation(&app.hooks.state_dir, &slug))
             .flatten()
     });
-    let command = if agent == RUN_AGENT {
+    let command = if agent == docker::DOCKER_AGENT {
+        // A command desk builds itself from a saved server and validated names.
+        if restore {
+            return Err(tr!(
+                "kafelek Dockera nie wraca po restarcie",
+                "a Docker tile does not come back after a restart"
+            )
+            .into());
+        }
+        let tile: docker::DockerTile = serde_json::from_str(&command.unwrap_or_default())
+            .map_err(|e| {
+                tr!(
+                    format!("nieprawidłowy kafelek Dockera: {e}"),
+                    format!("invalid Docker tile: {e}")
+                )
+            })?;
+        // No live session (reattaching returned above): a deploy starts only
+        // from a click confirmed in the Docker panel, whatever the UI believed.
+        docker::may_start(&tile, start_deploy)?;
+        docker::tile_command(&tile, &layout.docker_hosts, dir)?
+    } else if agent == RUN_AGENT {
         // Only a command the project itself defines (see project::run_targets).
         let command = command.unwrap_or_default();
         if !project::run_targets(dir)
@@ -606,6 +629,28 @@ async fn project_files(path: String) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Containers, images, networks and volumes of the saved Docker servers.
+#[tauri::command(async)]
+fn docker_overview(app: State<'_, App>) -> docker::Overview {
+    docker::overview(&layout::load(&app.layout_path).docker_hosts)
+}
+
+#[tauri::command(async)]
+fn docker_image_rm(app: State<'_, App>, host: String, image: String) -> Result<(), String> {
+    docker::image_rm(&layout::load(&app.layout_path).docker_hosts, &host, &image)
+}
+
+#[tauri::command(async)]
+fn docker_restart(app: State<'_, App>, host: String, container: String) -> Result<(), String> {
+    docker::restart(&layout::load(&app.layout_path).docker_hosts, &host, &container)
+}
+
+/// The folders (of open cards) that hold a compose file: a deploy may run there.
+#[tauri::command(async)]
+fn compose_dirs(paths: Vec<String>) -> Vec<String> {
+    docker::compose_dirs(&paths)
+}
+
 /// One folder of the project, opened in the tree (`node_modules/`...).
 #[tauri::command]
 async fn project_dir(path: String, rel: String) -> Result<Vec<String>, String> {
@@ -695,6 +740,11 @@ fn run_targets(path: String) -> Vec<project::RunTarget> {
 #[tauri::command]
 fn git_branches(path: String) -> Result<Vec<String>, String> {
     git::branches(Path::new(&path))
+}
+
+#[tauri::command(async)]
+fn git_status_summary(path: String) -> Option<git::GitSummary> {
+    git::summary(Path::new(&path))
 }
 
 #[tauri::command]
@@ -989,6 +1039,7 @@ pub fn run() {
             preview_file,
             run_targets,
             git_switch,
+            git_status_summary,
             list_projects,
             list_sessions,
             thermal_status,
@@ -1025,6 +1076,10 @@ pub fn run() {
             claude_accounts,
             usage_details,
             usage_models,
+            docker_overview,
+            docker_image_rm,
+            docker_restart,
+            compose_dirs,
             quit_desk,
         ])
         .on_window_event(|window, event| {

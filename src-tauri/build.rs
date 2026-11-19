@@ -26,6 +26,7 @@ const COMMANDS: &[&str] = &[
     "preview_file",
     "run_targets",
     "git_switch",
+    "git_status_summary",
     "list_projects",
     "list_sessions",
     "thermal_status",
@@ -62,6 +63,10 @@ const COMMANDS: &[&str] = &[
     "claude_accounts",
     "usage_models",
     "usage_details",
+    "docker_overview",
+    "docker_image_rm",
+    "docker_restart",
+    "compose_dirs",
     "quit_desk",
 ];
 

@@ -130,6 +130,10 @@ pub struct Layout {
     /// How a session's share of the 5-hour window is worked out: "cost" (its
     /// cost in desk's history) or "transcripts" (Claude Code's transcripts).
     pub usage_share: String,
+    /// Docker servers shown in the Docker panel (docker.rs).
+    pub docker_hosts: Vec<crate::docker::DockerHost>,
+    /// Docker tiles (logs, shell), by session key.
+    pub docker: std::collections::BTreeMap<String, crate::docker::DockerTile>,
 }
 
 /// The temperature chip is yellow from `warm` and red from `hot`, °C.
@@ -202,6 +206,8 @@ impl Default for Layout {
             cpu_hidden: Vec::new(),
             usage_layout: "tabs".into(),
             usage_share: "cost".into(),
+            docker_hosts: Vec::new(),
+            docker: Default::default(),
         }
     }
 }
@@ -300,6 +306,26 @@ mod tests {
         let l = load(&tmp.path().join("layout.json"));
         assert_eq!(l.lanes.len(), 4);
         assert!(l.autostart.is_empty());
+    }
+
+    #[test]
+    fn docker_fields_default_empty_and_round_trip() {
+        use crate::docker::{DockerHost, DockerTile, DockerTileKind};
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("layout.json");
+        std::fs::write(&p, r#"{"lanes":[[]]}"#).unwrap();
+        let old = load(&p);
+        assert!(old.docker_hosts.is_empty() && old.docker.is_empty());
+        let l = Layout {
+            docker_hosts: vec![DockerHost { name: "Docker1".into(), url: "tcp://192.0.2.10:2375".into() }],
+            docker: [("docker:1".to_string(), DockerTile { host: "Docker1".into(), target: "web".into(), kind: DockerTileKind::ProjectLogs })].into(),
+            ..Layout::default()
+        };
+        save(&p, &l).unwrap();
+        let back = load(&p);
+        assert_eq!(back.docker_hosts, l.docker_hosts);
+        assert_eq!(back.docker, l.docker);
+        assert!(std::fs::read_to_string(&p).unwrap().contains("\"projectLogs\""));
     }
 
     #[test]

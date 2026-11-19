@@ -99,6 +99,73 @@ export interface Layout {
   usageLayout: UsageLayout;
   /** How a session's share of the 5-hour window is worked out (usage_share.rs). */
   usageShare: UsageShare;
+  /** Docker servers shown in the Docker panel (docker.rs). */
+  dockerHosts: DockerHost[];
+  /** What each Docker tile shows, by session key; Rust builds the command. */
+  docker: Record<string, DockerTile>;
+}
+
+/** A Docker server added in Options: a name and its `-H` address. */
+export interface DockerHost {
+  name: string;
+  url: string;
+}
+
+/** A Docker tile: logs of a container or compose project, or a shell in a container. */
+export interface DockerTile {
+  host: string;
+  target: string;
+  kind: "logs" | "projectLogs" | "shell" | "deploy";
+}
+
+export interface DockerContainer {
+  id: string;
+  name: string;
+  image: string;
+  /** Docker's lowercase state: running, exited, restarting, paused, created, dead... */
+  state: string;
+  status: string;
+  project: string | null;
+  service: string | null;
+  /** Label com.docker.compose.project.working_dir: the folder compose was started from (on the server). */
+  workingDir: string | null;
+}
+
+/** Branch (null: detached) and number of uncommitted changes of a local folder. */
+export interface GitSummary {
+  branch: string | null;
+  dirty: number;
+}
+
+/** One row per tag; `<none>` stays literal for repository and tag. */
+export interface DockerImage {
+  id: string;
+  repository: string;
+  tag: string;
+  size: string;
+  created: string;
+}
+
+export interface DockerNamed {
+  name: string;
+  driver: string;
+}
+
+export interface DockerHostView {
+  name: string;
+  url: string;
+  error: string | null;
+  containers: DockerContainer[];
+  images: DockerImage[];
+  networks: DockerNamed[];
+  volumes: DockerNamed[];
+}
+
+/** `cli` false: no docker command; then `hosts` is empty and `compose` false. */
+export interface DockerOverview {
+  cli: boolean;
+  compose: boolean;
+  hosts: DockerHostView[];
 }
 
 /** What desk does when hot: nothing, slow its sessions, the fan steps, or both. */
@@ -473,6 +540,15 @@ export interface PtyExit {
 
 export const api = {
   bootstrap: () => invoke<Bootstrap>("bootstrap"),
+  dockerOverview: () => invoke<DockerOverview>("docker_overview"),
+  /** `docker image rm` of a tag or id on one server; never --force. Rejects with Docker's error. */
+  dockerImageRm: (host: string, image: string) => invoke<void>("docker_image_rm", { host, image }),
+  /** `docker restart` of one container on one server. Rejects with Docker's error. */
+  dockerRestart: (host: string, container: string) => invoke<void>("docker_restart", { host, container }),
+  /** Branch and dirty count of a local folder; null when it is not a git repository (or git timed out). */
+  gitStatusSummary: (path: string) => invoke<GitSummary | null>("git_status_summary", { path }),
+  /** Of the given folders, those holding a compose file (where a deploy may run). */
+  composeDirs: (paths: string[]) => invoke<string[]>("compose_dirs", { paths }),
   /** Server of the saved prompt-rewriting VPN config, null when none (the key never leaves Rust). */
   promptAiVpn: () => invoke<string | null>("prompt_ai_vpn"),
   /** Save a pasted WireGuard .conf ("" removes it); returns its server. */
@@ -484,7 +560,17 @@ export const api = {
   /** `resume`: a Claude conversation's id, to pick it up again (⌘S). */
   /** `restore`: a tile of the saved layout at startup; Claude resumes its last conversation if the session is gone. */
   /** `account`: the Claude account (accounts.ts) a new Claude session starts on. */
-  openSession: (path: string, agent: string, instance: number, command?: string, resume?: string, restore = false, account?: string) =>
+  /** `startDeploy`: a deploy confirmed in the Docker panel this very click; else Rust refuses to start `compose up` (a live session still attaches). */
+  openSession: (
+    path: string,
+    agent: string,
+    instance: number,
+    command: string | undefined,
+    resume: string | undefined,
+    restore: boolean,
+    account: string | undefined,
+    startDeploy: boolean,
+  ) =>
     invoke<string>("open_session", {
       path,
       agent,
@@ -493,6 +579,7 @@ export const api = {
       resume: resume ?? null,
       restore,
       account: account || null,
+      startDeploy,
     }),
   /** The project's newest Claude conversations (⌘S). */
   /** `saved`: ids of the project's saved conversations, listed however old. */
