@@ -3720,6 +3720,14 @@ p.up-model {
   flex-direction: column;
 }
 
+/* The files panel's tree keeps its own height and width there; here it fills the panel and scrolls. */
+.side.upload .ul-tree > .side-tree {
+  flex: 1;
+  min-height: 0;
+  width: auto;
+  border-left: 0;
+}
+
 .ul-top,
 .ul-bottom {
   display: flex;
