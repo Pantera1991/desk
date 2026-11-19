@@ -688,7 +688,7 @@ export const en: Messages = {
   "upload.stopQuit": "Stop and quit",
   "upload.back": "Back",
   "upload.alreadyRunning": "This file is already being sent.",
-  "settings.upload": "Upload",
+  "settings.upload": "rsync upload",
   "settings.uploadHost": "server",
   "settings.uploadUser": "user",
   "settings.uploadKey": "key (optional)",

@@ -49,7 +49,7 @@ export class UploadPanel {
     this.el.hidden = true;
     this.el.innerHTML =
       `<div class="splitter"></div>` +
-      `<div class="side-head"><span class="dock-title">⇪ ${escapeHtml(t("upload.title"))}</span><span class="spacer"></span>` +
+      `<div class="side-head"><span class="dock-title">${escapeHtml(t("upload.title"))}</span><span class="spacer"></span>` +
       `<button type="button" data-u="close" title="${escapeHtml(t("docker.close"))}">×</button></div>` +
       `<div class="ul-top-bar"></div><div class="ul-tree"></div><div class="ul-bar"></div>`;
     this.topBar = this.el.querySelector<HTMLElement>(".ul-top-bar")!;

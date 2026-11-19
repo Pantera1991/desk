@@ -687,7 +687,7 @@ export const pl = {
   "upload.stopQuit": "Przerwij i wyjdź",
   "upload.back": "Wróć",
   "upload.alreadyRunning": "Ten plik już się wysyła.",
-  "settings.upload": "Wysyłka",
+  "settings.upload": "Wysyłka rsync",
   "settings.uploadHost": "serwer",
   "settings.uploadUser": "użytkownik",
   "settings.uploadKey": "klucz (opcjonalnie)",
