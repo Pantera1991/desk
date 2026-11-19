@@ -23,7 +23,7 @@ import {
   type Usage,
 } from "./api";
 import { detectLanguage, isLanguage, setLanguage, t, type Language } from "./i18n";
-import { actionFor, hints, keysIn, keyText, setCustomKeys, setSuperKeys, type Action } from "./keys";
+import { actionFor, hints, keysIn, keyText, setCustomKeys, setSuperKeys, superKeyEvent, type Action, type SuperKey } from "./keys";
 import { PLATFORM, shortcut } from "./platform";
 import { Side } from "./side";
 import * as L from "./lanes";
@@ -336,6 +336,7 @@ export class App {
       setSuperKeys: (on) => {
         this.layout.superKeys = on;
         setSuperKeys(on);
+        void api.setSuperKeys(on);
         this.save();
         this.renderChrome();
       },
@@ -439,6 +440,9 @@ export class App {
     await listen<CoffeeStatus>("coffee", (e) => this.onCoffeeStopped(e.payload));
     // macOS: desk catches ⌘Q / ⌘⇧Q itself, before its menu (Quit) and the Apple menu (Log Out).
     await listen<"close" | "kill">("shortcut", (e) => this.onShortcut(e.payload));
+    // Linux with Start as the shortcut key: the window took Start+key (WebKitGTK
+    // never shows Start to the page); it goes to the same key listeners as any key.
+    await listen<SuperKey>("super-key", (e) => window.dispatchEvent(new KeyboardEvent("keydown", superKeyEvent(e.payload))));
     // Docked at the top of the screen: no traffic lights to make room for.
     await listen<boolean>("dropdown", (e) => {
       this.docked = e.payload;

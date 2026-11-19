@@ -28,6 +28,8 @@ pub mod lock;
 pub mod smc;
 #[cfg(target_os = "macos")]
 mod mac_keys;
+#[cfg(target_os = "linux")]
+mod linux_keys;
 pub mod native;
 pub mod new_project;
 #[cfg(target_os = "linux")]
@@ -576,6 +578,14 @@ pub(crate) fn main_window<R: tauri::Runtime, M: Manager<R>>(app: &M) -> Option<t
     app.get_window("main")
 }
 
+/// Options: on Linux, desk's shortcuts on Start (Super); see linux_keys.rs.
+#[tauri::command]
+fn set_super_keys(on: bool) {
+    #[cfg(target_os = "linux")]
+    linux_keys::set(on);
+    let _ = on;
+}
+
 /// Options changed the dropdown (⌘`): register or drop the shortcut, refit the window.
 #[tauri::command]
 fn dropdown_apply(handle: AppHandle) -> Result<(), String> {
@@ -973,6 +983,11 @@ pub fn run() {
             mac_keys::install(app.handle());
             if let Some(w) = crate::main_window(app) {
                 window_place::restore(&w, &window_place::file(&support));
+                #[cfg(target_os = "linux")]
+                {
+                    linux_keys::set(saved.super_keys);
+                    linux_keys::install(&w);
+                }
             }
             app.manage(AppCoffee(coffee::Coffee::new(&support)));
             coffee::spawn_guard(app.handle().clone());
@@ -1018,6 +1033,7 @@ pub fn run() {
             bootstrap,
             prompt_ai_vpn,
             set_prompt_ai_vpn,
+            set_super_keys,
             prompt_ai_undo,
             open_session,
             kill_session,

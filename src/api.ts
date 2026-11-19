@@ -557,6 +557,8 @@ export const api = {
   promptAiVpn: () => invoke<string | null>("prompt_ai_vpn"),
   /** Save a pasted WireGuard .conf ("" removes it); returns its server. */
   setPromptAiVpn: (conf: string) => invoke<string | null>("set_prompt_ai_vpn", { conf }),
+  /** Linux: the window takes Start+key for desk's shortcuts (linux_keys.rs). */
+  setSuperKeys: (on: boolean) => invoke<void>("set_super_keys", { on }),
   /** The prompt pill's "Cofnij": the next Ctrl+G in that session puts the draft back. */
   promptAiUndo: (slug: string) => invoke<void>("prompt_ai_undo", { slug }),
   listProjects: (extra: string[]) => invoke<Project[]>("list_projects", { extra }),

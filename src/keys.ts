@@ -142,6 +142,24 @@ export function setSuperKeys(on: boolean): void {
   superKeys = on;
 }
 
+/** Start+key as the window saw it (linux_keys.rs): WebKitGTK does not tell the page about Start. */
+export interface SuperKey {
+  code: string;
+  shift: boolean;
+  ctrl: boolean;
+  alt: boolean;
+}
+
+const KEY_OF: Record<string, string> = { Equal: "=", Minus: "-", Backquote: "`", BracketLeft: "[", BracketRight: "]", Backslash: "\\", Semicolon: ";" };
+
+/** The key event desk's shortcuts read (`metaKey` is Start), sent to the window in its place. */
+export function superKeyEvent(k: SuperKey): KeyboardEventInit {
+  const letter = /^Key([A-Z])$/.exec(k.code)?.[1];
+  const digit = /^Digit([0-9])$/.exec(k.code)?.[1];
+  const key = letter ? (k.shift ? letter : letter.toLowerCase()) : (digit ?? KEY_OF[k.code] ?? k.code);
+  return { key, code: k.code, metaKey: true, shiftKey: k.shift, ctrlKey: k.ctrl, altKey: k.alt, bubbles: true, cancelable: true };
+}
+
 /** Start+ combinations GNOME takes before any window sees them: monitors,
  *  lock, quick settings, notifications, desktop, rotation lock. These stay on Ctrl+Shift. */
 const GNOME_TAKES = new Set(["Super+KeyP", "Super+KeyL", "Super+KeyS", "Super+KeyN", "Super+KeyD", "Super+KeyO"]);

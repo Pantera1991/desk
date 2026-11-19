@@ -15,6 +15,7 @@
     "allow-bootstrap",
     "allow-prompt-ai-vpn",
     "allow-set-prompt-ai-vpn",
+    "allow-set-super-keys",
     "allow-prompt-ai-undo",
     "allow-open-session",
     "allow-kill-session",

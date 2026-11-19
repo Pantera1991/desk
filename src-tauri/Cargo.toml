@@ -48,6 +48,8 @@ panic = "abort"
 strip = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
+# Already in Tauri's tree (wry): the window's key events, for Start as the shortcut key.
+gtk = "0.18"
 libc = "0.2"
 libloading = "0.7"
 

@@ -890,6 +890,7 @@ dependencies = [
  "block2",
  "dirs",
  "dispatch2",
+ "gtk",
  "libc",
  "libloading",
  "notify",
