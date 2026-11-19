@@ -88,6 +88,8 @@ const ENDING_MS = 3000;
 export class App {
   private layout!: Layout;
   private home = "";
+  /** layout.json where Rust keeps it (Options' footer). */
+  private layoutPath = "";
   private projectsDir = "";
   private tiles = new Map<string, Tile>(); // by session key (see sessions.ts)
   private hook = new Map<string, SessionState>(); // by tmux slug
@@ -278,6 +280,7 @@ export class App {
     });
     this.settings = new Settings({
       home: () => this.home,
+      layoutPath: () => this.layoutPath,
       layout: () => this.layout,
       projects: () => this.projects(),
       setLaneCount: (n) => {
@@ -487,6 +490,7 @@ export class App {
     this.fanInfo = await api.fansInfo().catch(() => null);
     this.agents = await api.listAgents();
     this.home = boot.home;
+    this.layoutPath = boot.layoutPath;
     this.projectsDir = boot.projectsDir;
     this.chatPath = await api.chatDir().catch(() => "");
     for (const s of boot.states) this.hook.set(s.slug, s);
