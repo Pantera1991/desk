@@ -1741,7 +1741,8 @@ html.dragging-card .tile .term {
 }
 
 .settings .prompt-ai .vpn-error,
-.settings .docker-hosts .vpn-error {
+.settings .docker-hosts .vpn-error,
+.settings .upload-hosts .vpn-error {
   color: var(--danger);
   white-space: pre-wrap;
 }
@@ -3695,4 +3696,52 @@ p.up-model {
 .dk-empty {
   padding: calc(10px * var(--ui-scale, 1));
   color: var(--dim);
+}
+
+/* ---- Upload side panel (upload-view.ts, upload-panel.ts); frame shared with .side and .dock ---- */
+.side.upload .ul-tree {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.ul-top,
+.ul-bottom {
+  display: flex;
+  align-items: center;
+  gap: calc(8px * var(--ui-scale, 1));
+  padding: calc(6px * var(--ui-scale, 1)) calc(8px * var(--ui-scale, 1));
+}
+
+.ul-top {
+  border-bottom: 1px solid var(--line-hi);
+}
+
+.ul-bottom {
+  border-top: 1px solid var(--line-hi);
+}
+
+.ul-top select {
+  flex: 1;
+  min-width: 0;
+}
+
+.ul-file {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ul-empty {
+  padding: calc(6px * var(--ui-scale, 1)) calc(10px * var(--ui-scale, 1));
+  color: var(--dim);
+}
+
+.confirm .choice-warning {
+  margin: 0 0 calc(12px * var(--ui-scale, 1));
+  color: var(--danger);
+  font-weight: 600;
 }

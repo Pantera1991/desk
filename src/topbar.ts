@@ -34,6 +34,12 @@ export function dockerHtml(show: boolean, pressed = false): string {
   return `<button class="top-btn icon" data-top="docker" aria-pressed="${pressed}" title="${escapeHtml(t("top.dockerTitle"))}" aria-label="${escapeHtml(t("top.docker"))}">${WHALE}</button>`;
 }
 
+/** The arrow that opens the Upload panel; nothing while no server is set up. */
+export function uploadHtml(show: boolean, pressed = false): string {
+  if (!show) return "";
+  return `<button class="top-btn icon" data-top="upload" aria-pressed="${pressed}" title="${escapeHtml(t("top.uploadTitle"))}" aria-label="${escapeHtml(t("top.upload"))}">⇪</button>`;
+}
+
 /** Off: the cup alone. On: the cup and what it keeps awake. Sleep left disabled: a red chip before it. */
 export function coffeeHtml(c: CoffeeStatus, platform: Platform): string {
   const title = {

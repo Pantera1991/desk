@@ -105,6 +105,24 @@ export interface Layout {
   dockerHosts: DockerHost[];
   /** What each Docker tile shows, by session key; Rust builds the command. */
   docker: Record<string, DockerTile>;
+  /** Servers the Upload panel sends to (upload.rs). */
+  uploadHosts: UploadHost[];
+  /** What each Upload tile sends, by session key; Rust builds the command. */
+  uploads: Record<string, UploadTile>;
+}
+
+/** A server added in Options → Upload; `key` is an optional ssh key path. */
+export interface UploadHost {
+  host: string;
+  user: string;
+  key: string;
+}
+
+/** An Upload tile: one file of the project sent to `user@host`. */
+export interface UploadTile {
+  host: string;
+  user: string;
+  file: string;
 }
 
 /** A Docker server added in Options: a name and its `-H` address. */
@@ -542,6 +560,15 @@ export interface PtyExit {
 
 export const api = {
   bootstrap: () => invoke<Bootstrap>("bootstrap"),
+  /** Which of rsync and ssh are installed. */
+  uploadTools: () => invoke<{ rsync: boolean; ssh: boolean }>("upload_tools"),
+  /** Host names from /etc/hosts, to suggest in Options (none on Windows). */
+  uploadSuggestions: () => invoke<string[]>("upload_suggestions"),
+  /** Size in bytes of a project file and the name it gets on the server (the
+   *  canonical file's: a symlink's target); rejects when it is refused (outside the project, not a file). */
+  uploadFileSize: (path: string, file: string) => invoke<{ size: number; name: string }>("upload_file_size", { path, file }),
+  /** Whether rsync still runs in the session `slug` (tmux or native). */
+  uploadRunning: (slug: string) => invoke<boolean>("upload_running", { slug }),
   dockerOverview: () => invoke<DockerOverview>("docker_overview"),
   /** `docker image rm` of a tag or id on one server; never --force. Rejects with Docker's error. */
   dockerImageRm: (host: string, image: string) => invoke<void>("docker_image_rm", { host, image }),
@@ -562,7 +589,7 @@ export const api = {
   /** `resume`: a Claude conversation's id, to pick it up again (⌘S). */
   /** `restore`: a tile of the saved layout at startup; Claude resumes its last conversation if the session is gone. */
   /** `account`: the Claude account (accounts.ts) a new Claude session starts on. */
-  /** `startDeploy`: a deploy confirmed in the Docker panel this very click; else Rust refuses to start `compose up` (a live session still attaches). */
+  /** `startDeploy`: a start confirmed by a click: a deploy or an upload; else Rust refuses to start `compose up` / `rsync` (a live session still attaches). */
   openSession: (
     path: string,
     agent: string,
