@@ -149,6 +149,8 @@ mod tests {
         p
     }
 
+    // POSIX paths and the executable bit: Windows paths take `\` and `:`, which the command alphabet refuses.
+    #[cfg(unix)]
     #[test]
     fn program_expands_home_and_needs_an_executable() {
         let home = tempfile::tempdir().unwrap();
