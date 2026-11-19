@@ -117,6 +117,21 @@ describe("custom shortcuts", () => {
     }
   });
 
+  it("can be removed: no key at all, not the default", () => {
+    setCustomKeys({ palette: "" });
+    try {
+      expect(mac(k("p"))).toBeNull();
+      expect(keyText("palette", "mac")).toBe("");
+      expect(keyText("palette", "linux")).toBe("");
+      expect(hints("mac").map(([, label]) => label)).not.toContain("projekty");
+      expect(keysIn("Otwórz (⌘P), zwiń (⌘J)", "mac")).toBe("Otwórz (—), zwiń (⌘J)");
+      // A removed key no longer takes the combination: another shortcut may have it.
+      expect(clashWith("new", "Super+KeyP", "mac")).toBeNull();
+    } finally {
+      setCustomKeys({});
+    }
+  });
+
   it("quit desk has no key until one is set (⌘Q closes a tile)", () => {
     expect(keyText("quit", "mac")).toBe("");
     expect(keyText("quit", "windows")).toBe("");
