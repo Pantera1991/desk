@@ -621,7 +621,7 @@ export const pl = {
   "settings.keysAbout": "Kliknij skrót i naciśnij nowy (Esc anuluje), ↺ przywraca domyślny.",
   "settings.superKeys": "Klawisz skrótów",
   "settings.superKeysStart": "Start (Win)",
-  "settings.superKeysHint": "Start działa jak ⌘ na Macu. P, L, S, N i D zostają na Ctrl+Shift (GNOME zajmuje je ze Start), przejście do kafelka też.",
+  "settings.superKeysHint": "Start działa jak ⌘ na Macu. P, L, S, N, D i O zostają na Ctrl+Shift (GNOME zajmuje je ze Start), przejście do kafelka też.",
   "settings.dropdownKey": "wysuwa i chowa desk z góry ekranu, w każdej aplikacji",
   "settings.dropdownKeyOff": "(wyłączony w grupie Okno i układ)",
   "settings.default": "domyślny",

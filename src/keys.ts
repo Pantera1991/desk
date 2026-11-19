@@ -143,8 +143,8 @@ export function setSuperKeys(on: boolean): void {
 }
 
 /** Start+ combinations GNOME takes before any window sees them: monitors,
- *  lock, quick settings, notifications, desktop. These stay on Ctrl+Shift. */
-const GNOME_TAKES = new Set(["Super+KeyP", "Super+KeyL", "Super+KeyS", "Super+KeyN", "Super+KeyD"]);
+ *  lock, quick settings, notifications, desktop, rotation lock. These stay on Ctrl+Shift. */
+const GNOME_TAKES = new Set(["Super+KeyP", "Super+KeyL", "Super+KeyS", "Super+KeyN", "Super+KeyD", "Super+KeyO"]);
 
 function defaults(b: Binding, platform: Platform): string[] {
   if (platform === "mac") return b.mac;

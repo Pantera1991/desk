@@ -622,7 +622,7 @@ export const en: Messages = {
   "settings.keysAbout": "Click a shortcut and press a new one (Esc cancels), ↺ restores the default.",
   "settings.superKeys": "Shortcut key",
   "settings.superKeysStart": "Start (Win)",
-  "settings.superKeysHint": "Start works like ⌘ on a Mac. P, L, S, N and D stay on Ctrl+Shift (GNOME takes them with Start), and so does jumping to a tile.",
+  "settings.superKeysHint": "Start works like ⌘ on a Mac. P, L, S, N, D and O stay on Ctrl+Shift (GNOME takes them with Start), and so does jumping to a tile.",
   "settings.dropdownKey": "slides desk down from the top of the screen and back, in every app",
   "settings.dropdownKeyOff": "(off in the Window and layout group)",
   "settings.default": "default",

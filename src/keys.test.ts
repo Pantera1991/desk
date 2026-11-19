@@ -172,10 +172,10 @@ describe("the Start (Super) key on Linux", () => {
     }
   });
 
-  it("keeps Ctrl+Shift where GNOME takes Start first (P, L, S, N, D)", () => {
+  it("keeps Ctrl+Shift where GNOME takes Start first (P, L, S, N, D, O)", () => {
     setSuperKeys(true);
     try {
-      for (const id of ["palette", "arrange", "sessions", "new", "sub"]) expect(keyText(id, "linux")).toMatch(/^Ctrl⇧/);
+      for (const id of ["palette", "arrange", "sessions", "new", "sub", "settings"]) expect(keyText(id, "linux")).toMatch(/^Ctrl⇧/);
       expect(win("KeyP")).toBeNull();
       expect(actionFor({ key: "P", code: "KeyP", metaKey: false, shiftKey: true, altKey: false, ctrlKey: true }, "linux")).toEqual({ type: "palette" });
     } finally {
