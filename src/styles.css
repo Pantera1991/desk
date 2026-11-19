@@ -1741,6 +1741,20 @@ html.dragging-card .tile .term {
 }
 
 .settings .prompt-ai .vpn-error,
+/* Options → rsync upload: the three fields share the row and shrink with the window. */
+.settings .upload-host input {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.settings .upload-host input[data-k="upload-key"] {
+  flex-grow: 1.6;
+}
+
+.settings .upload-host button {
+  flex: none;
+}
+
 .settings .docker-hosts .vpn-error,
 .settings .upload-hosts .vpn-error {
   color: var(--danger);

@@ -15,9 +15,9 @@ const CUP =
 const WHALE =
   '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M.9 6.4h9.6c.4-.9 1-1.2 1.6-1.2-.2-.6-.9-.9-1.5-.7-.1-.6-.5-1-1-1.2-.2.5-.1.9.1 1.2"/><path d="M1.2 6.4c.2 2.2 1.8 3.6 4.4 3.6 2.6 0 4.1-1.3 4.9-3.6"/><path d="M2.6 4.7h1.5v1.7H2.6zM4.4 4.7h1.5v1.7H4.4zM6.2 4.7h1.5v1.7H6.2zM4.4 3h1.5v1.7H4.4z"/></svg>';
 
-/** A server with an arrow going up: the rsync upload panel. */
+/** Two arrows chasing each other: rsync, the upload panel. */
 export const RSYNC =
-  '<svg viewBox="0 0 12 12" aria-hidden="true"><rect x="1.5" y="7.2" width="9" height="3.3" rx=".6"/><path d="M3.3 8.85h.6"/><path d="M6 1.3v4.4"/><path d="M4 3.3 6 1.3l2 2"/></svg>';
+  '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M10.1 5.2A4.2 4.2 0 0 0 2.7 3.4"/><path d="M2.5 1.4v2.2h2.2"/><path d="M1.9 6.8a4.2 4.2 0 0 0 7.4 1.8"/><path d="M9.5 10.6V8.4H7.3"/></svg>';
 
 /** "desk" and, once the app said it, its version in small print. `drag` is
  *  the attribute that drags the window by them (none while docked). */
@@ -38,7 +38,7 @@ export function dockerHtml(show: boolean, pressed = false): string {
   return `<button class="top-btn icon" data-top="docker" aria-pressed="${pressed}" title="${escapeHtml(t("top.dockerTitle"))}" aria-label="${escapeHtml(t("top.docker"))}">${WHALE}</button>`;
 }
 
-/** The server icon that opens the rsync panel; nothing while no server is set up. */
+/** The sync arrows that open the rsync panel; nothing while no server is set up. */
 export function uploadHtml(show: boolean, pressed = false): string {
   if (!show) return "";
   return `<button class="top-btn icon" data-top="upload" aria-pressed="${pressed}" title="${escapeHtml(t("top.uploadTitle"))}" aria-label="${escapeHtml(t("top.upload"))}">${RSYNC}</button>`;
