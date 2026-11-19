@@ -138,6 +138,8 @@ export const pl = {
   "top.waiting": "{n} czeka",
   "top.browser": "Przeglądarka",
   "top.quitTitle": "Zamknij desk{keys}",
+  "top.settings": "Opcje",
+  "top.settingsTitle": "Opcje{keys}",
   "top.quitConfirm": "Zamknąć desk? {sessions}",
   "top.quit": "Zamknij",
   "top.quitKill": "Zabij wszystkie ({n}) i zamknij",

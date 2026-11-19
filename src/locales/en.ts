@@ -139,6 +139,8 @@ export const en: Messages = {
   "top.waiting": "{n} waiting",
   "top.browser": "Browser",
   "top.quitTitle": "Quit desk{keys}",
+  "top.settings": "Options",
+  "top.settingsTitle": "Options{keys}",
   "top.quitConfirm": "Quit desk? {sessions}",
   "top.quit": "Quit",
   "top.quitKill": "Kill all {n} and quit",

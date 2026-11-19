@@ -15,6 +15,9 @@ const CUP =
 const WHALE =
   '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M.9 6.4h9.6c.4-.9 1-1.2 1.6-1.2-.2-.6-.9-.9-1.5-.7-.1-.6-.5-1-1-1.2-.2.5-.1.9.1 1.2"/><path d="M1.2 6.4c.2 2.2 1.8 3.6 4.4 3.6 2.6 0 4.1-1.3 4.9-3.6"/><path d="M2.6 4.7h1.5v1.7H2.6zM4.4 4.7h1.5v1.7H4.4zM6.2 4.7h1.5v1.7H6.2zM4.4 3h1.5v1.7H4.4z"/></svg>';
 
+const GEAR =
+  '<svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="1.6"/><circle cx="6" cy="6" r="3.3"/><path d="M6 1v1.4M6 9.6V11M1 6h1.4M9.6 6H11M2.5 2.5l1 1M8.5 8.5l1 1M2.5 9.5l1-1M8.5 3.5l1-1"/></svg>';
+
 /** "desk" and, once the app said it, its version in small print. `drag` is
  *  the attribute that drags the window by them (none while docked). */
 export function brandHtml(version: string | null, drag: string): string {
@@ -26,6 +29,12 @@ export function brandHtml(version: string | null, drag: string): string {
 export function browserHtml(keys: string): string {
   const title = escapeHtml(t("top.browserTitle", { keys }));
   return `<button class="top-btn icon" data-top="browser" title="${title}" aria-label="${escapeHtml(t("top.browser"))}">${GLOBE}</button>`;
+}
+
+/** The gear at the very end of the bar: Options. `keys` is its shortcut, "" when none is set. */
+export function settingsHtml(keys: string): string {
+  const title = escapeHtml(t("top.settingsTitle", { keys: keys ? ` (${keys})` : "" }));
+  return `<button class="top-btn icon" data-top="settings" title="${title}" aria-label="${escapeHtml(t("top.settings"))}">${GEAR}</button>`;
 }
 
 /** The whale that opens the Docker panel; nothing while no server is set up. */

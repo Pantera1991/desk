@@ -64,7 +64,7 @@ import {
   thermalHtml,
   thermalToast,
 } from "./thermal";
-import { brandHtml, browserHtml, coffeeHtml, dockerHtml } from "./topbar";
+import { brandHtml, browserHtml, coffeeHtml, dockerHtml, settingsHtml } from "./topbar";
 import { UpdateChecker, type UpdateOutcome } from "./updates";
 import { accountById, accountColor, accountFor, hasAccounts } from "./accounts";
 import { applyUiScale, uiScale } from "./ui-scale";
@@ -473,6 +473,7 @@ export class App {
       if (t === "update") void this.installUpdate();
       if (t === "leave") void api.dropdownLeave();
       if (t === "quit") void this.quit();
+      if (t === "settings") this.run({ type: "settings" });
       if (t === "background") void this.showBackground();
       const chip = (e.target as HTMLElement).closest<HTMLElement>("[data-usage]")?.dataset.usage;
       if (chip) this.usagePopover.toggle(chip);
@@ -1916,7 +1917,7 @@ export class App {
     }<span class="spacer"${drag}></span>${this.updateHtml()}${usageHtml(this.usage, Date.now(), (id) => {
       const a = this.layout.claudeAccounts.find((x) => x.id === id);
       return a ? { name: a.name, color: accountColor(this.layout, a.id) } : null;
-    })}${thermalHtml(this.thermal, this.layout.thermalColors)}${dockerHtml(this.layout.dockerHosts.length > 0, this.dockerPanel.isOpen)}${browserHtml(keysIn("⌘W"))}${coffeeHtml(this.coffee, PLATFORM)}${this.quitHtml()}`;
+    })}${thermalHtml(this.thermal, this.layout.thermalColors)}${dockerHtml(this.layout.dockerHosts.length > 0, this.dockerPanel.isOpen)}${browserHtml(keysIn("⌘W"))}${coffeeHtml(this.coffee, PLATFORM)}${this.quitHtml()}${settingsHtml(keyText("settings"))}`;
     this.footer.innerHTML =
       `<span class="here" hidden></span><span class="hints">${hints()
         .map(([k, label]) => `<span><kbd>${k}</kbd> ${escapeHtml(label)}</span>`)
