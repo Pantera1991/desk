@@ -135,8 +135,20 @@ export function setCustomKeys(keys: Record<string, string>): void {
   custom = { ...keys };
 }
 
+/** Linux with Start (Super) in place of Ctrl+Shift, as ⌘ on macOS (layout.superKeys). */
+let superKeys = false;
+
+export function setSuperKeys(on: boolean): void {
+  superKeys = on;
+}
+
+/** Start+ combinations GNOME takes before any window sees them: monitors,
+ *  lock, quick settings, notifications, desktop. These stay on Ctrl+Shift. */
+const GNOME_TAKES = new Set(["Super+KeyP", "Super+KeyL", "Super+KeyS", "Super+KeyN", "Super+KeyD"]);
+
 function defaults(b: Binding, platform: Platform): string[] {
   if (platform === "mac") return b.mac;
+  if (platform === "linux" && superKeys && b.mac.length && !b.mac.some((a) => GNOME_TAKES.has(a))) return b.mac;
   return b.other ?? b.mac.map((a) => a.replace("Super", "Control+Shift"));
 }
 

@@ -78,6 +78,9 @@ pub struct Layout {
     pub dropdown_animation: u32,
     /// desk's shortcuts changed in Options, by binding id (src/keys.ts).
     pub keys: std::collections::BTreeMap<String, String>,
+    /// Linux: desk's shortcuts on Start (Super), like ⌘ on macOS, instead of
+    /// Ctrl+Shift (see setSuperKeys in src/keys.ts).
+    pub super_keys: bool,
     /// A right click in a terminal opens tmux's menu (split, swap, kill...)
     /// when the program in it does not take the mouse.
     pub tmux_menu: bool,
@@ -191,6 +194,7 @@ impl Default for Layout {
             dropdown_hotkey: crate::dropdown::DEFAULT_HOTKEY.into(),
             dropdown_animation: 200,
             keys: Default::default(),
+            super_keys: false,
             tmux_menu: false,
             language: String::new(),
             prompt_ai: PromptAi::default(),
@@ -416,6 +420,19 @@ mod tests {
         let l = Layout { ui_scale: 1.25, ..Layout::default() };
         save(&p, &l).unwrap();
         assert_eq!(load(&p).ui_scale, 1.25);
+    }
+
+    #[test]
+    fn super_keys_are_off_in_old_files_and_round_trip() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("layout.json");
+        std::fs::write(&p, r#"{"version":1}"#).unwrap();
+        assert!(!load(&p).super_keys);
+        std::fs::write(&p, r#"{"version":1,"superKeys":true}"#).unwrap();
+        assert!(load(&p).super_keys);
+        let l = Layout { super_keys: true, ..Layout::default() };
+        save(&p, &l).unwrap();
+        assert!(load(&p).super_keys);
     }
 
     #[test]

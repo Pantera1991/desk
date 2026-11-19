@@ -90,6 +90,8 @@ export interface SettingsContext {
   ) => Promise<void>;
   /** A desk shortcut set in Options, or back to its default (null). */
   setKey: (id: string, accelerator: string | null) => void;
+  /** Linux: shortcuts on Start (Super) instead of Ctrl+Shift. */
+  setSuperKeys: (on: boolean) => void;
   /** Ask GitHub for a newer desk now. */
   checkUpdate: () => Promise<void>;
   /** A newer desk found, and how the last check went (updates.ts). */
@@ -955,6 +957,19 @@ export class Settings {
       [
         "keys",
         section("", `<p class="dim small" data-row>${t("settings.keysAbout")}</p>`) +
+          (PLATFORM === "linux"
+            ? section(
+                "",
+                `<div class="line" data-row><span>${t("settings.superKeys")}</span><span class="seg">${(
+                  [
+                    [false, "Ctrl+Shift"],
+                    [true, t("settings.superKeysStart")],
+                  ] as const
+                )
+                  .map(([on, label]) => `<button class="${layout.superKeys === on ? "sel" : ""}" data-super-keys="${on}">${label}</button>`)
+                  .join("")}</span><span class="dim">${t("settings.superKeysHint")}</span></div>`,
+              )
+            : "") +
           `<div class="shortcut-list">${section(
             "Dropdown",
             `<div class="shortcut" data-row>${this.keyButton("dropdown", hotkey, off)}<span>${t("settings.dropdownKey")}${
@@ -1116,6 +1131,12 @@ export class Settings {
     box.querySelectorAll<HTMLButtonElement>("[data-usage-share]").forEach((b) =>
       b.addEventListener("click", () => {
         this.ctx.setUsageShare(b.dataset.usageShare === "transcripts" ? "transcripts" : "cost");
+        this.render();
+      }),
+    );
+    box.querySelectorAll<HTMLButtonElement>("[data-super-keys]").forEach((b) =>
+      b.addEventListener("click", () => {
+        this.ctx.setSuperKeys(b.dataset.superKeys === "true");
         this.render();
       }),
     );

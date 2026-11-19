@@ -23,7 +23,7 @@ import {
   type Usage,
 } from "./api";
 import { detectLanguage, isLanguage, setLanguage, t, type Language } from "./i18n";
-import { actionFor, hints, keysIn, keyText, setCustomKeys, type Action } from "./keys";
+import { actionFor, hints, keysIn, keyText, setCustomKeys, setSuperKeys, type Action } from "./keys";
 import { PLATFORM, shortcut } from "./platform";
 import { Side } from "./side";
 import * as L from "./lanes";
@@ -333,6 +333,12 @@ export class App {
         this.save();
         this.renderChrome();
       },
+      setSuperKeys: (on) => {
+        this.layout.superKeys = on;
+        setSuperKeys(on);
+        this.save();
+        this.renderChrome();
+      },
       setAutoLayout: (on) => {
         this.layout.autoLayout = on;
         this.changed();
@@ -526,6 +532,7 @@ export class App {
       dropdownHotkey: boot.layout.dropdownHotkey || DEFAULT_HOTKEY(),
       dropdownAnimation: boot.layout.dropdownAnimation ?? 200,
       keys: boot.layout.keys ?? {},
+      superKeys: boot.layout.superKeys ?? false,
       tmuxMenu: boot.layout.tmuxMenu ?? false,
       thermalMode: boot.layout.thermalMode ?? "slow",
       thermalLimit: boot.layout.thermalLimit ?? DEFAULT_LIMIT,
@@ -543,6 +550,7 @@ export class App {
       lanes: L.restore(boot.layout.lanes, boot.layout.autostart, boot.layout.lanes.length),
     };
     setCustomKeys(this.layout.keys);
+    setSuperKeys(this.layout.superKeys);
     applyUiScale(this.layout.uiScale);
     if (language !== boot.layout.language) this.save();
     this.applyTheme();

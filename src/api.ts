@@ -66,6 +66,8 @@ export interface Layout {
   dropdownAnimation: number;
   /** desk's shortcuts changed in Options, by binding id (keys.ts). */
   keys: Record<string, string>;
+  /** Linux: shortcuts on Start (Super) like ⌘ on macOS, instead of Ctrl+Shift. */
+  superKeys: boolean;
   /** A right click in a terminal opens tmux's menu (split, swap, kill...). */
   tmuxMenu: boolean;
   /** Interface language, "pl" or "en" (i18n.ts); "" until the first launch picks one. */

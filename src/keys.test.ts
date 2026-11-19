@@ -1,7 +1,7 @@
 import { shortcuts } from "./platform";
 import { setLanguage, t } from "./i18n";
 import { describe, expect, it } from "vitest";
-import { actionFor, BINDINGS, clashWith, hints, keysIn, keyText, setCustomKeys } from "./keys";
+import { actionFor, BINDINGS, clashWith, hints, keysIn, keyText, setCustomKeys, setSuperKeys } from "./keys";
 
 const k = (key: string, mods: Partial<{ metaKey: boolean; shiftKey: boolean; altKey: boolean; ctrlKey: boolean }> = {}) => ({
   key,
@@ -141,5 +141,56 @@ describe("custom shortcuts", () => {
 
   it("have unique ids", () => {
     expect(new Set(BINDINGS.map((b) => b.id)).size).toBe(BINDINGS.length);
+  });
+});
+
+describe("the Start (Super) key on Linux", () => {
+  const win = (code: string, more: Partial<{ shiftKey: boolean; ctrlKey: boolean }> = {}) =>
+    actionFor({ key: code.replace(/^Key/, "").toLowerCase(), code, metaKey: true, shiftKey: false, altKey: false, ctrlKey: false, ...more }, "linux");
+
+  it("is off by default: Ctrl+Shift as before", () => {
+    expect(keyText("files", "linux")).toBe("Ctrl⇧F");
+    expect(win("KeyF")).toBeNull();
+  });
+
+  it("when on, desk's shortcuts take Start like ⌘ on a Mac", () => {
+    setSuperKeys(true);
+    try {
+      expect(keyText("files", "linux")).toBe("Win+F");
+      expect(win("KeyF")).toEqual({ type: "files" });
+      expect(win("KeyW")).toEqual({ type: "preview" });
+      expect(win("KeyG", { shiftKey: true })).toEqual({ type: "docker" });
+      expect(win("KeyQ", { shiftKey: true })).toEqual({ type: "kill" });
+      expect(keysIn("⌘F", "linux")).toBe("Win+F");
+      // Ctrl+Shift no longer does what Start does now.
+      expect(actionFor({ key: "F", code: "KeyF", metaKey: false, shiftKey: true, altKey: false, ctrlKey: true }, "linux")).toBeNull();
+      // macOS and Windows are not touched.
+      expect(keyText("files", "mac")).toBe("⌘F");
+      expect(keyText("files", "windows")).toBe("Ctrl⇧F");
+    } finally {
+      setSuperKeys(false);
+    }
+  });
+
+  it("keeps Ctrl+Shift where GNOME takes Start first (P, L, S, N, D)", () => {
+    setSuperKeys(true);
+    try {
+      for (const id of ["palette", "arrange", "sessions", "new", "sub"]) expect(keyText(id, "linux")).toMatch(/^Ctrl⇧/);
+      expect(win("KeyP")).toBeNull();
+      expect(actionFor({ key: "P", code: "KeyP", metaKey: false, shiftKey: true, altKey: false, ctrlKey: true }, "linux")).toEqual({ type: "palette" });
+    } finally {
+      setSuperKeys(false);
+    }
+  });
+
+  it("leaves a shortcut set in Options as it is", () => {
+    setSuperKeys(true);
+    setCustomKeys({ files: "Control+Alt+KeyF" });
+    try {
+      expect(keyText("files", "linux")).toBe("Ctrl+Alt+F");
+    } finally {
+      setCustomKeys({});
+      setSuperKeys(false);
+    }
   });
 });
