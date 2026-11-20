@@ -32,6 +32,7 @@ import { checkUploadHosts, methodOf, uploadDraftAdd, uploadDraftRemove, uploadDr
 import { rows, shortPath } from "./projects";
 import { search, type SearchItem } from "./settings-search";
 import { escapeHtml } from "./tile";
+import { editorChoice } from "./find-view";
 import { acceleratorFor, DEFAULT_HOTKEY, hotkeyLabel } from "./hotkey";
 import { LANGUAGES, language, t, type Language, type MessageKey } from "./i18n";
 import { bindingLabel, BINDINGS, clashWith, defaultsOf, FIXED, groupLabel, GROUPS, keyText } from "./keys";
@@ -78,10 +79,16 @@ export interface SettingsContext {
   projects: () => Promise<Project[]>;
   setLaneCount: (n: number) => void;
   setAutoLayout: (on: boolean) => void;
+  /** The files panel at the side (false) or in a window of its own (true); switched at once. */
+  setFilesWindow: (on: boolean) => void;
+  /** The file tree on the left of the files panel instead of the right. */
+  setTreeLeft: (left: boolean) => void;
   setTheme: (id: string) => void;
   setBrowser: (id: string) => void;
   /** What a plain click on a terminal link does (links.ts). */
   setLinkClick: (mode: LinkClick) => void;
+  /** The program that opens files at a line ("" = the built-in editor); checked before it gets here. */
+  setFileEditor: (cmd: string) => void;
   /** The usage popover's layout (Options, AI stats). */
   setUsageLayout: (v: UsageLayout) => void;
   /** The size of the window's own text and bars (ui-scale.ts). */
@@ -97,6 +104,8 @@ export interface SettingsContext {
   ) => Promise<void>;
   /** A desk shortcut set in Options, removed (""), or back to its default (null). */
   setKey: (id: string, accelerator: string | null) => void;
+  /** Linux: shortcuts on Start (Super) instead of Ctrl+Shift. */
+  setSuperKeys: (on: boolean) => void;
   /** Ask GitHub for a newer desk now. */
   checkUpdate: () => Promise<void>;
   /** A newer desk found, and how the last check went (updates.ts). */
@@ -651,6 +660,8 @@ export class Settings {
   private tab: Group = "general";
   /** What is typed in the search field; "" shows the chosen group. */
   private query = "";
+  /** "program" chosen for the file editor while no command is saved yet. */
+  private fileEditorProgram = false;
 
   constructor(private ctx: SettingsContext) {}
 
@@ -680,6 +691,27 @@ export class Settings {
     this.el.querySelector<HTMLInputElement>('[data-k="search"]')?.focus();
     this.projects = await this.ctx.projects();
     this.render();
+  }
+
+  /** Check the program first; save it only when it is found, else say why under the field. */
+  private async saveFileEditor(input: HTMLInputElement, box: HTMLElement): Promise<void> {
+    const cmd = input.value.trim();
+    const err = box.querySelector<HTMLElement>('[data-k="file-editor-err"]');
+    const show = (msg: string) => {
+      if (!err) return;
+      err.textContent = msg;
+      err.hidden = !msg;
+    };
+    if (cmd) {
+      try {
+        await api.checkFileEditor(cmd);
+      } catch (e) {
+        show(String(e));
+        return;
+      }
+    }
+    show("");
+    this.ctx.setFileEditor(cmd);
   }
 
   /** The line about a newer desk again, alone: a check every half hour must
@@ -816,6 +848,7 @@ export class Settings {
     const hotkey = hotkeyLabel(layout.dropdownHotkey || DEFAULT_HOTKEY());
     const off = layout.dropdown ? "" : "disabled";
     const linkClick: LinkClick = layout.linkClick === "browser" || layout.linkClick === "none" ? layout.linkClick : "desk";
+    const program = this.fileEditorProgram || editorChoice(layout.fileEditor) === "program";
     const uiScaleNow = uiScale(layout.uiScale);
     const tileIconNow = tileIconScale(layout.tileIconScale);
     const usageLayout: UsageLayout = layout.usageLayout === "all" ? "all" : "tabs";
@@ -875,7 +908,23 @@ export class Settings {
         section(
           "",
           `<label class="line" data-row><input type="checkbox" data-k="auto-layout" ${layout.autoLayout ? "checked" : ""}/> ${t("settings.autoLayout")} <span class="dim">${t("settings.autoLayoutHint")}</span></label>
-      <label class="line" data-row>${t("settings.lanes")} <input type="number" min="1" max="8" value="${layout.lanes.length}" data-k="lanes" ${layout.autoLayout ? "disabled" : ""}/></label>`,
+      <label class="line" data-row>${t("settings.lanes")} <input type="number" min="1" max="8" value="${layout.lanes.length}" data-k="lanes" ${layout.autoLayout ? "disabled" : ""}/></label>
+      <div class="line" data-row><span>${t("settings.filesPanel")}</span><span class="seg">${(
+        [
+          ["side", t("settings.filesPanelSide")],
+          ["window", t("settings.filesPanelWindow")],
+        ] as const
+      )
+        .map(([v, label]) => `<button class="${(layout.filesWindow ? "window" : "side") === v ? "sel" : ""}" data-files-window="${v}">${label}</button>`)
+        .join("")}</span></div>
+      <div class="line" data-row><span>${t("settings.treeSide")}</span><span class="seg">${(
+        [
+          ["left", t("settings.treeSideLeft")],
+          ["right", t("settings.treeSideRight")],
+        ] as const
+      )
+        .map(([v, label]) => `<button class="${(layout.treeLeft ? "left" : "right") === v ? "sel" : ""}" data-tree-side="${v}">${label}</button>`)
+        .join("")}</span></div>`,
         ) +
           section(
             t("settings.dropdown"),
@@ -906,7 +955,19 @@ export class Settings {
         ["system", t("settings.browserSystem")],
       ]
         .map(([v, label]) => `<option value="${v}" ${(layout.browser || "auto") === v ? "selected" : ""}>${label}</option>`)
-        .join("")}</select></label>`,
+        .join("")}</select></label>
+      <div class="line wrap" data-row><span>${t("settings.fileEditor")}</span><span class="seg">${(
+        [
+          ["builtin", t("settings.fileEditorBuiltin")],
+          ["program", t("settings.fileEditorProgram")],
+        ] as const
+      )
+        .map(([v, label]) => `<button class="${program ? (v === "program" ? "sel" : "") : v === "builtin" ? "sel" : ""}" data-file-editor="${v}">${label}</button>`)
+        .join("")}</span>${
+        program
+          ? `<input type="text" data-k="file-editor" value="${escapeHtml(layout.fileEditor)}" placeholder="subl" spellcheck="false" />`
+          : ""
+      }<span class="dim">${t("settings.fileEditorHint")}</span><div class="field-err" data-k="file-editor-err" hidden></div></div>`,
         ) +
           section(
             t("settings.terminalSection"),
@@ -1060,6 +1121,19 @@ export class Settings {
       [
         "keys",
         section("", `<p class="dim small" data-row>${t("settings.keysAbout")}</p>`) +
+          (PLATFORM === "linux"
+            ? section(
+                "",
+                `<div class="line" data-row><span>${t("settings.superKeys")}</span><span class="seg">${(
+                  [
+                    [false, "Ctrl+Shift"],
+                    [true, t("settings.superKeysStart")],
+                  ] as const
+                )
+                  .map(([on, label]) => `<button class="${layout.superKeys === on ? "sel" : ""}" data-super-keys="${on}">${label}</button>`)
+                  .join("")}</span><span class="dim">${t("settings.superKeysHint")}</span></div>`,
+              )
+            : "") +
           `<div class="shortcut-list">${section(
             "Dropdown",
             `<div class="shortcut" data-row>${this.keyButton("dropdown", hotkey, off)}<span>${t("settings.dropdownKey")}${
@@ -1239,6 +1313,12 @@ export class Settings {
         this.render();
       }),
     );
+    box.querySelectorAll<HTMLButtonElement>("[data-super-keys]").forEach((b) =>
+      b.addEventListener("click", () => {
+        this.ctx.setSuperKeys(b.dataset.superKeys === "true");
+        this.render();
+      }),
+    );
     box.querySelectorAll<HTMLButtonElement>("[data-link-click]").forEach((b) =>
       b.addEventListener("click", () => {
         this.ctx.setLinkClick(b.dataset.linkClick as LinkClick);
@@ -1248,6 +1328,25 @@ export class Settings {
     box.querySelector<HTMLSelectElement>('[data-k="browser"]')!.addEventListener("change", (e) => {
       this.ctx.setBrowser((e.target as HTMLSelectElement).value);
     });
+    box.querySelectorAll<HTMLButtonElement>("[data-file-editor]").forEach((b) =>
+      b.addEventListener("click", () => {
+        this.fileEditorProgram = b.dataset.fileEditor === "program";
+        if (!this.fileEditorProgram) this.ctx.setFileEditor("");
+        this.render();
+      }),
+    );
+    const fileEditor = box.querySelector<HTMLInputElement>('[data-k="file-editor"]');
+    fileEditor?.addEventListener("change", () => void this.saveFileEditor(fileEditor, box));
+    // desk redraws Options once the switch is done (a file that does not save keeps the old place).
+    box.querySelectorAll<HTMLButtonElement>("[data-files-window]").forEach((b) =>
+      b.addEventListener("click", () => this.ctx.setFilesWindow(b.dataset.filesWindow === "window")),
+    );
+    box.querySelectorAll<HTMLButtonElement>("[data-tree-side]").forEach((b) =>
+      b.addEventListener("click", () => {
+        this.ctx.setTreeLeft(b.dataset.treeSide === "left");
+        this.render();
+      }),
+    );
     box.querySelector<HTMLInputElement>('[data-k="auto-layout"]')!.addEventListener("change", (e) => {
       this.ctx.setAutoLayout((e.target as HTMLInputElement).checked);
       this.render();

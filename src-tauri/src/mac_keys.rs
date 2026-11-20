@@ -5,9 +5,12 @@
 //! window which one it was. desk itself quits only from its menu.
 
 use block2::RcBlock;
+use objc2::rc::Retained;
+use objc2::MainThreadMarker;
 use objc2_app_kit::{NSEvent, NSEventMask, NSEventModifierFlags as M};
+use std::ffi::c_void;
 use std::ptr::NonNull;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 pub fn install(app: &AppHandle) {
     let handle = app.clone();
@@ -22,8 +25,18 @@ pub fn install(app: &AppHandle) {
             if !q || !flags.contains(M::Command) || flags.intersects(M::Control | M::Option) {
                 return event.as_ptr();
             }
+            // The monitor sees every window of the app. Only the main window's
+            // key-downs reach its tiles; in the files window ⌘Q does nothing
+            // (still swallowed below, so the menu does not quit).
+            // A local monitor runs on the main thread, so the marker is there.
+            let in_main = MainThreadMarker::new().and_then(|mtm| e.window(mtm)).is_some_and(|w| {
+                handle
+                    .get_webview_window("main")
+                    .and_then(|main| main.ns_window().ok())
+                    .is_some_and(|main| std::ptr::eq(Retained::as_ptr(&w).cast::<c_void>(), main.cast_const()))
+            });
             // Held down, it would close one tile after another.
-            if !e.isARepeat() {
+            if in_main && !e.isARepeat() {
                 let action = if flags.contains(M::Shift) { "kill" } else { "close" };
                 let _ = handle.emit_to("main", "shortcut", action);
             }

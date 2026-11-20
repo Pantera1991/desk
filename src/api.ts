@@ -13,6 +13,29 @@ export interface Project {
 /** Sessions of a card one under another, side by side, or one at a time. */
 export type CardMode = "stack" | "row" | "tabs";
 
+export interface GrepHit {
+  file: string;
+  line: number;
+  text: string;
+  /** Matches in `text` as [start, end) UTF-16 ranges. */
+  marks: [number, number][];
+  /** UTF-16 units of the line cut off before `text` (0 when not cut; else `text` starts with "…"). */
+  cut: number;
+}
+
+export interface GrepResult {
+  hits: GrepHit[];
+  files: number;
+  /** The search stopped at the cap. */
+  more: boolean;
+}
+
+export interface GrepOptions {
+  case: boolean;
+  word: boolean;
+  regex: boolean;
+}
+
 export interface Layout {
   version: number;
   lanes: string[][];
@@ -68,10 +91,18 @@ export interface Layout {
   dropdownAnimation: number;
   /** desk's shortcuts changed in Options, by binding id (keys.ts). */
   keys: Record<string, string>;
+  /** Linux: shortcuts on Start (Super) like ⌘ on macOS, instead of Ctrl+Shift. */
+  superKeys: boolean;
   /** A right click in a terminal opens tmux's menu (split, swap, kill...). */
   tmuxMenu: boolean;
   /** Interface language, "pl" or "en" (i18n.ts); "" until the first launch picks one. */
   language: string;
+  /** Program that opens a Find in Files result at its line; "" is the built-in editor. */
+  fileEditor: string;
+  /** The files panel lives in a window of its own instead of at the side (files-window-panel.ts). */
+  filesWindow: boolean;
+  /** The file tree on the left of the files panel instead of the right. */
+  treeLeft: boolean;
   /** Ctrl+G in Claude rewrites the prompt with the company LLM (prompt_ai.rs). */
   promptAi: PromptAi;
   /** Claude accounts (accounts.ts); the first one is the default. */
@@ -585,12 +616,23 @@ export const api = {
   dockerRestart: (host: string, container: string) => invoke<void>("docker_restart", { host, container }),
   /** Branch and dirty count of a local folder; null when it is not a git repository (or git timed out). */
   gitStatusSummary: (path: string) => invoke<GitSummary | null>("git_status_summary", { path }),
+  /** Text search in a project's files (max 500 hits); `marks` are UTF-16 ranges. Rejects with a message (bad regex, may span lines). */
+  grepFiles: (path: string, query: string, o: GrepOptions) =>
+    invoke<GrepResult>("grep_files", { path, query, case: o.case, word: o.word, regex: o.regex }),
+  /** Text of `file` (relative to the project) for the read-only Find preview. Rejects with a message. */
+  readProjectText: (path: string, file: string) => invoke<string>("read_project_text", { path, file }),
+  /** Open `file` (relative to the project) at `line` in the configured file editor. Rejects with a message. */
+  openFileAt: (path: string, file: string, line: number) => invoke<void>("open_file_at", { path, file, line }),
+  /** Check that a file-editor command can be run. Rejects with a message. */
+  checkFileEditor: (cmd: string) => invoke<void>("check_file_editor", { cmd }),
   /** Of the given folders, those holding a compose file (where a deploy may run). */
   composeDirs: (paths: string[]) => invoke<string[]>("compose_dirs", { paths }),
   /** Server of the saved prompt-rewriting VPN config, null when none (the key never leaves Rust). */
   promptAiVpn: () => invoke<string | null>("prompt_ai_vpn"),
   /** Save a pasted WireGuard .conf ("" removes it); returns its server. */
   setPromptAiVpn: (conf: string) => invoke<string | null>("set_prompt_ai_vpn", { conf }),
+  /** Linux: the window takes Start+key for desk's shortcuts (linux_keys.rs). */
+  setSuperKeys: (on: boolean) => invoke<void>("set_super_keys", { on }),
   /** The prompt pill's "Cofnij": the next Ctrl+G in that session puts the draft back. */
   promptAiUndo: (slug: string) => invoke<void>("prompt_ai_undo", { slug }),
   listProjects: (extra: string[]) => invoke<Project[]>("list_projects", { extra }),
@@ -625,7 +667,6 @@ export const api = {
   projectFiles: (path: string) => invoke<string[]>("project_files", { path }),
   /** One folder of a project: files, and folders as `rel/name/`. */
   projectDir: (path: string, rel: string) => invoke<string[]>("project_dir", { path, rel }),
-  openFile: (path: string, file: string) => invoke<void>("open_file", { path, file }),
   previewFile: (path: string, file: string, bounds: PreviewBounds) =>
     invoke<string>("preview_file", { path, file, bounds }),
   runTargets: (path: string) => invoke<RunTarget[]>("run_targets", { path }),
@@ -663,6 +704,14 @@ export const api = {
   /** `password`: the account password typed on the lock screen (Linux). */
   unlockDesk: (password?: string) => invoke<void>("unlock_desk", { password: password ?? null }),
   isLocked: () => invoke<boolean>("is_locked"),
+  /** The files window: make it or show and focus it; refused while desk is locked. */
+  filesWindowOpen: () => invoke<void>("files_window_open"),
+  /** The files window: hide it (its state is kept). */
+  filesWindowHide: () => invoke<void>("files_window_hide"),
+  /** The files window: close it for good (the mode was switched off). */
+  filesWindowDestroy: () => invoke<void>("files_window_destroy"),
+  /** The files window: bring the main window to the front. */
+  focusMainWindow: () => invoke<void>("focus_main_window"),
   /** Quit desk (the page asks first); refused while locked. */
   quitDesk: () => invoke<void>("quit_desk"),
   /** Register or drop ⌘` and refit the dropped-down window, as layout.json says. */

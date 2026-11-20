@@ -15,6 +15,10 @@ const CUP =
 const WHALE =
   '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M.9 6.4h9.6c.4-.9 1-1.2 1.6-1.2-.2-.6-.9-.9-1.5-.7-.1-.6-.5-1-1-1.2-.2.5-.1.9.1 1.2"/><path d="M1.2 6.4c.2 2.2 1.8 3.6 4.4 3.6 2.6 0 4.1-1.3 4.9-3.6"/><path d="M2.6 4.7h1.5v1.7H2.6zM4.4 4.7h1.5v1.7H4.4zM6.2 4.7h1.5v1.7H6.2zM4.4 3h1.5v1.7H4.4z"/></svg>';
 
+const GEAR =
+  '<svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="1.6"/><circle cx="6" cy="6" r="3.3"/><path d="M6 1v1.4M6 9.6V11M1 6h1.4M9.6 6H11M2.5 2.5l1 1M8.5 8.5l1 1M2.5 9.5l1-1M8.5 3.5l1-1"/></svg>';
+const FOLDER =
+  '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M1.2 3.2a.8.8 0 0 1 .8-.8h2.6l1.1 1.2h4.3a.8.8 0 0 1 .8.8v5a.8.8 0 0 1-.8.8H2a.8.8 0 0 1-.8-.8z"/><path d="M1.2 5.2h9.6"/></svg>';
 /** Two arrows chasing each other: rsync, the upload panel. */
 export const RSYNC =
   '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M10.1 5.2A4.2 4.2 0 0 0 2.7 3.4"/><path d="M2.5 1.4v2.2h2.2"/><path d="M1.9 6.8a4.2 4.2 0 0 0 7.4 1.8"/><path d="M9.5 10.6V8.4H7.3"/></svg>';
@@ -30,6 +34,19 @@ export function brandHtml(version: string | null, drag: string): string {
 export function browserHtml(keys: string): string {
   const title = escapeHtml(t("top.browserTitle", { keys }));
   return `<button class="top-btn icon" data-top="browser" title="${title}" aria-label="${escapeHtml(t("top.browser"))}">${GLOBE}</button>`;
+}
+
+/** The gear at the very end of the bar: Options. `keys` is its shortcut, "" when none is set. */
+export function settingsHtml(keys: string): string {
+  const title = escapeHtml(t("top.settingsTitle", { keys: keys ? ` (${keys})` : "" }));
+  return `<button class="top-btn icon" data-top="settings" title="${title}" aria-label="${escapeHtml(t("top.settings"))}">${GEAR}</button>`;
+}
+
+/** The folder that shows the project's files in the side panel (and hides them).
+ *  `keys` is its shortcut, "" when none is set. */
+export function filesHtml(keys: string, pressed: boolean): string {
+  const title = escapeHtml(t("top.filesTitle", { keys: keys ? ` (${keys})` : "" }));
+  return `<button class="top-btn icon" data-top="files" aria-pressed="${pressed}" title="${title}" aria-label="${escapeHtml(t("top.files"))}">${FOLDER}</button>`;
 }
 
 /** The whale that opens the Docker panel; nothing while no server is set up. */

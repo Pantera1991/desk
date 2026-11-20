@@ -20,11 +20,16 @@ pub struct Place {
     pub height: f64,
 }
 
-/// A save is waiting for the window to stop moving.
-static PENDING: Mutex<bool> = Mutex::new(false);
+/// Labels of the windows whose save is waiting for them to stop moving.
+static PENDING: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 pub fn file(support_dir: &Path) -> PathBuf {
     support_dir.join("window.json")
+}
+
+/// The files window's place (files_window.rs), next to the main window's.
+pub fn files_file(support_dir: &Path) -> PathBuf {
+    support_dir.join("files-window.json")
 }
 
 pub fn restore(window: &Window, file: &Path) {
@@ -69,27 +74,28 @@ pub(crate) fn move_to(window: &Window, x: f64, y: f64) {
 
 /// The window moved or was resized: write its place once it has stopped
 /// (half a second), read then, when macOS knows which screen it is on.
-pub fn save_soon(app: &AppHandle, file: PathBuf) {
+pub fn save_soon(app: &AppHandle, label: &str, file: PathBuf) {
     {
         let mut pending = PENDING.lock().unwrap_or_else(|e| e.into_inner());
-        if *pending {
+        if pending.iter().any(|l| l == label) {
             return;
         }
-        *pending = true;
+        pending.push(label.to_string());
     }
     let app = app.clone();
+    let label = label.to_string();
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(500));
-        *PENDING.lock().unwrap_or_else(|e| e.into_inner()) = false;
+        PENDING.lock().unwrap_or_else(|e| e.into_inner()).retain(|l| *l != label);
         // Locked, the window fills its screen: that is not where it lives.
         if app.state::<crate::lock::Lock>().is_locked() {
             return;
         }
-        // Docked as the dropdown, it is at the top of the screen: neither.
-        if app.try_state::<crate::dropdown::Dropdown>().is_some_and(|d| d.docked()) {
+        // Docked as the dropdown, the main window is at the top of the screen: neither.
+        if label == "main" && app.try_state::<crate::dropdown::Dropdown>().is_some_and(|d| d.docked()) {
             return;
         }
-        if let Some(place) = crate::main_window(&app).and_then(|w| read(&w)) {
+        if let Some(place) = app.get_window(&label).and_then(|w| read(&w)) {
             let _ = save(&file, place);
         }
     });

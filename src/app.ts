@@ -24,9 +24,11 @@ import {
   type Usage,
 } from "./api";
 import { detectLanguage, isLanguage, setLanguage, t, type Language } from "./i18n";
-import { actionFor, hints, keysIn, keyText, setCustomKeys, type Action } from "./keys";
+import { actionFor, hints, keysIn, keyText, setCustomKeys, setSuperKeys, superKeyEvent, type Action, type SuperKey } from "./keys";
 import { PLATFORM, shortcut } from "./platform";
-import { Side } from "./side";
+import { setCurrentPanel, Side, type Panel } from "./side";
+import { FilesWindowPanel, switchPanel } from "./files-window-panel";
+import type { FilesSettings } from "./files-link";
 import * as L from "./lanes";
 import { label, mark, sizable, splitLine, watchDrag, type Box } from "./drag";
 import { Palette } from "./palette";
@@ -57,6 +59,7 @@ import { CpuPopover } from "./cpu-popover";
 import { DockerPanel } from "./docker-panel";
 import { UploadPanel } from "./upload-panel";
 import { blockedDeploy, findDockerSession } from "./docker-view";
+import { seedText } from "./find-view";
 import { blockedUpload, closePlan, findUploadSession, openPlan, quitPlan } from "./upload-view";
 import {
   DEFAULT_EMERGENCY,
@@ -67,7 +70,7 @@ import {
   thermalHtml,
   thermalToast,
 } from "./thermal";
-import { brandHtml, browserHtml, coffeeHtml, dockerHtml, uploadHtml } from "./topbar";
+import { brandHtml, browserHtml, coffeeHtml, dockerHtml, filesHtml, settingsHtml, uploadHtml } from "./topbar";
 import { UpdateChecker, type UpdateOutcome } from "./updates";
 import { accountById, accountColor, accountFor, hasAccounts } from "./accounts";
 import { applyTileIconScale, applyUiScale, tileIconScale, uiScale } from "./ui-scale";
@@ -170,7 +173,14 @@ export class App {
   private lockEl: HTMLElement | null = null;
 
   private grid: HTMLElement;
-  private side: Side;
+  /** The files panel desk drives: `sidePanel`, or `filesWindow` (Options: in its own window). */
+  private side: Panel;
+  /** The panel at the side, kept while the files window has it (switching back reuses it). */
+  private sidePanel: Side;
+  /** The stand-in that talks to the files window; null while the panel is at the side. */
+  private filesWindow: FilesWindowPanel | null = null;
+  /** A mode switch is under way (it may wait for a save). */
+  private switchingPanel = false;
   /** With the side panel open: the other sessions as mini cards, left of the active one. */
   private rail: HTMLElement;
   private top: HTMLElement;
@@ -269,17 +279,15 @@ export class App {
         if (key) this.setActive(key, true);
       });
     }
-    this.side = new Side(() => this.layout && this.render(), {
-      project: () => (this.active ? this.projectOf(this.active) : null),
-      insert: (text) => {
-        const tile = this.tiles.get(this.active ?? "");
-        if (tile) tile.type(text);
-        else toast(t("app.pickSessionFirst"));
-      },
+    this.sidePanel = new Side(() => this.layout && this.render(), {
+      project: () => this.activeProject(),
+      insert: (text) => this.typeIntoActive(text),
       terminal: (path) => void this.openTerminal(path),
       browser: () => this.layout?.browser ?? "auto",
       linkClick: () => this.layout?.linkClick ?? "desk",
+      fileEditor: () => this.layout?.fileEditor ?? "",
     });
+    this.side = this.sidePanel;
     root.querySelector(".middle")!.append(this.dockerPanel.el, this.uploadPanel.el, this.side.el);
     this.footer = root.querySelector(".bottom")!;
 
@@ -314,6 +322,7 @@ export class App {
         this.layout.theme = id;
         this.applyTheme();
         this.save();
+        this.filesWindow?.settingsChanged();
       },
       checkUpdate: () => this.checkUpdateNow(),
       updates: () => this.updater.status,
@@ -324,20 +333,37 @@ export class App {
         setLanguage(id);
         this.save();
         this.relabel();
+        this.filesWindow?.settingsChanged();
       },
       setBrowser: (id) => {
         this.layout.browser = id;
         this.save();
-        void this.side.browserChanged();
+        // The side panel too while the files window has it: switching back shows its ↗ right.
+        void this.sidePanel.browserChanged();
+        this.filesWindow?.settingsChanged();
+      },
+      setFileEditor: (cmd) => {
+        this.layout.fileEditor = cmd;
+        this.save();
+        this.filesWindow?.settingsChanged();
       },
       setLinkClick: (mode) => {
         this.layout.linkClick = mode;
         this.save();
+        this.filesWindow?.settingsChanged();
       },
       setUiScale: (v) => {
         this.layout.uiScale = uiScale(v);
         applyUiScale(v);
         this.save();
+        this.filesWindow?.settingsChanged();
+      },
+      setFilesWindow: (on) => void this.setFilesWindow(on),
+      setTreeLeft: (left) => {
+        this.layout.treeLeft = left;
+        this.sidePanel.setTreeLeft(left);
+        this.save();
+        this.filesWindow?.settingsChanged();
       },
       setTileIconScale: (v) => {
         this.layout.tileIconScale = tileIconScale(v);
@@ -361,6 +387,14 @@ export class App {
         else keys[id] = accelerator; // "" = removed, no key at all
         this.layout.keys = keys;
         setCustomKeys(keys);
+        this.save();
+        this.renderChrome();
+        this.filesWindow?.settingsChanged();
+      },
+      setSuperKeys: (on) => {
+        this.layout.superKeys = on;
+        setSuperKeys(on);
+        void api.setSuperKeys(on);
         this.save();
         this.renderChrome();
       },
@@ -471,6 +505,9 @@ export class App {
     await listen<CoffeeStatus>("coffee", (e) => this.onCoffeeStopped(e.payload));
     // macOS: desk catches ⌘Q / ⌘⇧Q itself, before its menu (Quit) and the Apple menu (Log Out).
     await listen<"close" | "kill">("shortcut", (e) => this.onShortcut(e.payload));
+    // Linux with Start as the shortcut key: the window took Start+key (WebKitGTK
+    // never shows Start to the page); it goes to the same key listeners as any key.
+    await listen<SuperKey>("super-key", (e) => window.dispatchEvent(new KeyboardEvent("keydown", superKeyEvent(e.payload))));
     // Docked at the top of the screen: no traffic lights to make room for.
     await listen<boolean>("dropdown", (e) => {
       this.docked = e.payload;
@@ -507,11 +544,16 @@ export class App {
       if (t === "browser") this.side.browse();
       if (t === "thermal") this.cpuPopover.toggle();
       if (t === "docker") this.dockerPanel.toggle();
+      if (t === "files") {
+        this.side.toggleFiles();
+        this.renderChrome(); // the folder's pressed state
+      }
       if (t === "upload") this.uploadPanel.toggle();
       if (t === "thermal-resume") void this.resumeWork();
       if (t === "update") void this.installUpdate();
       if (t === "leave") void api.dropdownLeave();
       if (t === "quit") void this.quit();
+      if (t === "settings") this.run({ type: "settings" });
       if (t === "background") void this.showBackground();
       const chip = (e.target as HTMLElement).closest<HTMLElement>("[data-usage]")?.dataset.usage;
       if (chip) this.usagePopover.toggle(chip);
@@ -566,7 +608,11 @@ export class App {
       dropdownHotkey: boot.layout.dropdownHotkey || DEFAULT_HOTKEY(),
       dropdownAnimation: boot.layout.dropdownAnimation ?? 200,
       keys: boot.layout.keys ?? {},
+      superKeys: boot.layout.superKeys ?? false,
       tmuxMenu: boot.layout.tmuxMenu ?? false,
+      fileEditor: boot.layout.fileEditor ?? "",
+      filesWindow: boot.layout.filesWindow ?? false,
+      treeLeft: boot.layout.treeLeft ?? false,
       thermalMode: boot.layout.thermalMode ?? "slow",
       thermalLimit: boot.layout.thermalLimit ?? DEFAULT_LIMIT,
       fanSteps: boot.layout.fanSteps?.length ? boot.layout.fanSteps : DEFAULT_STEPS,
@@ -584,10 +630,14 @@ export class App {
       lanes: L.restore(boot.layout.lanes, boot.layout.autostart, boot.layout.lanes.length),
     };
     setCustomKeys(this.layout.keys);
+    setSuperKeys(this.layout.superKeys);
+    this.sidePanel.setTreeLeft(this.layout.treeLeft);
     applyUiScale(this.layout.uiScale);
     applyTileIconScale(this.layout.tileIconScale);
     if (language !== boot.layout.language) this.save();
     this.applyTheme();
+    // The files window itself is made on demand (⌘F, the folder...), never at start.
+    if (this.layout.filesWindow) this.usePanel(this.newFilesWindow());
     // Another app (iTerm's hotkey window...) may hold ⌘` already.
     if (this.layout.dropdown) void api.dropdownApply().catch((err) => toast(`Dropdown: ${err}`, { kind: "error" }));
     setTerminalFontSize(this.layout.fontSize);
@@ -644,7 +694,7 @@ export class App {
     this.save();
     void this.poll();
     setInterval(() => void this.poll(), POLL_MS);
-    void this.side.browserChanged();
+    void this.sidePanel.browserChanged(); // kept current in either mode (switching back shows it)
     // Shortly after start, then every half hour (updates.ts). A look at the
     // clock each minute: a laptop that slept asks as soon as it wakes.
     window.setTimeout(() => void this.checkUpdateIfDue(), 10_000);
@@ -1394,9 +1444,9 @@ export class App {
 
   // ---- layout ------------------------------------------------------------
 
-  /** Side panel open with several sessions: one in the middle, the rest in the rail. */
+  /** Side panel open with several sessions: one in the middle, the rest in the rail. Not for the files window. */
   private focusMode(): boolean {
-    return this.side.isOpen && this.tiles.size > 1;
+    return !this.filesWindow && this.side.isOpen && this.tiles.size > 1;
   }
 
   private render(): void {
@@ -1812,11 +1862,91 @@ export class App {
 
   /** Labels built once (side panel, tiles, cards, lanes) in the language Options just set. */
   private relabel(): void {
-    this.side.relabel();
+    // The side panel too while the files window has it (its Find in Files popup is here).
+    this.sidePanel.relabel();
+    this.filesWindow?.relabel();
     for (const tile of this.tiles.values()) tile.relabel();
     for (const card of this.cards.values()) cardTitles(card.querySelector<HTMLElement>(".card-head")!);
     for (const lane of this.laneEls) lane.querySelector(".hint")!.textContent = laneHint();
     this.render();
+  }
+
+  // ---- files panel: at the side or in its own window ----------------------
+
+  /** Folder of the active session's project, if any (what the files panel follows). */
+  private activeProject(): string | null {
+    return this.active ? this.projectOf(this.active) : null;
+  }
+
+  /** The panel's @: text typed into the active session. */
+  private typeIntoActive(text: string): void {
+    const tile = this.tiles.get(this.active ?? "");
+    if (tile) tile.type(text);
+    else toast(t("app.pickSessionFirst"));
+  }
+
+  /** What the files window follows from Options. */
+  private filesSettings(): FilesSettings {
+    const l = this.layout;
+    return {
+      browser: l.browser,
+      linkClick: l.linkClick,
+      fileEditor: l.fileEditor,
+      language: l.language,
+      theme: l.theme,
+      uiScale: l.uiScale,
+      keys: l.keys,
+      treeLeft: l.treeLeft,
+    };
+  }
+
+  private newFilesWindow(): FilesWindowPanel {
+    return new FilesWindowPanel({
+      project: () => this.activeProject(),
+      settings: () => this.filesSettings(),
+      insert: (text) => this.typeIntoActive(text),
+      terminal: (path) => void this.openTerminal(path),
+      changed: () => this.renderChrome(), // the folder's pressed state
+    });
+  }
+
+  /** `panel` is the one desk drives from now on (and the one terminal links reach). */
+  private usePanel(panel: Panel): void {
+    this.side.el.replaceWith(panel.el);
+    this.side = panel;
+    this.filesWindow = panel instanceof FilesWindowPanel ? panel : null;
+    setCurrentPanel(panel);
+  }
+
+  /**
+   * Options: the files panel at the side or in its own window, at once. On:
+   * the side panel's edit is saved first (a failed save keeps everything as
+   * it was), then the panel and its native page close and the window shows
+   * what the panel showed. Off: the files window saves its edit first
+   * (`release`: a failed save or no answer keeps the mode), then it closes
+   * for good and the side panel shows what it showed.
+   */
+  private async setFilesWindow(on: boolean): Promise<void> {
+    if (this.switchingPanel || on === (this.filesWindow !== null)) return;
+    this.switchingPanel = true;
+    try {
+      const from = this.filesWindow;
+      const to: Panel = on ? this.newFilesWindow() : this.sidePanel;
+      // Either way the edit is saved first; a failed save keeps the mode.
+      // No reload of the side panel's page: it closes right after.
+      const stop = from ? () => from.release() : () => this.sidePanel.stopEditing(false);
+      // Locked while the save was asked: nothing opens under the lock screen.
+      if (await switchPanel(this.side, to, stop, (p) => this.usePanel(p), () => !this.locked)) {
+        this.layout.filesWindow = on;
+        this.save();
+        this.render(); // the grid's width and the folder's state
+      } else if (on) {
+        await to.handOver(); // the stand-in made for nothing stops listening
+      }
+    } finally {
+      this.switchingPanel = false;
+    }
+    if (this.settings.isOpen) this.settings.render();
   }
 
   private tileAt(target: EventTarget | null): Tile | undefined {
@@ -2067,7 +2197,7 @@ export class App {
     }<span class="spacer"${drag}></span>${this.updateHtml()}${usageHtml(this.usage, Date.now(), (id) => {
       const a = this.layout.claudeAccounts.find((x) => x.id === id);
       return a ? { name: a.name, color: accountColor(this.layout, a.id) } : null;
-    })}${thermalHtml(this.thermal, this.layout.thermalColors)}${dockerHtml(this.layout.dockerHosts.length > 0, this.dockerPanel.isOpen)}${uploadHtml(this.uploadAvailable(), this.uploadPanel.isOpen)}${browserHtml(keysIn("⌘W"))}${coffeeHtml(this.coffee, PLATFORM)}${this.quitHtml()}`;
+    })}${thermalHtml(this.thermal, this.layout.thermalColors)}${dockerHtml(this.layout.dockerHosts.length > 0, this.dockerPanel.isOpen)}${uploadHtml(this.uploadAvailable(), this.uploadPanel.isOpen)}${filesHtml(keyText("files"), this.side.filesShown)}${browserHtml(keysIn("⌘W"))}${coffeeHtml(this.coffee, PLATFORM)}${this.quitHtml()}${settingsHtml(keyText("settings"))}`;
     this.footer.innerHTML =
       `<span class="here" hidden></span><span class="hints">${hints()
         .map(([k, label]) => `<span><kbd>${k}</kbd> ${escapeHtml(label)}</span>`)
@@ -2331,8 +2461,10 @@ export class App {
     if (!action) return;
     // ⌘S in the side panel's editor saves the file there.
     if (action.type === "sessions" && (e.target as Element | null)?.closest?.(".cm-editor")) return;
-    const overlay = document.querySelector(".overlay") !== null;
-    if (overlay && !["palette", "new", "settings", "close"].includes(action.type)) return; // e.g. ⌘↵ in the palette
+    const overlay = document.querySelector(".overlay");
+    // ⇧⌘F in its own popup gives the input the focus again.
+    const again = action.type === "findInFiles" && overlay?.classList.contains("find-overlay");
+    if (overlay && !again && !["palette", "new", "settings", "close"].includes(action.type)) return; // e.g. ⌘↵ in the palette
     e.preventDefault();
     e.stopPropagation();
     this.run(action);
@@ -2427,6 +2559,10 @@ export class App {
       case "files":
         this.side.showFiles();
         break;
+      case "findInFiles": {
+        this.side.showFind(seedText(this.tiles.get(this.active ?? "")?.selectedText()));
+        break;
+      }
       case "docker":
         if (this.layout.dockerHosts.length > 0) this.dockerPanel.toggle();
         break;

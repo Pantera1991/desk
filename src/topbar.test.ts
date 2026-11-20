@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { CoffeeStatus } from "./api";
 import { setLanguage } from "./i18n";
-import { brandHtml, browserHtml, coffeeHtml } from "./topbar";
+import { brandHtml, browserHtml, coffeeHtml, filesHtml, settingsHtml } from "./topbar";
 
 const coffee = (more: Partial<CoffeeStatus> = {}): CoffeeStatus => ({
   level: "off",
@@ -25,6 +25,30 @@ describe("top bar tools", () => {
     expect(html).toContain("(⌘W)");
     expect(html).toContain('<svg viewBox="0 0 12 12" aria-hidden="true">');
     expect(shown(html)).not.toMatch(EMOJI);
+  });
+
+  it("draws the Options button as a gear icon with its shortcut", () => {
+    const html = settingsHtml("⌘O");
+    expect(html).toMatch(/^<button class="top-btn icon" data-top="settings"/);
+    expect(html).toContain('aria-label="Opcje"');
+    expect(html).toContain('title="Opcje (⌘O)"');
+    expect(html).toContain('<svg viewBox="0 0 12 12" aria-hidden="true">');
+    expect(shown(html)).not.toMatch(EMOJI);
+    expect(settingsHtml("")).toContain('title="Opcje"');
+  });
+
+  it("draws the files button as a folder icon, pressed while the files are shown", () => {
+    const html = filesHtml("⌘F", false);
+    expect(html).toMatch(/^<button class="top-btn icon" data-top="files" aria-pressed="false"/);
+    expect(html).toContain('aria-label="Pliki"');
+    expect(html).toContain('title="Pliki projektu (⌘F)"');
+    expect(html).toContain('<svg viewBox="0 0 12 12" aria-hidden="true">');
+    expect(shown(html)).not.toMatch(EMOJI);
+    expect(filesHtml("⌘F", true)).toContain('aria-pressed="true"');
+  });
+
+  it("leaves the shortcut out of the files title when none is set", () => {
+    expect(filesHtml("", false)).toContain('title="Pliki projektu"');
   });
 
   it("shows coffee off as the cup alone, named for screen readers", () => {
@@ -59,6 +83,9 @@ describe("top bar tools", () => {
   it("speaks English too", () => {
     setLanguage("en");
     expect(browserHtml("Ctrl+W")).toContain('aria-label="Browser"');
+    expect(settingsHtml("")).toContain('aria-label="Options"');
+    expect(filesHtml("", false)).toContain('aria-label="Files"');
+    expect(filesHtml("", false)).toContain('title="Project files"');
     expect(coffeeHtml(coffee(), "linux")).toContain('aria-label="Coffee"');
     expect(coffeeHtml(coffee({ level: "lid" }), "linux")).toMatch(/<\/svg>coffee · lid<\/button>$/);
   });

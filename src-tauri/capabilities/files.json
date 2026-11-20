@@ -1,0 +1,29 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "files",
+  "description": "Capability for the files window: the panel's commands only",
+  "webviews": [
+    "files"
+  ],
+  "permissions": [
+    "core:event:default",
+    "allow-bootstrap",
+    "allow-files-window-hide",
+    "allow-focus-main-window",
+    "allow-project-files",
+    "allow-project-dir",
+    "allow-search-files",
+    "allow-open-file-at",
+    "allow-reveal-path",
+    "allow-browser-name",
+    "allow-preview-file",
+    "allow-open-preview",
+    "allow-preview-bounds",
+    "allow-preview-visible",
+    "allow-preview-close",
+    "allow-preview-nav",
+    "allow-read-text",
+    "allow-write-text",
+    "allow-open-external"
+  ]
+}

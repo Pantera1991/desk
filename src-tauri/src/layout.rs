@@ -59,6 +59,14 @@ pub struct Layout {
     /// Size of the window's own text and bars (not terminals), one of
     /// 0.9, 1, 1.1, 1.25, 1.5; see uiScale in src/ui-scale.ts.
     pub ui_scale: f64,
+    /// Command of the editor that opens files from Find in Files and the
+    /// tree; "" is the built-in editor (see file_editor.rs).
+    pub file_editor: String,
+    /// The files panel (tree, editor, page preview) lives in its own window
+    /// instead of at the side (see files_window.rs).
+    pub files_window: bool,
+    /// The file tree on the left of the files panel instead of the right.
+    pub tree_left: bool,
     /// Size of the buttons in a tile's header, on top of `ui_scale`: one of
     /// 1, 1.25, 1.5, 1.75; see tileIconScale in src/ui-scale.ts.
     pub tile_icon_scale: f64,
@@ -81,6 +89,9 @@ pub struct Layout {
     pub dropdown_animation: u32,
     /// desk's shortcuts changed in Options, by binding id (src/keys.ts).
     pub keys: std::collections::BTreeMap<String, String>,
+    /// Linux: desk's shortcuts on Start (Super), like ⌘ on macOS, instead of
+    /// Ctrl+Shift (see setSuperKeys in src/keys.ts).
+    pub super_keys: bool,
     /// A right click in a terminal opens tmux's menu (split, swap, kill...)
     /// when the program in it does not take the mouse.
     pub tmux_menu: bool,
@@ -188,6 +199,9 @@ impl Default for Layout {
             link_click: "desk".into(),
             font_size: 11.5,
             ui_scale: 1.0,
+            file_editor: String::new(),
+            files_window: false,
+            tree_left: false,
             tile_icon_scale: 1.0,
             minimized: Vec::new(),
             titles: Default::default(),
@@ -199,6 +213,7 @@ impl Default for Layout {
             dropdown_hotkey: crate::dropdown::DEFAULT_HOTKEY.into(),
             dropdown_animation: 200,
             keys: Default::default(),
+            super_keys: false,
             tmux_menu: false,
             language: String::new(),
             prompt_ai: PromptAi::default(),
@@ -458,6 +473,56 @@ mod tests {
         let l = Layout { ui_scale: 1.25, ..Layout::default() };
         save(&p, &l).unwrap();
         assert_eq!(load(&p).ui_scale, 1.25);
+    }
+
+    #[test]
+    fn super_keys_are_off_in_old_files_and_round_trip() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("layout.json");
+        std::fs::write(&p, r#"{"version":1}"#).unwrap();
+        assert!(!load(&p).super_keys);
+        std::fs::write(&p, r#"{"version":1,"superKeys":true}"#).unwrap();
+        assert!(load(&p).super_keys);
+        let l = Layout { super_keys: true, ..Layout::default() };
+        save(&p, &l).unwrap();
+        assert!(load(&p).super_keys);
+    }
+
+    #[test]
+    fn file_editor_defaults_empty_and_round_trips() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("layout.json");
+        std::fs::write(&p, r#"{"version":1}"#).unwrap();
+        assert_eq!(load(&p).file_editor, "");
+        let l = Layout { file_editor: "~/bin/subl".into(), ..Layout::default() };
+        save(&p, &l).unwrap();
+        assert_eq!(load(&p).file_editor, "~/bin/subl");
+    }
+
+    #[test]
+    fn tree_is_on_the_right_in_old_files_and_round_trips() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("layout.json");
+        std::fs::write(&p, r#"{"version":1}"#).unwrap();
+        assert!(!load(&p).tree_left);
+        std::fs::write(&p, r#"{"version":1,"treeLeft":true}"#).unwrap();
+        assert!(load(&p).tree_left);
+        let l = Layout { tree_left: true, ..Layout::default() };
+        save(&p, &l).unwrap();
+        assert!(load(&p).tree_left);
+    }
+
+    #[test]
+    fn files_window_is_off_in_old_files_and_round_trips() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("layout.json");
+        std::fs::write(&p, r#"{"version":1}"#).unwrap();
+        assert!(!load(&p).files_window);
+        std::fs::write(&p, r#"{"version":1,"filesWindow":true}"#).unwrap();
+        assert!(load(&p).files_window);
+        let l = Layout { files_window: true, ..Layout::default() };
+        save(&p, &l).unwrap();
+        assert!(load(&p).files_window);
     }
 
     #[test]

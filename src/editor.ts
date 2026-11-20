@@ -67,6 +67,8 @@ export interface Editor {
   readonly view: EditorView;
   value(): string;
   focus(): void;
+  /** Cursor on `line` (1-based, clamped), centred; the first mark ([from, to) in the line, UTF-16) selected. */
+  goTo(line: number, marks?: [number, number][]): void;
   destroy(): void;
 }
 
@@ -76,6 +78,7 @@ export function createEditor(
   text: string,
   fileName: string,
   on: { change(): void; save(): void },
+  opts: { readOnly?: boolean } = {},
 ): Editor {
   const language = new Compartment();
   const desc = LanguageDescription.matchFilename(languages, fileName);
@@ -96,6 +99,7 @@ export function createEditor(
         highlightSelectionMatches(),
         search({ top: true }),
         EditorState.tabSize.of(2),
+        opts.readOnly ? EditorState.readOnly.of(true) : [],
         // Prose wraps; code keeps its lines (and scrolls sideways).
         /\.(md|markdown|mdx|txt|rst|adoc)$/i.test(fileName) ? EditorView.lineWrapping : [],
         language.of(!desc && isDotenv(fileName) ? dotenv : []),
@@ -118,6 +122,15 @@ export function createEditor(
     view,
     value: () => view.state.doc.toString(),
     focus: () => view.focus(),
+    goTo: (line, marks = []) => {
+      if (!Number.isFinite(line)) return;
+      const doc = view.state.doc;
+      const l = doc.line(Math.min(doc.lines, Math.max(1, Math.floor(line))));
+      const m = marks[0];
+      const from = m ? Math.min(l.to, l.from + m[0]) : l.from;
+      const to = m ? Math.min(l.to, Math.max(from, l.from + m[1])) : l.from;
+      view.dispatch({ selection: { anchor: from, head: to }, effects: EditorView.scrollIntoView(from, { y: "center" }) });
+    },
     destroy: () => view.destroy(),
   };
 }

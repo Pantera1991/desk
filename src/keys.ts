@@ -23,6 +23,7 @@ export type Action =
   | { type: "terminal" }
   | { type: "files" }
   | { type: "docker" }
+  | { type: "findInFiles" }
   | { type: "upload" }
   | { type: "run" }
   | { type: "focus"; index: number }
@@ -64,6 +65,8 @@ export const BINDINGS: Binding[] = [
   { id: "sub", group: "window", action: { type: "sub" }, mac: ["Super+KeyD"] },
   { id: "terminal", group: "window", action: { type: "terminal" }, mac: ["Super+KeyT"] },
   { id: "files", group: "window", action: { type: "files" }, mac: ["Super+KeyF"] },
+  // Ctrl+Shift+F elsewhere is the files panel's: Alt joins it here.
+  { id: "findInFiles", group: "window", action: { type: "findInFiles" }, mac: ["Super+Shift+KeyF"], other: ["Control+Alt+Shift+KeyF"] },
   // ⌘G on macOS (Ctrl+G elsewhere) is the prompt rewrite (tile.ts): ⇧ here.
   { id: "docker", group: "window", action: { type: "docker" }, mac: ["Super+Shift+KeyG"], other: ["Control+Shift+KeyG"] },
   { id: "upload", group: "window", action: { type: "upload" }, mac: ["Super+Shift+KeyU"], other: ["Control+Alt+Shift+KeyU"] },
@@ -137,8 +140,38 @@ export function setCustomKeys(keys: Record<string, string>): void {
   custom = { ...keys };
 }
 
+/** Linux with Start (Super) in place of Ctrl+Shift, as ⌘ on macOS (layout.superKeys). */
+let superKeys = false;
+
+export function setSuperKeys(on: boolean): void {
+  superKeys = on;
+}
+
+/** Start+key as the window saw it (linux_keys.rs): WebKitGTK does not tell the page about Start. */
+export interface SuperKey {
+  code: string;
+  shift: boolean;
+  ctrl: boolean;
+  alt: boolean;
+}
+
+const KEY_OF: Record<string, string> = { Equal: "=", Minus: "-", Backquote: "`", BracketLeft: "[", BracketRight: "]", Backslash: "\\", Semicolon: ";" };
+
+/** The key event desk's shortcuts read (`metaKey` is Start), sent to the window in its place. */
+export function superKeyEvent(k: SuperKey): KeyboardEventInit {
+  const letter = /^Key([A-Z])$/.exec(k.code)?.[1];
+  const digit = /^Digit([0-9])$/.exec(k.code)?.[1];
+  const key = letter ? (k.shift ? letter : letter.toLowerCase()) : (digit ?? KEY_OF[k.code] ?? k.code);
+  return { key, code: k.code, metaKey: true, shiftKey: k.shift, ctrlKey: k.ctrl, altKey: k.alt, bubbles: true, cancelable: true };
+}
+
+/** Start+ combinations GNOME takes before any window sees them: monitors,
+ *  lock, quick settings, notifications, desktop, rotation lock. These stay on Ctrl+Shift. */
+const GNOME_TAKES = new Set(["Super+KeyP", "Super+KeyL", "Super+KeyS", "Super+KeyN", "Super+KeyD", "Super+KeyO"]);
+
 function defaults(b: Binding, platform: Platform): string[] {
   if (platform === "mac") return b.mac;
+  if (platform === "linux" && superKeys && b.mac.length && !b.mac.some((a) => GNOME_TAKES.has(a))) return b.mac;
   return b.other ?? b.mac.map((a) => a.replace("Super", "Control+Shift"));
 }
 

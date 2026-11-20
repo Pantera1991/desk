@@ -1,7 +1,7 @@
 import { shortcuts } from "./platform";
 import { setLanguage, t } from "./i18n";
 import { describe, expect, it } from "vitest";
-import { acceleratorsOf, actionFor, BINDINGS, clashWith, hints, keysIn, keyText, setCustomKeys } from "./keys";
+import { acceleratorsOf, actionFor, BINDINGS, clashWith, hints, keysIn, keyText, setCustomKeys, setSuperKeys, superKeyEvent } from "./keys";
 
 const k = (key: string, mods: Partial<{ metaKey: boolean; shiftKey: boolean; altKey: boolean; ctrlKey: boolean }> = {}) => ({
   key,
@@ -45,6 +45,14 @@ describe("actionFor", () => {
     expect(mac(k("="))).toEqual({ type: "font", step: 1 });
     expect(mac(k("-"))).toEqual({ type: "font", step: -1 });
     expect(mac(k("0"))).toEqual({ type: "font", step: 0 });
+  });
+
+  it("findInFiles is Super+Shift+F on mac and Ctrl+Alt+Shift+F elsewhere", () => {
+    expect(actionFor({ key: "F", code: "KeyF", metaKey: true, ctrlKey: false, shiftKey: true, altKey: false }, "mac")).toEqual({ type: "findInFiles" });
+    const other = { key: "F", code: "KeyF", metaKey: false, ctrlKey: true, shiftKey: true, altKey: true };
+    expect(actionFor(other, "linux")).toEqual({ type: "findInFiles" });
+    expect(actionFor(other, "windows")).toEqual({ type: "findInFiles" });
+    expect(actionFor({ ...other, altKey: false }, "linux")).toEqual({ type: "files" }); // Ctrl+Shift+F stays the files panel's
   });
 
   it("leaves terminal keys alone", () => {
@@ -170,6 +178,81 @@ describe("custom shortcuts", () => {
           seen.set(a, b.id);
         }
       }
+    }
+  });
+});
+
+describe("the Start (Super) key on Linux", () => {
+  const win = (code: string, more: Partial<{ shiftKey: boolean; ctrlKey: boolean }> = {}) =>
+    actionFor({ key: code.replace(/^Key/, "").toLowerCase(), code, metaKey: true, shiftKey: false, altKey: false, ctrlKey: false, ...more }, "linux");
+
+  it("is off by default: Ctrl+Shift as before", () => {
+    expect(keyText("files", "linux")).toBe("Ctrl⇧F");
+    expect(win("KeyF")).toBeNull();
+  });
+
+  it("when on, desk's shortcuts take Start like ⌘ on a Mac", () => {
+    setSuperKeys(true);
+    try {
+      expect(keyText("files", "linux")).toBe("Win+F");
+      expect(win("KeyF")).toEqual({ type: "files" });
+      expect(win("KeyW")).toEqual({ type: "preview" });
+      expect(win("KeyG", { shiftKey: true })).toEqual({ type: "docker" });
+      expect(win("KeyQ", { shiftKey: true })).toEqual({ type: "kill" });
+      expect(keysIn("⌘F", "linux")).toBe("Win+F");
+      // Ctrl+Shift no longer does what Start does now.
+      expect(actionFor({ key: "F", code: "KeyF", metaKey: false, shiftKey: true, altKey: false, ctrlKey: true }, "linux")).toBeNull();
+      // macOS and Windows are not touched.
+      expect(keyText("files", "mac")).toBe("⌘F");
+      expect(keyText("files", "windows")).toBe("Ctrl⇧F");
+    } finally {
+      setSuperKeys(false);
+    }
+  });
+
+  it("keeps Ctrl+Shift where GNOME takes Start first (P, L, S, N, D, O)", () => {
+    setSuperKeys(true);
+    try {
+      for (const id of ["palette", "arrange", "sessions", "new", "sub", "settings"]) expect(keyText(id, "linux")).toMatch(/^Ctrl⇧/);
+      expect(win("KeyP")).toBeNull();
+      expect(actionFor({ key: "P", code: "KeyP", metaKey: false, shiftKey: true, altKey: false, ctrlKey: true }, "linux")).toEqual({ type: "palette" });
+    } finally {
+      setSuperKeys(false);
+    }
+  });
+
+  it("turns the window's Start+key into a key event desk's shortcuts read", () => {
+    expect(superKeyEvent({ code: "KeyF", shift: true, ctrl: false, alt: false })).toEqual({
+      key: "F",
+      code: "KeyF",
+      metaKey: true,
+      shiftKey: true,
+      ctrlKey: false,
+      altKey: false,
+      bubbles: true,
+      cancelable: true,
+    });
+    expect(superKeyEvent({ code: "Digit0", shift: false, ctrl: false, alt: false }).key).toBe("0");
+    expect(superKeyEvent({ code: "Enter", shift: false, ctrl: false, alt: false }).key).toBe("Enter");
+    setSuperKeys(true);
+    try {
+      const e = superKeyEvent({ code: "KeyW", shift: false, ctrl: false, alt: false });
+      expect(actionFor({ key: e.key!, code: e.code, metaKey: true, shiftKey: false, altKey: false, ctrlKey: false }, "linux")).toEqual({
+        type: "preview",
+      });
+    } finally {
+      setSuperKeys(false);
+    }
+  });
+
+  it("leaves a shortcut set in Options as it is", () => {
+    setSuperKeys(true);
+    setCustomKeys({ files: "Control+Alt+KeyF" });
+    try {
+      expect(keyText("files", "linux")).toBe("Ctrl+Alt+F");
+    } finally {
+      setCustomKeys({});
+      setSuperKeys(false);
     }
   });
 });
