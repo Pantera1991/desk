@@ -95,6 +95,10 @@ export interface Layout {
   language: string;
   /** Program that opens a Find in Files result at its line; "" is the built-in editor. */
   fileEditor: string;
+  /** The files panel lives in a window of its own instead of at the side (files-window-panel.ts). */
+  filesWindow: boolean;
+  /** The file tree on the left of the files panel instead of the right. */
+  treeLeft: boolean;
   /** Ctrl+G in Claude rewrites the prompt with the company LLM (prompt_ai.rs). */
   promptAi: PromptAi;
   /** Claude accounts (accounts.ts); the first one is the default. */
@@ -660,6 +664,14 @@ export const api = {
   /** `password`: the account password typed on the lock screen (Linux). */
   unlockDesk: (password?: string) => invoke<void>("unlock_desk", { password: password ?? null }),
   isLocked: () => invoke<boolean>("is_locked"),
+  /** The files window: make it or show and focus it; refused while desk is locked. */
+  filesWindowOpen: () => invoke<void>("files_window_open"),
+  /** The files window: hide it (its state is kept). */
+  filesWindowHide: () => invoke<void>("files_window_hide"),
+  /** The files window: close it for good (the mode was switched off). */
+  filesWindowDestroy: () => invoke<void>("files_window_destroy"),
+  /** The files window: bring the main window to the front. */
+  focusMainWindow: () => invoke<void>("focus_main_window"),
   /** Quit desk (the page asks first); refused while locked. */
   quitDesk: () => invoke<void>("quit_desk"),
   /** Register or drop ⌘` and refit the dropped-down window, as layout.json says. */

@@ -62,6 +62,11 @@ pub struct Layout {
     /// Command of the editor that opens files from Find in Files and the
     /// tree; "" is the built-in editor (see file_editor.rs).
     pub file_editor: String,
+    /// The files panel (tree, editor, page preview) lives in its own window
+    /// instead of at the side (see files_window.rs).
+    pub files_window: bool,
+    /// The file tree on the left of the files panel instead of the right.
+    pub tree_left: bool,
     /// Session keys whose tiles are folded to their header (⌘J).
     pub minimized: Vec<String>,
     /// Names given to tiles by hand, by session key.
@@ -185,6 +190,8 @@ impl Default for Layout {
             font_size: 11.5,
             ui_scale: 1.0,
             file_editor: String::new(),
+            files_window: false,
+            tree_left: false,
             minimized: Vec::new(),
             titles: Default::default(),
             saved: Default::default(),
@@ -431,6 +438,32 @@ mod tests {
         let l = Layout { file_editor: "~/bin/subl".into(), ..Layout::default() };
         save(&p, &l).unwrap();
         assert_eq!(load(&p).file_editor, "~/bin/subl");
+    }
+
+    #[test]
+    fn tree_is_on_the_right_in_old_files_and_round_trips() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("layout.json");
+        std::fs::write(&p, r#"{"version":1}"#).unwrap();
+        assert!(!load(&p).tree_left);
+        std::fs::write(&p, r#"{"version":1,"treeLeft":true}"#).unwrap();
+        assert!(load(&p).tree_left);
+        let l = Layout { tree_left: true, ..Layout::default() };
+        save(&p, &l).unwrap();
+        assert!(load(&p).tree_left);
+    }
+
+    #[test]
+    fn files_window_is_off_in_old_files_and_round_trips() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("layout.json");
+        std::fs::write(&p, r#"{"version":1}"#).unwrap();
+        assert!(!load(&p).files_window);
+        std::fs::write(&p, r#"{"version":1,"filesWindow":true}"#).unwrap();
+        assert!(load(&p).files_window);
+        let l = Layout { files_window: true, ..Layout::default() };
+        save(&p, &l).unwrap();
+        assert!(load(&p).files_window);
     }
 
     #[test]

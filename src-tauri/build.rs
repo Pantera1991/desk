@@ -71,6 +71,10 @@ const COMMANDS: &[&str] = &[
     "docker_restart",
     "compose_dirs",
     "quit_desk",
+    "files_window_open",
+    "files_window_hide",
+    "files_window_destroy",
+    "focus_main_window",
 ];
 
 fn main() {

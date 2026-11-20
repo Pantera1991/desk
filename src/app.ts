@@ -25,7 +25,9 @@ import {
 import { detectLanguage, isLanguage, setLanguage, t, type Language } from "./i18n";
 import { actionFor, hints, keysIn, keyText, setCustomKeys, type Action } from "./keys";
 import { PLATFORM, shortcut } from "./platform";
-import { Side } from "./side";
+import { setCurrentPanel, Side, type Panel } from "./side";
+import { FilesWindowPanel, switchPanel } from "./files-window-panel";
+import type { FilesSettings } from "./files-link";
 import * as L from "./lanes";
 import { label, mark, sizable, splitLine, watchDrag, type Box } from "./drag";
 import { Palette } from "./palette";
@@ -162,7 +164,14 @@ export class App {
   private lockEl: HTMLElement | null = null;
 
   private grid: HTMLElement;
-  private side: Side;
+  /** The files panel desk drives: `sidePanel`, or `filesWindow` (Options: in its own window). */
+  private side: Panel;
+  /** The panel at the side, kept while the files window has it (switching back reuses it). */
+  private sidePanel: Side;
+  /** The stand-in that talks to the files window; null while the panel is at the side. */
+  private filesWindow: FilesWindowPanel | null = null;
+  /** A mode switch is under way (it may wait for a save). */
+  private switchingPanel = false;
   /** With the side panel open: the other sessions as mini cards, left of the active one. */
   private rail: HTMLElement;
   private top: HTMLElement;
@@ -245,18 +254,15 @@ export class App {
         if (key) this.setActive(key, true);
       });
     }
-    this.side = new Side(() => this.layout && this.render(), {
-      project: () => (this.active ? this.projectOf(this.active) : null),
-      insert: (text) => {
-        const tile = this.tiles.get(this.active ?? "");
-        if (tile) tile.type(text);
-        else toast(t("app.pickSessionFirst"));
-      },
+    this.sidePanel = new Side(() => this.layout && this.render(), {
+      project: () => this.activeProject(),
+      insert: (text) => this.typeIntoActive(text),
       terminal: (path) => void this.openTerminal(path),
       browser: () => this.layout?.browser ?? "auto",
       linkClick: () => this.layout?.linkClick ?? "desk",
       fileEditor: () => this.layout?.fileEditor ?? "",
     });
+    this.side = this.sidePanel;
     root.querySelector(".middle")!.append(this.dockerPanel.el, this.side.el);
     this.footer = root.querySelector(".bottom")!;
 
@@ -290,6 +296,7 @@ export class App {
         this.layout.theme = id;
         this.applyTheme();
         this.save();
+        this.filesWindow?.settingsChanged();
       },
       checkUpdate: () => this.checkUpdateNow(),
       updates: () => this.updater.status,
@@ -300,24 +307,37 @@ export class App {
         setLanguage(id);
         this.save();
         this.relabel();
+        this.filesWindow?.settingsChanged();
       },
       setBrowser: (id) => {
         this.layout.browser = id;
         this.save();
-        void this.side.browserChanged();
+        // The side panel too while the files window has it: switching back shows its ↗ right.
+        void this.sidePanel.browserChanged();
+        this.filesWindow?.settingsChanged();
       },
       setFileEditor: (cmd) => {
         this.layout.fileEditor = cmd;
         this.save();
+        this.filesWindow?.settingsChanged();
       },
       setLinkClick: (mode) => {
         this.layout.linkClick = mode;
         this.save();
+        this.filesWindow?.settingsChanged();
       },
       setUiScale: (v) => {
         this.layout.uiScale = uiScale(v);
         applyUiScale(v);
         this.save();
+        this.filesWindow?.settingsChanged();
+      },
+      setFilesWindow: (on) => void this.setFilesWindow(on),
+      setTreeLeft: (left) => {
+        this.layout.treeLeft = left;
+        this.sidePanel.setTreeLeft(left);
+        this.save();
+        this.filesWindow?.settingsChanged();
       },
       setUsageLayout: (v) => {
         this.layout.usageLayout = v;
@@ -338,6 +358,7 @@ export class App {
         setCustomKeys(keys);
         this.save();
         this.renderChrome();
+        this.filesWindow?.settingsChanged();
       },
       setAutoLayout: (on) => {
         this.layout.autoLayout = on;
@@ -538,6 +559,8 @@ export class App {
       keys: boot.layout.keys ?? {},
       tmuxMenu: boot.layout.tmuxMenu ?? false,
       fileEditor: boot.layout.fileEditor ?? "",
+      filesWindow: boot.layout.filesWindow ?? false,
+      treeLeft: boot.layout.treeLeft ?? false,
       thermalMode: boot.layout.thermalMode ?? "slow",
       thermalLimit: boot.layout.thermalLimit ?? DEFAULT_LIMIT,
       fanSteps: boot.layout.fanSteps?.length ? boot.layout.fanSteps : DEFAULT_STEPS,
@@ -554,9 +577,12 @@ export class App {
       lanes: L.restore(boot.layout.lanes, boot.layout.autostart, boot.layout.lanes.length),
     };
     setCustomKeys(this.layout.keys);
+    this.sidePanel.setTreeLeft(this.layout.treeLeft);
     applyUiScale(this.layout.uiScale);
     if (language !== boot.layout.language) this.save();
     this.applyTheme();
+    // The files window itself is made on demand (⌘F, the folder...), never at start.
+    if (this.layout.filesWindow) this.usePanel(this.newFilesWindow());
     // Another app (iTerm's hotkey window...) may hold ⌘` already.
     if (this.layout.dropdown) void api.dropdownApply().catch((err) => toast(`Dropdown: ${err}`, { kind: "error" }));
     setTerminalFontSize(this.layout.fontSize);
@@ -613,7 +639,7 @@ export class App {
     this.save();
     void this.poll();
     setInterval(() => void this.poll(), POLL_MS);
-    void this.side.browserChanged();
+    void this.sidePanel.browserChanged(); // kept current in either mode (switching back shows it)
     // Shortly after start, then every half hour (updates.ts). A look at the
     // clock each minute: a laptop that slept asks as soon as it wakes.
     window.setTimeout(() => void this.checkUpdateIfDue(), 10_000);
@@ -1255,9 +1281,9 @@ export class App {
 
   // ---- layout ------------------------------------------------------------
 
-  /** Side panel open with several sessions: one in the middle, the rest in the rail. */
+  /** Side panel open with several sessions: one in the middle, the rest in the rail. Not for the files window. */
   private focusMode(): boolean {
-    return this.side.isOpen && this.tiles.size > 1;
+    return !this.filesWindow && this.side.isOpen && this.tiles.size > 1;
   }
 
   private render(): void {
@@ -1673,11 +1699,91 @@ export class App {
 
   /** Labels built once (side panel, tiles, cards, lanes) in the language Options just set. */
   private relabel(): void {
-    this.side.relabel();
+    // The side panel too while the files window has it (its Find in Files popup is here).
+    this.sidePanel.relabel();
+    this.filesWindow?.relabel();
     for (const tile of this.tiles.values()) tile.relabel();
     for (const card of this.cards.values()) cardTitles(card.querySelector<HTMLElement>(".card-head")!);
     for (const lane of this.laneEls) lane.querySelector(".hint")!.textContent = laneHint();
     this.render();
+  }
+
+  // ---- files panel: at the side or in its own window ----------------------
+
+  /** Folder of the active session's project, if any (what the files panel follows). */
+  private activeProject(): string | null {
+    return this.active ? this.projectOf(this.active) : null;
+  }
+
+  /** The panel's @: text typed into the active session. */
+  private typeIntoActive(text: string): void {
+    const tile = this.tiles.get(this.active ?? "");
+    if (tile) tile.type(text);
+    else toast(t("app.pickSessionFirst"));
+  }
+
+  /** What the files window follows from Options. */
+  private filesSettings(): FilesSettings {
+    const l = this.layout;
+    return {
+      browser: l.browser,
+      linkClick: l.linkClick,
+      fileEditor: l.fileEditor,
+      language: l.language,
+      theme: l.theme,
+      uiScale: l.uiScale,
+      keys: l.keys,
+      treeLeft: l.treeLeft,
+    };
+  }
+
+  private newFilesWindow(): FilesWindowPanel {
+    return new FilesWindowPanel({
+      project: () => this.activeProject(),
+      settings: () => this.filesSettings(),
+      insert: (text) => this.typeIntoActive(text),
+      terminal: (path) => void this.openTerminal(path),
+      changed: () => this.renderChrome(), // the folder's pressed state
+    });
+  }
+
+  /** `panel` is the one desk drives from now on (and the one terminal links reach). */
+  private usePanel(panel: Panel): void {
+    this.side.el.replaceWith(panel.el);
+    this.side = panel;
+    this.filesWindow = panel instanceof FilesWindowPanel ? panel : null;
+    setCurrentPanel(panel);
+  }
+
+  /**
+   * Options: the files panel at the side or in its own window, at once. On:
+   * the side panel's edit is saved first (a failed save keeps everything as
+   * it was), then the panel and its native page close and the window shows
+   * what the panel showed. Off: the files window saves its edit first
+   * (`release`: a failed save or no answer keeps the mode), then it closes
+   * for good and the side panel shows what it showed.
+   */
+  private async setFilesWindow(on: boolean): Promise<void> {
+    if (this.switchingPanel || on === (this.filesWindow !== null)) return;
+    this.switchingPanel = true;
+    try {
+      const from = this.filesWindow;
+      const to: Panel = on ? this.newFilesWindow() : this.sidePanel;
+      // Either way the edit is saved first; a failed save keeps the mode.
+      // No reload of the side panel's page: it closes right after.
+      const stop = from ? () => from.release() : () => this.sidePanel.stopEditing(false);
+      // Locked while the save was asked: nothing opens under the lock screen.
+      if (await switchPanel(this.side, to, stop, (p) => this.usePanel(p), () => !this.locked)) {
+        this.layout.filesWindow = on;
+        this.save();
+        this.render(); // the grid's width and the folder's state
+      } else if (on) {
+        await to.handOver(); // the stand-in made for nothing stops listening
+      }
+    } finally {
+      this.switchingPanel = false;
+    }
+    if (this.settings.isOpen) this.settings.render();
   }
 
   private tileAt(target: EventTarget | null): Tile | undefined {

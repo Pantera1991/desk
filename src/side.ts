@@ -9,7 +9,7 @@ import { t } from "./i18n";
 import { keysIn } from "./keys";
 import { PLATFORM, shortcut } from "./platform";
 import { toast } from "./ui";
-import { isLocal, mention, normalize, rendered, staleView } from "./address";
+import { isLocal, mention, normalize, rendered, shownView, staleView } from "./address";
 import { FileTree, itemsLabel } from "./treeview";
 import { escapeHtml } from "./tile";
 import { createEditor, type Editor } from "./editor";
@@ -36,30 +36,65 @@ export interface SideContext {
 }
 
 
+/**
+ * What the main window drives: the panel at the side (`Side`), or its stand-in
+ * that talks to the files window (files-window-panel.ts).
+ */
+export interface Panel {
+  readonly el: HTMLElement;
+  readonly isOpen: boolean;
+  readonly filesShown: boolean;
+  browse(): void;
+  toggle(): void;
+  toggleFiles(): void;
+  showFiles(): void;
+  showFind(seed?: string): void;
+  projectChanged(): void;
+  relabel(): void;
+  browserChanged(): Promise<void>;
+  open(link: string, project?: string): Promise<void>;
+  close(): void;
+  /** The file being edited or the address shown, else null (what a switch shows again). */
+  shown(): string | null;
+  /** Another host takes over: close, and let go of what lives outside this page (the native preview, the window). */
+  handOver(): Promise<void>;
+  /** Where web pages open outside desk (Layout.browser). */
+  browserPref(): string;
+  /** What a plain click on a terminal link does (Layout.linkClick). */
+  linkClickPref(): string;
+}
+
 const REVEAL = ({ mac: "side.revealMac", windows: "side.revealWindows", linux: "side.revealLinux" } as const)[PLATFORM];
+
+/** The panel the helpers below reach: the side panel, or the files window's stand-in. */
+let current: Panel | null = null;
+
+/** The main window switched where the panel lives (Options). */
+export function setCurrentPanel(panel: Panel): void {
+  current = panel;
+}
 
 /** Open a link or a local file in the panel (from a terminal link, ⌘F...). */
 export function preview(link: string): Promise<void> {
-  return Side.current ? Side.current.open(link) : Promise.reject(t("side.notReady"));
+  return current ? current.open(link) : Promise.reject(t("side.notReady"));
 }
 
 /** A project file in the panel (⌘F, ⌥↵). */
 export function previewFile(path: string, file: string): Promise<void> {
-  return Side.current ? Side.current.open(file, path) : Promise.reject(t("side.notReady"));
+  return current ? current.open(file, path) : Promise.reject(t("side.notReady"));
 }
 
 /** A link outside desk: a web page in Brave / Chrome (Options), a file in its default app. */
 export function openOutside(link: string): Promise<void> {
-  return api.openExternal(link, Side.current?.browserPref());
+  return api.openExternal(link, current?.browserPref());
 }
 
 /** What a plain click on a terminal link does: "desk", "browser" or "none". */
 export function linkClickMode(): string {
-  return Side.current?.linkClickPref() ?? "desk";
+  return current?.linkClickPref() ?? "desk";
 }
 
-export class Side {
-  static current: Side | null = null;
+export class Side implements Panel {
   readonly el: HTMLElement;
   private view: HTMLElement;
   private address: HTMLInputElement;
@@ -73,8 +108,17 @@ export class Side {
   /** A folder card is shown instead of the page (absolute path). */
   private folder: string | null = null;
   private tree: FileTree;
-  /** Find in Files: a popup; a picked hit opens here (or in the program from Options). */
-  private find: FindPanel;
+  /**
+   * Find in Files: a popup; a picked hit opens here (or in the program from Options).
+   * None in the files window: the main window owns the popup.
+   */
+  private find: FindPanel | null = null;
+  /** In the files window: fills it, no splitter, × hides the window. */
+  private detached: boolean;
+  /** Detached: the window is hidden (it starts so, until a command shows it). */
+  private windowHidden = true;
+  /** Something the host may report changed (the file shown, the buttons). */
+  private changed: () => void;
   /** What had the focus when the search opened; closing it without a file gives it back. */
   private beforeFind: HTMLElement | null = null;
   /** "Brave" / "Chrome", or null when web pages go to the system browser. */
@@ -85,11 +129,14 @@ export class Side {
   constructor(
     private onLayout: () => void,
     private ctx: SideContext,
+    opts: { detached?: boolean; changed?: () => void } = {},
   ) {
-    Side.current = this;
+    setCurrentPanel(this);
+    this.detached = opts.detached ?? false;
+    this.changed = opts.changed ?? (() => undefined);
     this.el = document.createElement("aside");
-    this.el.className = "side";
-    this.el.hidden = true;
+    this.el.className = this.detached ? "side detached" : "side";
+    this.el.hidden = !this.detached;
     this.el.innerHTML = `
       <div class="splitter"></div>
       <div class="side-head">
@@ -115,18 +162,21 @@ export class Side {
       folder: (rel) => void this.showFolder(rel),
       edit: (rel) => void this.openAt(rel, 1, this.tree.project ?? undefined),
     });
-    this.find = new FindPanel({
-      open: (file, line, project) => {
-        this.find.close();
-        void this.openAt(file, line, project);
-      },
-      closed: (back) => {
-        const before = this.beforeFind;
-        this.beforeFind = null;
-        // Esc or a click outside: typing goes on where it was (the terminal), not into nothing.
-        if (back && before?.isConnected) before.focus();
-      },
-    });
+    if (!this.detached) {
+      const find: FindPanel = new FindPanel({
+        open: (file, line, project) => {
+          find.close();
+          void this.openAt(file, line, project);
+        },
+        closed: (back) => {
+          const before = this.beforeFind;
+          this.beforeFind = null;
+          // Esc or a click outside: typing goes on where it was (the terminal), not into nothing.
+          if (back && before?.isConnected) before.focus();
+        },
+      });
+      this.find = find;
+    }
     this.el.querySelector(".side-body")!.append(this.tree.el);
     this.relabel();
     let treeShown = true;
@@ -143,11 +193,14 @@ export class Side {
       else if (f === "terminal") this.ctx.terminal(this.folder);
       else if (f === "reveal") void api.revealPath(this.folder).catch(this.fail);
     });
-    try {
-      const w = Number(localStorage.getItem(WIDTH_KEY));
-      if (w > 0) this.el.style.width = `${w}px`;
-    } catch {
-      // storage unavailable: default width
+    // The files window fills its window: the side panel's saved width is not for it.
+    if (!this.detached) {
+      try {
+        const w = Number(localStorage.getItem(WIDTH_KEY));
+        if (w > 0) this.el.style.width = `${w}px`;
+      } catch {
+        // storage unavailable: default width
+      }
     }
 
     this.el.querySelector(".side-head")!.addEventListener("click", (e) => {
@@ -173,14 +226,22 @@ export class Side {
     // A native view sits above the page: hide it while a dialog or the lock covers it.
     new MutationObserver(() => this.cover()).observe(document.body, { childList: true });
     this.covered = document.querySelector(".overlay, .lock-screen") !== null;
+    // Heard from any window: a side panel the files window took over must not follow that window's page.
     void listen<boolean>("preview-login", (e) => {
+      if (current !== this) return;
       this.login = e.payload;
       this.syncButtons();
     });
     void listen<string>("preview-url", (e) => {
+      if (current !== this) return;
       if (document.activeElement !== this.address && !this.editing) this.address.value = e.payload;
       this.syncButtons();
     });
+  }
+
+  /** The file tree on the left of the view instead of the right (Layout.treeLeft). */
+  setTreeLeft(left: boolean): void {
+    this.el.querySelector(".side-body")!.classList.toggle("tree-left", left);
   }
 
   /** Labels in the current language: at start and when Options change it. */
@@ -203,7 +264,7 @@ export class Side {
     const hint = this.view.querySelector<HTMLElement>("[data-hint]");
     if (hint) hint.textContent = t("side.empty");
     this.tree.relabel();
-    this.find.relabel();
+    this.find?.relabel();
     if (this.isOpen) this.syncButtons();
   }
 
@@ -214,7 +275,27 @@ export class Side {
   }
 
   get isOpen(): boolean {
-    return !this.el.hidden;
+    return this.detached ? !this.windowHidden : !this.el.hidden;
+  }
+
+  /** Detached: the host shows or hides the window (its own close button, the lock). */
+  windowVisible(visible: boolean): void {
+    if (!this.detached || this.windowHidden === !visible) return;
+    if (visible) {
+      // Shown again: the native page was hidden with the window (sync), so show it too.
+      this.show(); // clears the flag, loads the tree, reports
+      this.sync();
+      this.place();
+      return;
+    }
+    this.windowHidden = true;
+    this.sync();
+    this.onLayout();
+  }
+
+  /** The file being edited, else the address shown; null for nothing and for a folder card (shownView). */
+  shown(): string | null {
+    return shownView({ editing: this.editing?.path ?? null, folder: this.folder, created: this.created, address: this.address.value });
   }
 
   /** The panel is open with the file tree in it (the top bar's folder is pressed). */
@@ -280,6 +361,14 @@ export class Side {
    */
   toggle(): void {
     if (this.isOpen) return this.close();
+    this.reveal();
+  }
+
+  /**
+   * Show the panel, never hide it: the other window's ⌘W / folder when it
+   * believes this one is closed (it may be open by the time that arrives).
+   */
+  reveal(): void {
     this.show();
     this.sync();
     void this.follow(true).then(() => {
@@ -290,15 +379,44 @@ export class Side {
   }
 
   close(): void {
-    if (!this.isOpen) return;
-    this.el.hidden = true;
+    if (this.detached) {
+      // Always ask Rust: the flag may be stale (minimized, restored).
+      this.windowHidden = true;
+      void api.filesWindowHide().catch(this.fail);
+    } else if (!this.isOpen) {
+      return;
+    } else {
+      this.el.hidden = true;
+    }
     this.sync();
     this.onLayout();
   }
 
+  /**
+   * The files window takes the panel over: close, and close the native page
+   * too. It is one view for both windows, so a late call from here (bounds,
+   * visible, nav) must not reach it once it lives there: this panel forgets it.
+   * Stop editing first (`stopEditing`): an edit open here is dropped.
+   */
+  async handOver(): Promise<void> {
+    // Its Find in Files popup too: the new host has its own, and a hit here would open in a panel out of the page.
+    this.find?.close();
+    this.close();
+    this.editing?.editor.destroy();
+    this.editing = null;
+    this.created = false;
+    this.folder = null;
+    this.login = false;
+    this.address.value = "";
+    this.view.innerHTML = `<div class="side-empty dim" data-hint>${escapeHtml(t("side.empty"))}</div>`;
+    this.syncButtons();
+    await api.previewClose().catch(() => undefined);
+  }
+
   private show(): void {
     if (this.isOpen) return;
-    this.el.hidden = false;
+    if (this.detached) this.windowHidden = false;
+    else this.el.hidden = false;
     if (!this.tree.el.hidden) void this.tree.load(this.ctx.project());
     this.onLayout();
   }
@@ -307,6 +425,7 @@ export class Side {
   showFiles(): void {
     this.show();
     if (this.tree.el.hidden) this.toggleTree();
+    this.sync();
     void this.follow(true);
     this.tree.focusFilter();
   }
@@ -333,6 +452,7 @@ export class Side {
     this.tree.el.hidden = !this.tree.el.hidden;
     this.rememberTree();
     if (!this.tree.el.hidden) void this.tree.load(this.ctx.project());
+    this.changed(); // the host's filesShown follows (no-op in the side panel)
   }
 
   private rememberTree(): void {
@@ -367,6 +487,7 @@ export class Side {
 
   /** ⇧⌘F: the search popup for the active project, the input focused. */
   showFind(seed?: string): void {
+    if (!this.find) return;
     const active = document.activeElement;
     if (!this.find.isOpen && active instanceof HTMLElement && !this.find.el.contains(active)) this.beforeFind = active;
     const project = this.ctx.project() ?? this.tree.project;
@@ -416,6 +537,7 @@ export class Side {
   }
 
   private syncButtons(): void {
+    this.changed();
     const local = isLocal(this.editing?.path ?? this.address.value);
     this.editBtn.hidden = !!this.folder || !local;
     this.el.querySelector<HTMLElement>('[data-a="attach"]')!.hidden = !this.folder && !local;
@@ -485,15 +607,17 @@ export class Side {
     }
   }
 
-  /** Back to the page: save first, then show it again, reloaded. */
-  private async stopEditing(): Promise<boolean> {
+  /** Back to the page: save first, then show it again, reloaded. False: the save failed (a toast says why). */
+  async stopEditing(reload = true): Promise<boolean> {
+    if (!this.editing) return true; // nothing to save, the page stays as it is
     if (!(await this.save())) return false;
     this.editing?.editor.destroy();
     this.editing = null;
     this.view.replaceChildren();
     this.sync();
     this.syncButtons();
-    if (this.created) void api.previewNav("reload").catch(this.fail);
+    // `reload` false: the panel is handed over right after (a mode switch), nothing to show again.
+    if (reload && this.created) void api.previewNav("reload").catch(this.fail);
     return true;
   }
 

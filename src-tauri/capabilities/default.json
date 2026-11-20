@@ -80,6 +80,10 @@
     "allow-docker-restart",
     "allow-compose-dirs",
     "allow-git-status-summary",
-    "allow-quit-desk"
+    "allow-quit-desk",
+    "allow-files-window-open",
+    "allow-files-window-hide",
+    "allow-files-window-destroy",
+    "allow-focus-main-window"
   ]
 }

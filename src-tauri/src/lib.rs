@@ -17,6 +17,7 @@ pub mod drag;
 pub mod dropdown;
 pub mod env;
 pub mod file_editor;
+pub mod files_window;
 pub mod core_temps;
 pub mod fans;
 pub mod fan_control;
@@ -378,7 +379,9 @@ fn pty_write(
     app.sessions.write(id, data.as_bytes())
 }
 
-#[tauri::command]
+/// Async: locking waits for the files window's turn (files_window.rs), which
+/// must never be on the main thread.
+#[tauri::command(async)]
 fn lock_desk(handle: AppHandle, lock: State<lock::Lock>) -> Result<(), String> {
     lock.lock(&handle)
 }
@@ -396,8 +399,13 @@ fn unlock_desk(
 
 /// Show a link in the side panel at `bounds`; returns what the address bar shows.
 #[tauri::command]
-fn open_preview(handle: AppHandle, url: String, bounds: preview::Bounds) -> Result<String, String> {
-    preview::open(&handle, &url, bounds)
+fn open_preview(
+    handle: AppHandle,
+    window: tauri::Window,
+    url: String,
+    bounds: preview::Bounds,
+) -> Result<String, String> {
+    preview::open(&handle, window.label(), &url, bounds)
 }
 
 #[tauri::command]
@@ -761,12 +769,13 @@ fn reveal_path(path: String) -> Result<(), String> {
 #[tauri::command]
 fn preview_file(
     handle: AppHandle,
+    window: tauri::Window,
     path: String,
     file: String,
     bounds: preview::Bounds,
 ) -> Result<String, String> {
     let full = project::inside(Path::new(&path), &file)?;
-    preview::open(&handle, &full.display().to_string(), bounds)
+    preview::open(&handle, window.label(), &full.display().to_string(), bounds)
 }
 
 #[tauri::command]
@@ -1121,15 +1130,42 @@ pub fn run() {
             docker_restart,
             compose_dirs,
             quit_desk,
+            files_window::files_window_open,
+            files_window::files_window_hide,
+            files_window::files_window_destroy,
+            files_window::focus_main_window,
         ])
         .on_window_event(|window, event| {
+            if window.label() == files_window::LABEL {
+                match event {
+                    // Closing only hides it: its state and edits stay.
+                    tauri::WindowEvent::CloseRequested { api, .. } => {
+                        api.prevent_close();
+                        files_window::hide(window.app_handle());
+                    }
+                    tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) => window_place::save_soon(
+                        window.app_handle(),
+                        files_window::LABEL,
+                        window_place::files_file(&env::support_dir()),
+                    ),
+                    _ => {}
+                }
+                return;
+            }
             if window.label() != "main" {
                 return;
             }
             if matches!(event, tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)) {
-                window_place::save_soon(window.app_handle(), window_place::file(&env::support_dir()));
+                window_place::save_soon(window.app_handle(), "main", window_place::file(&env::support_dir()));
             }
             let locked = window.state::<lock::Lock>().is_locked();
+            // The main window goes: the files window (maybe hidden, which
+            // would keep desk running without a UI) goes with it. Off this
+            // thread: it waits for the files window's turn.
+            if !locked && matches!(event, tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed) {
+                let app = window.app_handle().clone();
+                std::thread::spawn(move || files_window::destroy(&app));
+            }
             if matches!(event, tauri::WindowEvent::Focused(false)) && !locked {
                 dropdown::blurred(window.app_handle());
             }
@@ -1199,13 +1235,18 @@ mod acl_tests {
 
     /// The side panel: a second webview inside the main window.
     fn call_panel(url: &str, cmd: &str) -> Result<String, String> {
+        call_child("main", url, cmd)
+    }
+
+    /// The preview webview as a child of the window `host` (main, or files).
+    fn call_child(host: &str, url: &str, cmd: &str) -> Result<String, String> {
         let app = mock_builder()
             .manage(super::lock::Lock::default())
             .invoke_handler(tauri::generate_handler![super::is_locked])
             .build(super::context())
             .unwrap();
         let main: url::Url = "tauri://localhost".parse().unwrap();
-        let w = WebviewWindowBuilder::new(&app, "main", WebviewUrl::External(main))
+        let w = WebviewWindowBuilder::new(&app, host, WebviewUrl::External(main))
             .build()
             .unwrap();
         let url: url::Url = url.parse().unwrap();
@@ -1317,13 +1358,78 @@ mod acl_tests {
         let src = include_str!("lib.rs");
         let start = src.find("generate_handler![").unwrap() + "generate_handler![".len();
         let list = &src[start..start + src[start..].find(']').unwrap()];
-        let cmds: Vec<&str> = list.split(',').map(str::trim).filter(|c| !c.is_empty()).collect();
+        let cmds: Vec<&str> = list
+            .split(',')
+            .map(str::trim)
+            .filter(|c| !c.is_empty())
+            .map(|c| c.rsplit("::").next().unwrap())
+            .collect();
         assert!(cmds.contains(&"bootstrap") && cmds.contains(&"quit_desk"), "{cmds:?}");
         for cmd in cmds {
             // Past the ACL: this mock app has only is_locked, the rest are
             // "Command x not found". The ACL refuses with "x not allowed".
             let main = call("main", LOCAL, cmd);
             assert!(!main.as_ref().is_err_and(|e| e.contains("not allowed")), "{cmd}: {main:?}");
+        }
+    }
+
+    /// How the ACL resolves the files webview, not just what the JSON lists:
+    /// the panel's commands pass, desk's do not, and the preview that is a
+    /// child of the files window (or an untrusted page there) gets nothing.
+    #[test]
+    fn the_files_webview_and_its_preview_resolve_as_granted() {
+        let denied = |r: &Result<String, String>| r.as_ref().is_err_and(|e| e.contains("not allowed"));
+        for cmd in ["pty_write", "quit_desk", "save_layout", "is_locked"] {
+            let r = call("files", LOCAL, cmd);
+            assert!(denied(&r), "files {cmd}: {r:?}");
+        }
+        // Past the ACL: this mock app has no handler for it, so "not found".
+        let r = call("files", LOCAL, "read_text");
+        assert!(!denied(&r), "files read_text: {r:?}");
+        // The page listens and emits: core:event:default is enough.
+        for cmd in ["plugin:event|listen", "plugin:event|emit_to"] {
+            let r = call("files", LOCAL, cmd);
+            assert!(!denied(&r), "files {cmd}: {r:?}");
+        }
+        for url in [LOCAL, UNTRUSTED[0], UNTRUSTED[1]] {
+            for cmd in ["is_locked", "plugin:event|emit", "plugin:event|emit_to", "plugin:event|listen"] {
+                let r = call_child("files", url, cmd);
+                assert!(denied(&r), "preview under files {url} {cmd}: {r:?}");
+            }
+        }
+    }
+
+    /// The files window shows the panel only: its capability lists registered
+    /// commands and none that type into a terminal, quit, or change the layout
+    /// or sessions.
+    #[test]
+    fn the_files_window_gets_only_panel_commands() {
+        let src = include_str!("lib.rs");
+        let start = src.find("generate_handler![").unwrap() + "generate_handler![".len();
+        let list = &src[start..start + src[start..].find(']').unwrap()];
+        let cmds: Vec<String> = list
+            .split(',')
+            .map(str::trim)
+            .filter(|c| !c.is_empty())
+            .map(|c| c.rsplit("::").next().unwrap().replace('_', "-"))
+            .collect();
+        let caps: serde_json::Value = serde_json::from_str(include_str!("../capabilities/files.json")).unwrap();
+        assert_eq!(caps["webviews"], serde_json::json!(["files"]));
+        let allowed: Vec<&str> = caps["permissions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|p| p.as_str())
+            .filter_map(|p| p.strip_prefix("allow-"))
+            .collect();
+        for p in &allowed {
+            assert!(cmds.iter().any(|c| c == p), "allow-{p} is not a registered command");
+        }
+        for must in ["files-window-hide", "preview-file", "read-text"] {
+            assert!(allowed.contains(&must), "missing allow-{must}");
+        }
+        for never in ["pty-write", "quit-desk", "save-layout", "open-session", "kill-session"] {
+            assert!(!allowed.contains(&never), "allow-{never} must not be granted");
         }
     }
 }

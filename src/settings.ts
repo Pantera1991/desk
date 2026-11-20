@@ -74,6 +74,10 @@ export interface SettingsContext {
   projects: () => Promise<Project[]>;
   setLaneCount: (n: number) => void;
   setAutoLayout: (on: boolean) => void;
+  /** The files panel at the side (false) or in a window of its own (true); switched at once. */
+  setFilesWindow: (on: boolean) => void;
+  /** The file tree on the left of the files panel instead of the right. */
+  setTreeLeft: (left: boolean) => void;
   setTheme: (id: string) => void;
   setBrowser: (id: string) => void;
   /** What a plain click on a terminal link does (links.ts). */
@@ -814,7 +818,23 @@ export class Settings {
         section(
           "",
           `<label class="line" data-row><input type="checkbox" data-k="auto-layout" ${layout.autoLayout ? "checked" : ""}/> ${t("settings.autoLayout")} <span class="dim">${t("settings.autoLayoutHint")}</span></label>
-      <label class="line" data-row>${t("settings.lanes")} <input type="number" min="1" max="8" value="${layout.lanes.length}" data-k="lanes" ${layout.autoLayout ? "disabled" : ""}/></label>`,
+      <label class="line" data-row>${t("settings.lanes")} <input type="number" min="1" max="8" value="${layout.lanes.length}" data-k="lanes" ${layout.autoLayout ? "disabled" : ""}/></label>
+      <div class="line" data-row><span>${t("settings.filesPanel")}</span><span class="seg">${(
+        [
+          ["side", t("settings.filesPanelSide")],
+          ["window", t("settings.filesPanelWindow")],
+        ] as const
+      )
+        .map(([v, label]) => `<button class="${(layout.filesWindow ? "window" : "side") === v ? "sel" : ""}" data-files-window="${v}">${label}</button>`)
+        .join("")}</span></div>
+      <div class="line" data-row><span>${t("settings.treeSide")}</span><span class="seg">${(
+        [
+          ["left", t("settings.treeSideLeft")],
+          ["right", t("settings.treeSideRight")],
+        ] as const
+      )
+        .map(([v, label]) => `<button class="${(layout.treeLeft ? "left" : "right") === v ? "sel" : ""}" data-tree-side="${v}">${label}</button>`)
+        .join("")}</span></div>`,
         ) +
           section(
             t("settings.dropdown"),
@@ -1176,6 +1196,16 @@ export class Settings {
     );
     const fileEditor = box.querySelector<HTMLInputElement>('[data-k="file-editor"]');
     fileEditor?.addEventListener("change", () => void this.saveFileEditor(fileEditor, box));
+    // desk redraws Options once the switch is done (a file that does not save keeps the old place).
+    box.querySelectorAll<HTMLButtonElement>("[data-files-window]").forEach((b) =>
+      b.addEventListener("click", () => this.ctx.setFilesWindow(b.dataset.filesWindow === "window")),
+    );
+    box.querySelectorAll<HTMLButtonElement>("[data-tree-side]").forEach((b) =>
+      b.addEventListener("click", () => {
+        this.ctx.setTreeLeft(b.dataset.treeSide === "left");
+        this.render();
+      }),
+    );
     box.querySelector<HTMLInputElement>('[data-k="auto-layout"]')!.addEventListener("change", (e) => {
       this.ctx.setAutoLayout((e.target as HTMLInputElement).checked);
       this.render();
