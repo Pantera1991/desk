@@ -6,6 +6,39 @@ use std::time::Duration;
 /// Run a program without a terminal and collect its stdout; killed after
 /// `timeout`. A non-zero exit gives its trimmed stderr.
 pub fn run(program: &Path, args: &[&str], timeout: Duration) -> Result<String, String> {
+    let (status, stdout, stderr) = exec(program, args, timeout)?;
+    if status.success() {
+        Ok(String::from_utf8_lossy(&stdout).into_owned())
+    } else {
+        let text = String::from_utf8_lossy(&stderr).trim().to_string();
+        if !text.is_empty() {
+            return Err(text);
+        }
+        let name = program.file_name().map_or_else(|| program.to_string_lossy(), |n| n.to_string_lossy());
+        Err(match status.code() {
+            Some(n) => tr!(format!("{name} zakończył się kodem {n}"), format!("{name} exited with code {n}")),
+            None => tr!(format!("{name} został przerwany"), format!("{name} was terminated")),
+        })
+    }
+}
+
+/// Like [`run`], but any exit is an answer: `(code, stdout, stderr)`, the
+/// code -1 when a signal ended it. Err only when it could not start or ran
+/// past `timeout`.
+pub fn run_status(program: &Path, args: &[&str], timeout: Duration) -> Result<(i32, String, String), String> {
+    let (status, stdout, stderr) = exec(program, args, timeout)?;
+    Ok((
+        status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&stdout).into_owned(),
+        String::from_utf8_lossy(&stderr).into_owned(),
+    ))
+}
+
+fn exec(
+    program: &Path,
+    args: &[&str],
+    timeout: Duration,
+) -> Result<(std::process::ExitStatus, Vec<u8>, Vec<u8>), String> {
     use std::io::Read;
     use std::process::{Command, Stdio};
     let mut child = Command::new(program)
@@ -45,19 +78,7 @@ pub fn run(program: &Path, args: &[&str], timeout: Duration) -> Result<String, S
     let status = status?;
     let stdout = out_t.join().unwrap_or_default();
     let stderr = err_t.join().unwrap_or_default();
-    if status.success() {
-        Ok(String::from_utf8_lossy(&stdout).into_owned())
-    } else {
-        let text = String::from_utf8_lossy(&stderr).trim().to_string();
-        if !text.is_empty() {
-            return Err(text);
-        }
-        let name = program.file_name().map_or_else(|| program.to_string_lossy(), |n| n.to_string_lossy());
-        Err(match status.code() {
-            Some(n) => tr!(format!("{name} zakończył się kodem {n}"), format!("{name} exited with code {n}")),
-            None => tr!(format!("{name} został przerwany"), format!("{name} was terminated")),
-        })
-    }
+    Ok((status, stdout, stderr))
 }
 
 /// "Did not answer" with the wait that really ran out (whole seconds, rounded up).
@@ -101,5 +122,14 @@ mod tests {
         assert_eq!(run(Path::new("sh"), &["-c", "echo hi"], Duration::from_secs(2)).unwrap(), "hi\n");
         let e = run(Path::new("sh"), &["-c", "echo boom >&2; exit 3"], Duration::from_secs(2)).unwrap_err();
         assert_eq!(e, "boom");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_status_returns_any_exit() {
+        let r = run_status(Path::new("sh"), &["-c", "echo out; echo err >&2; exit 1"], Duration::from_secs(2));
+        assert_eq!(r.unwrap(), (1, "out\n".to_string(), "err\n".to_string()));
+        let e = run_status(Path::new("sleep"), &["5"], Duration::from_secs(1)).unwrap_err();
+        assert!(e.contains("1 s"), "{e}");
     }
 }

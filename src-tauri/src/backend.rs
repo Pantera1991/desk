@@ -174,6 +174,21 @@ impl Backend {
         }
     }
 
+    /// The processes a session runs (tmux: its panes'); empty when unknown.
+    pub fn roots_of(&self, slug: &str) -> Vec<u32> {
+        self.roots()
+            .into_iter()
+            .filter(|(info, _)| info.slug == slug)
+            .flat_map(|(_, pids)| pids)
+            .collect()
+    }
+
+    /// Whether a process whose name `is` matches (e.g. rsync) still runs in
+    /// the session. No process table (ps failed) reads as not running.
+    pub fn runs(&self, slug: &str, is: impl Fn(&str) -> bool) -> bool {
+        crate::upload::runs_in(&self.roots_of(slug), &crate::thermal::processes(), is)
+    }
+
     /// desk is quitting: tmux sessions stay, native ones end.
     pub fn shutdown(&self) {
         match self {

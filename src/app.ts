@@ -13,6 +13,7 @@ import {
   type Conversation,
   type DockerOverview,
   type DockerTile,
+  type UploadTile,
   type GithubRepo,
   type Layout,
   type Project,
@@ -23,9 +24,11 @@ import {
   type Usage,
 } from "./api";
 import { detectLanguage, isLanguage, setLanguage, t, type Language } from "./i18n";
-import { actionFor, hints, keysIn, keyText, setCustomKeys, type Action } from "./keys";
+import { actionFor, hints, keysIn, keyText, setCustomKeys, setSuperKeys, superKeyEvent, type Action, type SuperKey } from "./keys";
 import { PLATFORM, shortcut } from "./platform";
-import { Side } from "./side";
+import { setCurrentPanel, Side, type Panel } from "./side";
+import { FilesWindowPanel, switchPanel } from "./files-window-panel";
+import type { FilesSettings } from "./files-link";
 import * as L from "./lanes";
 import { label, mark, sizable, splitLine, watchDrag, type Box } from "./drag";
 import { Palette } from "./palette";
@@ -54,7 +57,10 @@ import { usageHtml } from "./usage";
 import { UsagePopover } from "./usage-popover";
 import { CpuPopover } from "./cpu-popover";
 import { DockerPanel } from "./docker-panel";
+import { UploadPanel } from "./upload-panel";
 import { blockedDeploy, findDockerSession } from "./docker-view";
+import { seedText } from "./find-view";
+import { blockedUpload, closePlan, findUploadSession, openPlan, quitPlan } from "./upload-view";
 import {
   DEFAULT_EMERGENCY,
   DEFAULT_FAN_MARGIN,
@@ -64,10 +70,10 @@ import {
   thermalHtml,
   thermalToast,
 } from "./thermal";
-import { brandHtml, browserHtml, coffeeHtml, dockerHtml, settingsHtml } from "./topbar";
+import { brandHtml, browserHtml, coffeeHtml, dockerHtml, filesHtml, settingsHtml, uploadHtml } from "./topbar";
 import { UpdateChecker, type UpdateOutcome } from "./updates";
 import { accountById, accountColor, accountFor, hasAccounts } from "./accounts";
-import { applyUiScale, uiScale } from "./ui-scale";
+import { applyTileIconScale, applyUiScale, tileIconScale, uiScale } from "./ui-scale";
 
 const POLL_MS = 3000;
 /** The last new version a notice announced: each one once, also after a restart. */
@@ -88,6 +94,8 @@ const ENDING_MS = 3000;
 export class App {
   private layout!: Layout;
   private home = "";
+  /** layout.json where Rust keeps it (Options' footer). */
+  private layoutPath = "";
   private projectsDir = "";
   private tiles = new Map<string, Tile>(); // by session key (see sessions.ts)
   private hook = new Map<string, SessionState>(); // by tmux slug
@@ -102,8 +110,12 @@ export class App {
   private tmuxMissing = false;
   /** Tiles about to open a conversation again (⌘S): key → Claude session id. */
   private resuming = new Map<string, string>();
-  /** Deploy tiles confirmed in the Docker panel, about to start: the only way a `compose up` session starts (see blockedDeploy). */
-  private confirmedDeploys = new Set<string>();
+  /** Tiles confirmed with a click, about to start: a deploy in the Docker panel or a file
+   *  sent in the Upload panel. The only way a `compose up` or an rsync session starts
+   *  (see blockedDeploy, blockedUpload); only openDockerTileNow and openUploadTile add to it. */
+  private confirmedStarts = new Set<string>();
+  /** Upload tiles whose ✕ is asking whether to stop rsync: a second ✕ or ⌘Q is ignored meanwhile. */
+  private closingUploads = new Set<string>();
   /** Logs/shell tiles being opened (host|target|kind): a fast second click is ignored until the first lands. */
   private openingDocker = new Set<string>();
   private earlyExits = new Map<number, string>(); // pty-exit that arrived before attach returned
@@ -161,7 +173,14 @@ export class App {
   private lockEl: HTMLElement | null = null;
 
   private grid: HTMLElement;
-  private side: Side;
+  /** The files panel desk drives: `sidePanel`, or `filesWindow` (Options: in its own window). */
+  private side: Panel;
+  /** The panel at the side, kept while the files window has it (switching back reuses it). */
+  private sidePanel: Side;
+  /** The stand-in that talks to the files window; null while the panel is at the side. */
+  private filesWindow: FilesWindowPanel | null = null;
+  /** A mode switch is under way (it may wait for a save). */
+  private switchingPanel = false;
   /** With the side panel open: the other sessions as mini cards, left of the active one. */
   private rail: HTMLElement;
   private top: HTMLElement;
@@ -175,6 +194,7 @@ export class App {
   /** The temperature chip's panel (cpu-popover.ts). */
   private cpuPopover: CpuPopover;
   private dockerPanel: DockerPanel;
+  private uploadPanel: UploadPanel;
   /** The servers as the panel last saw them (to find a container's compose project). */
   private dockerLast: DockerOverview | null = null;
 
@@ -235,6 +255,21 @@ export class App {
         focusDeploy: (host, project) => this.focusDockerTile({ host, target: project, kind: "deploy" }),
       },
     );
+    this.uploadPanel = new UploadPanel({
+      project: () => (this.active ? this.projectOf(this.active) : null),
+      hosts: () => this.layout?.uploadHosts ?? [],
+      existing: async (tile, project) => (await this.findUpload(tile, project))?.state ?? null,
+      focus: async (tile, project) => {
+        const found = await this.findUpload(tile, project);
+        if (found) await this.showUpload(found.key);
+      },
+      send: (tile, title, project) => this.openUploadTile(tile, title, project),
+      onLayout: () => {
+        if (!this.layout) return;
+        this.render();
+        this.renderChrome();
+      },
+    });
     // Opening, closing or resizing the panel changes the grid's width: lay out again.
     this.rail = root.querySelector(".rail")!;
     this.strip = root.querySelector(".strip")!;
@@ -244,18 +279,16 @@ export class App {
         if (key) this.setActive(key, true);
       });
     }
-    this.side = new Side(() => this.layout && this.render(), {
-      project: () => (this.active ? this.projectOf(this.active) : null),
-      insert: (text) => {
-        const tile = this.tiles.get(this.active ?? "");
-        if (tile) tile.type(text);
-        else toast(t("app.pickSessionFirst"));
-      },
+    this.sidePanel = new Side(() => this.layout && this.render(), {
+      project: () => this.activeProject(),
+      insert: (text) => this.typeIntoActive(text),
       terminal: (path) => void this.openTerminal(path),
       browser: () => this.layout?.browser ?? "auto",
       linkClick: () => this.layout?.linkClick ?? "desk",
+      fileEditor: () => this.layout?.fileEditor ?? "",
     });
-    root.querySelector(".middle")!.append(this.dockerPanel.el, this.side.el);
+    this.side = this.sidePanel;
+    root.querySelector(".middle")!.append(this.dockerPanel.el, this.uploadPanel.el, this.side.el);
     this.footer = root.querySelector(".bottom")!;
 
     this.palette = new Palette({
@@ -278,6 +311,7 @@ export class App {
     });
     this.settings = new Settings({
       home: () => this.home,
+      layoutPath: () => this.layoutPath,
       layout: () => this.layout,
       projects: () => this.projects(),
       setLaneCount: (n) => {
@@ -288,6 +322,7 @@ export class App {
         this.layout.theme = id;
         this.applyTheme();
         this.save();
+        this.filesWindow?.settingsChanged();
       },
       checkUpdate: () => this.checkUpdateNow(),
       updates: () => this.updater.status,
@@ -298,19 +333,41 @@ export class App {
         setLanguage(id);
         this.save();
         this.relabel();
+        this.filesWindow?.settingsChanged();
       },
       setBrowser: (id) => {
         this.layout.browser = id;
         this.save();
-        void this.side.browserChanged();
+        // The side panel too while the files window has it: switching back shows its ↗ right.
+        void this.sidePanel.browserChanged();
+        this.filesWindow?.settingsChanged();
+      },
+      setFileEditor: (cmd) => {
+        this.layout.fileEditor = cmd;
+        this.save();
+        this.filesWindow?.settingsChanged();
       },
       setLinkClick: (mode) => {
         this.layout.linkClick = mode;
         this.save();
+        this.filesWindow?.settingsChanged();
       },
       setUiScale: (v) => {
         this.layout.uiScale = uiScale(v);
         applyUiScale(v);
+        this.save();
+        this.filesWindow?.settingsChanged();
+      },
+      setFilesWindow: (on) => void this.setFilesWindow(on),
+      setTreeLeft: (left) => {
+        this.layout.treeLeft = left;
+        this.sidePanel.setTreeLeft(left);
+        this.save();
+        this.filesWindow?.settingsChanged();
+      },
+      setTileIconScale: (v) => {
+        this.layout.tileIconScale = tileIconScale(v);
+        applyTileIconScale(v);
         this.save();
       },
       setUsageLayout: (v) => {
@@ -326,10 +383,18 @@ export class App {
       setDropdown: (change) => this.setDropdown(change),
       setKey: (id, accelerator) => {
         const keys = { ...this.layout.keys };
-        if (accelerator) keys[id] = accelerator;
-        else delete keys[id];
+        if (accelerator === null) delete keys[id]; // the default again
+        else keys[id] = accelerator; // "" = removed, no key at all
         this.layout.keys = keys;
         setCustomKeys(keys);
+        this.save();
+        this.renderChrome();
+        this.filesWindow?.settingsChanged();
+      },
+      setSuperKeys: (on) => {
+        this.layout.superKeys = on;
+        setSuperKeys(on);
+        void api.setSuperKeys(on);
         this.save();
         this.renderChrome();
       },
@@ -419,6 +484,13 @@ export class App {
         clearTimeout(this.saveTimer);
         return this.persist();
       },
+      setUploadHosts: (hosts) => {
+        this.layout.uploadHosts = hosts;
+        this.renderChrome();
+        this.uploadPanel.hostsChanged();
+        clearTimeout(this.saveTimer);
+        return this.persist();
+      },
     });
   }
 
@@ -433,6 +505,9 @@ export class App {
     await listen<CoffeeStatus>("coffee", (e) => this.onCoffeeStopped(e.payload));
     // macOS: desk catches ⌘Q / ⌘⇧Q itself, before its menu (Quit) and the Apple menu (Log Out).
     await listen<"close" | "kill">("shortcut", (e) => this.onShortcut(e.payload));
+    // Linux with Start as the shortcut key: the window took Start+key (WebKitGTK
+    // never shows Start to the page); it goes to the same key listeners as any key.
+    await listen<SuperKey>("super-key", (e) => window.dispatchEvent(new KeyboardEvent("keydown", superKeyEvent(e.payload))));
     // Docked at the top of the screen: no traffic lights to make room for.
     await listen<boolean>("dropdown", (e) => {
       this.docked = e.payload;
@@ -469,6 +544,11 @@ export class App {
       if (t === "browser") this.side.browse();
       if (t === "thermal") this.cpuPopover.toggle();
       if (t === "docker") this.dockerPanel.toggle();
+      if (t === "files") {
+        this.side.toggleFiles();
+        this.renderChrome(); // the folder's pressed state
+      }
+      if (t === "upload") this.uploadPanel.toggle();
       if (t === "thermal-resume") void this.resumeWork();
       if (t === "update") void this.installUpdate();
       if (t === "leave") void api.dropdownLeave();
@@ -488,6 +568,7 @@ export class App {
     this.fanInfo = await api.fansInfo().catch(() => null);
     this.agents = await api.listAgents();
     this.home = boot.home;
+    this.layoutPath = boot.layoutPath;
     this.projectsDir = boot.projectsDir;
     this.chatPath = await api.chatDir().catch(() => "");
     for (const s of boot.states) this.hook.set(s.slug, s);
@@ -527,7 +608,11 @@ export class App {
       dropdownHotkey: boot.layout.dropdownHotkey || DEFAULT_HOTKEY(),
       dropdownAnimation: boot.layout.dropdownAnimation ?? 200,
       keys: boot.layout.keys ?? {},
+      superKeys: boot.layout.superKeys ?? false,
       tmuxMenu: boot.layout.tmuxMenu ?? false,
+      fileEditor: boot.layout.fileEditor ?? "",
+      filesWindow: boot.layout.filesWindow ?? false,
+      treeLeft: boot.layout.treeLeft ?? false,
       thermalMode: boot.layout.thermalMode ?? "slow",
       thermalLimit: boot.layout.thermalLimit ?? DEFAULT_LIMIT,
       fanSteps: boot.layout.fanSteps?.length ? boot.layout.fanSteps : DEFAULT_STEPS,
@@ -538,15 +623,21 @@ export class App {
       thermalColors: boot.layout.thermalColors ?? null,
       cpuHidden: boot.layout.cpuHidden ?? [],
       uiScale: uiScale(boot.layout.uiScale),
+      tileIconScale: tileIconScale(boot.layout.tileIconScale),
       usageLayout: boot.layout.usageLayout === "all" ? "all" : "tabs",
       usageShare: boot.layout.usageShare === "transcripts" ? "transcripts" : "cost",
       language,
       lanes: L.restore(boot.layout.lanes, boot.layout.autostart, boot.layout.lanes.length),
     };
     setCustomKeys(this.layout.keys);
+    setSuperKeys(this.layout.superKeys);
+    this.sidePanel.setTreeLeft(this.layout.treeLeft);
     applyUiScale(this.layout.uiScale);
+    applyTileIconScale(this.layout.tileIconScale);
     if (language !== boot.layout.language) this.save();
     this.applyTheme();
+    // The files window itself is made on demand (⌘F, the folder...), never at start.
+    if (this.layout.filesWindow) this.usePanel(this.newFilesWindow());
     // Another app (iTerm's hotkey window...) may hold ⌘` already.
     if (this.layout.dropdown) void api.dropdownApply().catch((err) => toast(`Dropdown: ${err}`, { kind: "error" }));
     setTerminalFontSize(this.layout.fontSize);
@@ -586,8 +677,8 @@ export class App {
     const opened = await Promise.all(keys.map((k) => this.createTile(k, true)));
     keys.forEach((k, i) => {
       if (opened[i]) return;
-      // A Docker tile never comes back (createTile dropped what it kept): not kept for the next start.
-      if (parseKey(k).agent === "docker") {
+      // A Docker or upload tile never comes back (createTile dropped what it kept): not kept for the next start.
+      if (["docker", "upload"].includes(parseKey(k).agent)) {
         this.layout.lanes = L.remove(this.layout.lanes, k);
         return;
       }
@@ -603,7 +694,7 @@ export class App {
     this.save();
     void this.poll();
     setInterval(() => void this.poll(), POLL_MS);
-    void this.side.browserChanged();
+    void this.sidePanel.browserChanged(); // kept current in either mode (switching back shows it)
     // Shortly after start, then every half hour (updates.ts). A look at the
     // clock each minute: a laptop that slept asks as soon as it wakes.
     window.setTimeout(() => void this.checkUpdateIfDue(), 10_000);
@@ -631,12 +722,22 @@ export class App {
       account = accountFor(this.layout, key, spec.path);
       if (account && fresh) this.layout.tileAccounts[key] = account;
     }
-    const confirmed = this.confirmedDeploys.delete(key);
-    // A Docker tile is its command's own to start again, never restored: tmux lost it, so it goes.
-    if (spec.agent === "docker" && restore && fresh) {
+    const confirmed = this.confirmedStarts.delete(key);
+    // A Docker or upload tile is its command's own to start again, never restored: tmux lost it, so it goes.
+    if ((spec.agent === "docker" || spec.agent === "upload") && restore && fresh) {
       this.forgetKey(key);
       this.save();
       return null;
+    }
+    // An upload whose session tmux kept: back as a tile only while rsync still runs.
+    // One that finished (its shell keeps the session) ends here and its key is dropped.
+    if (spec.agent === "upload" && restore && !fresh) {
+      const slug = (await api.listSessions().catch(() => [])).find((s) => keyOf(s) === key)?.slug;
+      // A failed check keeps it: better a tile too many than a running upload killed.
+      if (slug && !(await api.uploadRunning(slug).catch(() => true))) {
+        await this.endSession(key);
+        return null;
+      }
     }
     // A deploy that ended runs again only when asked in the Docker panel, never from "Przywróć" or ⌘⇧T.
     if (spec.agent === "docker" && blockedDeploy(this.layout.docker[key], !fresh, confirmed)) {
@@ -646,9 +747,22 @@ export class App {
       toast(t("docker.deployAgain"), { topic: "sessions" });
       return null;
     }
+    // An upload runs only from a click confirmed in the Upload panel, never again from "Przywróć" or ⌘⇧T.
+    if (spec.agent === "upload" && blockedUpload(this.layout.uploads[key], !fresh, confirmed)) {
+      this.forgetKey(key);
+      this.closed = this.closed.filter((c) => c.key !== key);
+      this.save();
+      toast(t("upload.sendAgain"), { topic: "sessions" });
+      return null;
+    }
     try {
-      const command = spec.agent === "docker" ? JSON.stringify(this.layout.docker[key]) : this.layout.runs[key];
-      // Only the confirmed click may start a deploy: Rust checks tmux itself, so a stale `running` cannot re-run one.
+      const command =
+        spec.agent === "docker"
+          ? JSON.stringify(this.layout.docker[key])
+          : spec.agent === "upload"
+            ? JSON.stringify(this.layout.uploads[key])
+            : this.layout.runs[key];
+      // Only the confirmed click may start a deploy or an upload: Rust checks tmux itself, so a stale `running` cannot re-run one.
       const slug = await api.openSession(spec.path, spec.agent, spec.instance, command, resume, restore, account, confirmed);
       this.running.add(key);
       // A session started anew under a slug used before: the old state names
@@ -681,6 +795,13 @@ export class App {
     } catch (err) {
       // A deploy Rust would not start (its session had ended after all): forgotten like one refused above, one toast.
       if (spec.agent === "docker" && blockedDeploy(this.layout.docker[key], false, confirmed)) {
+        this.running.delete(key);
+        this.forgetKey(key);
+        this.closed = this.closed.filter((c) => c.key !== key);
+        this.save();
+      }
+      // The same for an upload Rust would not start.
+      if (spec.agent === "upload" && blockedUpload(this.layout.uploads[key], false, confirmed)) {
         this.running.delete(key);
         this.forgetKey(key);
         this.closed = this.closed.filter((c) => c.key !== key);
@@ -783,6 +904,62 @@ export class App {
     await this.openTile(key);
   }
 
+  /** The Upload panel exists: a server is set up and this is not Windows (no rsync there). */
+  private uploadAvailable(): boolean {
+    return PLATFORM !== "windows" && (this.layout?.uploadHosts.length ?? 0) > 0;
+  }
+
+  /** The session sending `tile.file` of `project` to that user@host: an open
+   *  tile's, else one left in tmux without a tile. `state`: whether its rsync
+   *  still runs (the shell after it keeps the session alive once it finished). */
+  private async findUpload(tile: UploadTile, project: string): Promise<{ key: string; state: "running" | "finished" } | null> {
+    // `file` is relative to the project: the same name in another project is another file.
+    const ofProject = (keys: string[]) => keys.filter((k) => parseKey(k).path === project);
+    const sessions = await api.listSessions();
+    const live = sessions.map((s) => keyOf(s)).filter((k) => !this.tiles.has(k));
+    const key =
+      findUploadSession(this.layout.uploads, ofProject([...this.tiles.keys()]), tile) ??
+      findUploadSession(this.layout.uploads, ofProject(live), tile);
+    if (key === null) return null;
+    const slug = this.tiles.get(key)?.slug ?? sessions.find((s) => keyOf(s) === key)?.slug;
+    // A failed check counts as running: shown rather than a second rsync started.
+    const running = slug ? await api.uploadRunning(slug).catch(() => true) : false;
+    return { key, state: running ? "running" : "finished" };
+  }
+
+  /** An upload's tile to the front; one left in tmux is attached again (Rust reattaches, never restarts). */
+  private async showUpload(key: string): Promise<void> {
+    if (this.tiles.has(key)) return this.setActive(key, true);
+    this.running.add(key);
+    await this.openTile(key);
+  }
+
+  /** "Wyślij", confirmed in the Upload panel: rsync of `tile.file` in a card of
+   *  `project`, the folder it was confirmed against. The same file to the same
+   *  user@host still sending goes to that tile instead of starting twice; one
+   *  that finished ends first and sends again (`--partial` resumes). */
+  private async openUploadTile(tile: UploadTile, title: string, project: string): Promise<void> {
+    const found = await this.findUpload(tile, project);
+    const plan = openPlan(found?.state ?? null);
+    if (found && plan === "focus") return this.showUpload(found.key);
+    if (found && plan === "replace") await this.endSession(found.key);
+    const taken = [...(await api.listSessions()), ...this.tiles.values()];
+    const key = keyOf({ path: project, agent: "upload", instance: nextInstance(taken, project, "upload") });
+    this.layout.uploads[key] = tile;
+    this.layout.titles[key] = title;
+    this.confirmedStarts.add(key);
+    try {
+      await this.openTile(key);
+    } finally {
+      this.confirmedStarts.delete(key);
+    }
+    // Not opened: nothing may stay under a key the next tile would reuse.
+    if (!this.tiles.has(key)) {
+      this.forgetKey(key);
+      this.save();
+    }
+  }
+
   /** Logs, a shell or a deploy of Docker in a card: of `folder` when given (a
    *  deploy, confirmed in the panel), else of the project the container belongs
    *  to (the home folder when none matches). */
@@ -808,11 +985,11 @@ export class App {
     const key = keyOf({ path, agent: "docker", instance: nextInstance(taken, path, "docker") });
     this.layout.docker[key] = tile;
     this.layout.titles[key] = title;
-    if (tile.kind === "deploy") this.confirmedDeploys.add(key);
+    if (tile.kind === "deploy") this.confirmedStarts.add(key);
     try {
       await this.openTile(key);
     } finally {
-      this.confirmedDeploys.delete(key);
+      this.confirmedStarts.delete(key);
     }
     // Not opened: nothing may stay under a key the next tile would reuse.
     if (!this.tiles.has(key)) {
@@ -1006,13 +1183,33 @@ export class App {
     else this.grid.classList.remove("has-full");
   }
 
-  /** ⌘Q or ✕: the tile goes, and ⌘⇧T can bring it back. */
+  /** ⌘Q or ✕: the tile goes, and ⌘⇧T can bring it back. An upload tile ends its session instead (closeUpload). */
   private closeByUser(key: string): void {
+    if (parseKey(key).agent === "upload") return void this.closeUpload(key);
     const tile = this.tiles.get(key);
     if (!tile) return;
     const sessionId = this.hook.get(tile.slug)?.sessionId ?? null;
     this.closed = [...this.closed.filter((c) => c.key !== key), { key, sessionId }].slice(-CLOSED_KEPT);
     this.closeTile(key);
+  }
+
+  /** ⌘Q or ✕ on an upload tile: its session ends (rsync stops; `--partial` lets
+   *  the next "Wyślij" finish it). While rsync still runs, asked first. */
+  private async closeUpload(key: string): Promise<void> {
+    const tile = this.tiles.get(key);
+    if (!tile || this.closingUploads.has(key)) return;
+    this.closingUploads.add(key);
+    try {
+      // A failed check asks rather than stopping an upload unasked.
+      if (closePlan(await api.uploadRunning(tile.slug).catch(() => true)) === "ask") {
+        const up = this.layout.uploads[key];
+        const message = t("upload.closeRunning", { file: up?.file ?? tile.name, host: up?.host ?? "" });
+        if ((await choiceBox(message, t("upload.stopClose"), { cancelLabel: t("upload.continue") })) !== "ok") return;
+      }
+      await this.endSession(key);
+    } finally {
+      this.closingUploads.delete(key);
+    }
   }
 
   /** ⌘⇧T: the last closed tile again. */
@@ -1050,7 +1247,7 @@ export class App {
     if (slug) await api.killSession(slug).catch((err) => toast(String(err), { kind: "error", topic: "sessions" }));
     this.running.delete(key);
     this.closed = this.closed.filter((c) => c.key !== key); // killed: nothing to reopen
-    const forgotten = [this.layout.runs, this.layout.docker, this.layout.cards, this.layout.titles, this.layout.sizes, this.layout.tileAccounts].some((m) => key in m);
+    const forgotten = [this.layout.runs, this.layout.docker, this.layout.uploads, this.layout.cards, this.layout.titles, this.layout.sizes, this.layout.tileAccounts].some((m) => key in m);
     if (forgotten || this.layout.minimized.includes(key)) {
       this.forgetKey(key);
       this.save();
@@ -1061,6 +1258,7 @@ export class App {
   private forgetKey(key: string): void {
     delete this.layout.runs[key];
     delete this.layout.docker[key];
+    delete this.layout.uploads[key];
     delete this.layout.cards[key];
     delete this.layout.titles[key];
     delete this.layout.sizes[key];
@@ -1175,6 +1373,7 @@ export class App {
       if (this.fullscreen && this.fullscreen !== key) this.toggleFullscreen(key);
       if (this.focusMode()) this.render(); // the newly active session moves to the middle
       this.side.projectChanged();
+      this.uploadPanel.projectChanged();
       this.renderHere();
     }
     if (focus) this.tiles.get(key)?.focus();
@@ -1245,9 +1444,9 @@ export class App {
 
   // ---- layout ------------------------------------------------------------
 
-  /** Side panel open with several sessions: one in the middle, the rest in the rail. */
+  /** Side panel open with several sessions: one in the middle, the rest in the rail. Not for the files window. */
   private focusMode(): boolean {
-    return this.side.isOpen && this.tiles.size > 1;
+    return !this.filesWindow && this.side.isOpen && this.tiles.size > 1;
   }
 
   private render(): void {
@@ -1402,7 +1601,7 @@ export class App {
   private sessionSize(key: string): number {
     const size = this.layout.sizes[key];
     if (size > 0) return size;
-    return ["shell", "run", "docker"].includes(parseKey(key).agent) ? AUX_SIZE : 1;
+    return ["shell", "run", "docker", "upload"].includes(parseKey(key).agent) ? AUX_SIZE : 1;
   }
 
   /** A card's height until it is resized: what its unfolded sessions need. */
@@ -1663,11 +1862,91 @@ export class App {
 
   /** Labels built once (side panel, tiles, cards, lanes) in the language Options just set. */
   private relabel(): void {
-    this.side.relabel();
+    // The side panel too while the files window has it (its Find in Files popup is here).
+    this.sidePanel.relabel();
+    this.filesWindow?.relabel();
     for (const tile of this.tiles.values()) tile.relabel();
     for (const card of this.cards.values()) cardTitles(card.querySelector<HTMLElement>(".card-head")!);
     for (const lane of this.laneEls) lane.querySelector(".hint")!.textContent = laneHint();
     this.render();
+  }
+
+  // ---- files panel: at the side or in its own window ----------------------
+
+  /** Folder of the active session's project, if any (what the files panel follows). */
+  private activeProject(): string | null {
+    return this.active ? this.projectOf(this.active) : null;
+  }
+
+  /** The panel's @: text typed into the active session. */
+  private typeIntoActive(text: string): void {
+    const tile = this.tiles.get(this.active ?? "");
+    if (tile) tile.type(text);
+    else toast(t("app.pickSessionFirst"));
+  }
+
+  /** What the files window follows from Options. */
+  private filesSettings(): FilesSettings {
+    const l = this.layout;
+    return {
+      browser: l.browser,
+      linkClick: l.linkClick,
+      fileEditor: l.fileEditor,
+      language: l.language,
+      theme: l.theme,
+      uiScale: l.uiScale,
+      keys: l.keys,
+      treeLeft: l.treeLeft,
+    };
+  }
+
+  private newFilesWindow(): FilesWindowPanel {
+    return new FilesWindowPanel({
+      project: () => this.activeProject(),
+      settings: () => this.filesSettings(),
+      insert: (text) => this.typeIntoActive(text),
+      terminal: (path) => void this.openTerminal(path),
+      changed: () => this.renderChrome(), // the folder's pressed state
+    });
+  }
+
+  /** `panel` is the one desk drives from now on (and the one terminal links reach). */
+  private usePanel(panel: Panel): void {
+    this.side.el.replaceWith(panel.el);
+    this.side = panel;
+    this.filesWindow = panel instanceof FilesWindowPanel ? panel : null;
+    setCurrentPanel(panel);
+  }
+
+  /**
+   * Options: the files panel at the side or in its own window, at once. On:
+   * the side panel's edit is saved first (a failed save keeps everything as
+   * it was), then the panel and its native page close and the window shows
+   * what the panel showed. Off: the files window saves its edit first
+   * (`release`: a failed save or no answer keeps the mode), then it closes
+   * for good and the side panel shows what it showed.
+   */
+  private async setFilesWindow(on: boolean): Promise<void> {
+    if (this.switchingPanel || on === (this.filesWindow !== null)) return;
+    this.switchingPanel = true;
+    try {
+      const from = this.filesWindow;
+      const to: Panel = on ? this.newFilesWindow() : this.sidePanel;
+      // Either way the edit is saved first; a failed save keeps the mode.
+      // No reload of the side panel's page: it closes right after.
+      const stop = from ? () => from.release() : () => this.sidePanel.stopEditing(false);
+      // Locked while the save was asked: nothing opens under the lock screen.
+      if (await switchPanel(this.side, to, stop, (p) => this.usePanel(p), () => !this.locked)) {
+        this.layout.filesWindow = on;
+        this.save();
+        this.render(); // the grid's width and the folder's state
+      } else if (on) {
+        await to.handOver(); // the stand-in made for nothing stops listening
+      }
+    } finally {
+      this.switchingPanel = false;
+    }
+    if (this.settings.isOpen) this.settings.render();
   }
 
   private tileAt(target: EventTarget | null): Tile | undefined {
@@ -1912,12 +2191,13 @@ export class App {
       : "";
     // No server left to show: the panel goes with its chip.
     if (this.layout.dockerHosts.length === 0 && this.dockerPanel.isOpen) this.dockerPanel.close();
+    if (!this.uploadAvailable() && this.uploadPanel.isOpen) this.uploadPanel.close();
     this.top.innerHTML = `${leave}${brandHtml(this.version, drag)}${hide}<span class="dim"${drag}> · ${this.tiles.size} sessions</span>${this.backgroundHtml()}${
       waiting ? `<span class="waiting-pill"${drag}>${t("top.waiting", { n: waiting })}</span>` : ""
     }<span class="spacer"${drag}></span>${this.updateHtml()}${usageHtml(this.usage, Date.now(), (id) => {
       const a = this.layout.claudeAccounts.find((x) => x.id === id);
       return a ? { name: a.name, color: accountColor(this.layout, a.id) } : null;
-    })}${thermalHtml(this.thermal, this.layout.thermalColors)}${dockerHtml(this.layout.dockerHosts.length > 0, this.dockerPanel.isOpen)}${browserHtml(keysIn("⌘W"))}${coffeeHtml(this.coffee, PLATFORM)}${this.quitHtml()}${settingsHtml(keyText("settings"))}`;
+    })}${thermalHtml(this.thermal, this.layout.thermalColors)}${dockerHtml(this.layout.dockerHosts.length > 0, this.dockerPanel.isOpen)}${uploadHtml(this.uploadAvailable(), this.uploadPanel.isOpen)}${filesHtml(keyText("files"), this.side.filesShown)}${browserHtml(keysIn("⌘W"))}${coffeeHtml(this.coffee, PLATFORM)}${this.quitHtml()}${settingsHtml(keyText("settings"))}`;
     this.footer.innerHTML =
       `<span class="here" hidden></span><span class="hints">${hints()
         .map(([k, label]) => `<span><kbd>${k}</kbd> ${escapeHtml(label)}</span>`)
@@ -1958,6 +2238,18 @@ export class App {
   }
 
   private async quit(): Promise<void> {
+    // Uploads still sending would stop with their sessions: asked first, like ✕ on their tile.
+    // That question is the quit's own: its ok stops them and quits, without the one below.
+    const uploads = await this.runningUploads();
+    const plan = quitPlan(uploads.map((u) => u.key));
+    if (plan) {
+      const details = uploads.map((u) => `${u.file} → ${u.host}`);
+      if ((await choiceBox(plan.message, plan.okLabel, { cancelLabel: t("upload.back"), details })) !== "ok") return;
+      for (const u of uploads) await this.endSession(u.key);
+      await this.saveNow();
+      await api.quitDesk().catch((err) => toast(String(err), { kind: "error" }));
+      return;
+    }
     const stay = !(this.tmuxMissing || PLATFORM === "windows");
     // What keeps running after desk is gone, by name; all of it can go too.
     const left = stay ? await api.listSessions().catch(() => []) : [];
@@ -1970,6 +2262,20 @@ export class App {
     // The layout is saved first: the tiles come back on the next start, with new sessions.
     if (answer === "alt") await Promise.all(left.map((s) => api.killSession(s.slug).catch(() => {})));
     await api.quitDesk().catch((err) => toast(String(err), { kind: "error" }));
+  }
+
+  /** Upload sessions whose rsync still runs, with what each sends where. */
+  private async runningUploads(): Promise<{ key: string; file: string; host: string }[]> {
+    const sessions = (await api.listSessions().catch(() => [])).filter((s) => s.agent === "upload");
+    // A failed check counts as running: asked about rather than stopped unasked.
+    const running = await Promise.all(sessions.map((s) => api.uploadRunning(s.slug).catch(() => true)));
+    return sessions
+      .filter((_, i) => running[i])
+      .map((s) => {
+        const key = keyOf(s);
+        const up = this.layout.uploads[key];
+        return { key, file: up?.file ?? (s.path.split(/[\\/]/).pop() ?? s.path), host: up?.host ?? "" };
+      });
   }
 
   // ---- updates -----------------------------------------------------------
@@ -2155,8 +2461,10 @@ export class App {
     if (!action) return;
     // ⌘S in the side panel's editor saves the file there.
     if (action.type === "sessions" && (e.target as Element | null)?.closest?.(".cm-editor")) return;
-    const overlay = document.querySelector(".overlay") !== null;
-    if (overlay && !["palette", "new", "settings", "close"].includes(action.type)) return; // e.g. ⌘↵ in the palette
+    const overlay = document.querySelector(".overlay");
+    // ⇧⌘F in its own popup gives the input the focus again.
+    const again = action.type === "findInFiles" && overlay?.classList.contains("find-overlay");
+    if (overlay && !again && !["palette", "new", "settings", "close"].includes(action.type)) return; // e.g. ⌘↵ in the palette
     e.preventDefault();
     e.stopPropagation();
     this.run(action);
@@ -2251,8 +2559,15 @@ export class App {
       case "files":
         this.side.showFiles();
         break;
+      case "findInFiles": {
+        this.side.showFind(seedText(this.tiles.get(this.active ?? "")?.selectedText()));
+        break;
+      }
       case "docker":
         if (this.layout.dockerHosts.length > 0) this.dockerPanel.toggle();
+        break;
+      case "upload":
+        if (this.uploadAvailable()) this.uploadPanel.toggle();
         break;
       case "run": {
         const tile = this.tiles.get(this.active ?? "");

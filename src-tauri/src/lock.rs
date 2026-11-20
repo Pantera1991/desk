@@ -52,6 +52,7 @@ impl Lock {
             let _ = crate::menu(app, true).and_then(|m| app.set_menu(m));
         }
         kiosk(app, true);
+        crate::files_window::on_lock(app);
         // Off the main thread: a command that builds windows on it deadlocks on
         // Windows. It also follows screens plugged in or out while locked.
         let app = app.clone();
@@ -91,6 +92,7 @@ impl Lock {
         if cfg!(target_os = "macos") {
             let _ = crate::menu(app, false).and_then(|m| app.set_menu(m));
         }
+        crate::files_window::on_unlock(app);
         Ok(())
     }
 }

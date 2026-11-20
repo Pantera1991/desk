@@ -64,6 +64,9 @@ const MERMAID_JS: &[u8] = include_bytes!(concat!(
 /// showing a `deskpreview://` page now (pages may link to each other).
 static NAV: Mutex<(Option<Url>, bool)> = Mutex::new((None, false));
 
+/// Label of the window the preview webview is a child of.
+static PARENT: Mutex<Option<String>> = Mutex::new(None);
+
 /// Content Security Policy for local pages: CDN scripts, styles and images
 /// load, but nothing can be posted or fetched from another host.
 const CSP: &str = "default-src 'self' https: data: blob: 'unsafe-inline' 'unsafe-eval'; \
@@ -328,9 +331,9 @@ pub struct Bounds {
     pub height: f64,
 }
 
-/// Show `link` in the side panel, creating it at `bounds`. Returns what the
-/// panel shows, for its address bar.
-pub fn open(app: &AppHandle, link: &str, bounds: Bounds) -> Result<String, String> {
+/// Show `link` in the panel of the window `host`, creating it at `bounds`.
+/// Returns what the panel shows, for its address bar.
+pub fn open(app: &AppHandle, host: &str, link: &str, bounds: Bounds) -> Result<String, String> {
     let url = match parse(link)? {
         Target::Web(u) => u,
         Target::File(p) => local_url(&p)?,
@@ -339,20 +342,30 @@ pub fn open(app: &AppHandle, link: &str, bounds: Bounds) -> Result<String, Strin
         NAV.lock().unwrap().0 = Some(url.clone());
     }
     if let Some(w) = app.get_webview(LABEL) {
-        place(&w, bounds);
-        w.navigate(url.clone()).map_err(|e| e.to_string())?;
-        let _ = w.show();
-        return Ok(display(&url));
+        let parent = PARENT.lock().unwrap().clone();
+        if needs_rebuild(parent.as_deref(), host) {
+            // It lives under another window: close it, build it again here.
+            let _ = w.close();
+        } else {
+            place(&w, bounds);
+            w.navigate(url.clone()).map_err(|e| e.to_string())?;
+            let _ = w.show();
+            return Ok(display(&url));
+        }
     }
-    let window = app.get_window("main").ok_or(tr!("brak głównego okna", "no main window"))?;
+    let window = app
+        .get_window(host)
+        .ok_or(tr!("brak okna dla podglądu", "no window for the preview"))?;
     let local = url.scheme() == SCHEME;
     let handle = app.clone();
     let signal = app.clone();
+    let signal_host = host.to_string();
+    let page_host = host.to_string();
     let builder = WebviewBuilder::new(LABEL, WebviewUrl::External(url.clone()))
         .initialization_script(LOGIN_SCRIPT)
         .on_navigation(move |u| {
             if u.scheme() == SIGNAL {
-                let _ = signal.emit_to("main", "preview-login", true);
+                let _ = signal.emit_to(signal_host.as_str(), "preview-login", true);
                 return false;
             }
             allow_navigation(u)
@@ -360,10 +373,10 @@ pub fn open(app: &AppHandle, link: &str, bounds: Bounds) -> Result<String, Strin
         .on_page_load(move |_, payload| match payload.event() {
             // A new page: no password field seen yet.
             PageLoadEvent::Started => {
-                let _ = handle.emit_to("main", "preview-login", false);
+                let _ = handle.emit_to(page_host.as_str(), "preview-login", false);
             }
             PageLoadEvent::Finished => {
-                let _ = handle.emit_to("main", "preview-url", display(payload.url()));
+                let _ = handle.emit_to(page_host.as_str(), "preview-url", display(payload.url()));
             }
         });
     window
@@ -375,7 +388,13 @@ pub fn open(app: &AppHandle, link: &str, bounds: Bounds) -> Result<String, Strin
         .map_err(|e| e.to_string())?;
     // The first page may load without a navigation check.
     *NAV.lock().unwrap() = (None, local);
+    *PARENT.lock().unwrap() = Some(host.to_string());
     Ok(display(&url))
+}
+
+/// The preview must be built again when it is a child of another window.
+pub fn needs_rebuild(parent: Option<&str>, host: &str) -> bool {
+    parent.is_some_and(|p| p != host)
 }
 
 fn place<R: tauri::Runtime>(w: &tauri::Webview<R>, b: Bounds) {
@@ -956,6 +975,13 @@ mod tests {
         assert!(file_url(&home.join("mock.html")).is_err());
         #[cfg(unix)]
         assert!(file_url(Path::new("/mock.html")).is_err());
+    }
+
+    #[test]
+    fn a_preview_asked_from_another_window_is_rebuilt_there() {
+        assert!(needs_rebuild(Some("main"), "files"));
+        assert!(!needs_rebuild(Some("files"), "files"));
+        assert!(!needs_rebuild(None, "main"));
     }
 
     #[test]

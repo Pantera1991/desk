@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-upload-file-size"
+description = "Enables the upload_file_size command without any pre-configured scope."
+commands.allow = ["upload_file_size"]
+
+[[permission]]
+identifier = "deny-upload-file-size"
+description = "Denies the upload_file_size command without any pre-configured scope."
+commands.deny = ["upload_file_size"]

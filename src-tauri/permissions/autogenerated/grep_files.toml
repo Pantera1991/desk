@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-grep-files"
+description = "Enables the grep_files command without any pre-configured scope."
+commands.allow = ["grep_files"]
+
+[[permission]]
+identifier = "deny-grep-files"
+description = "Denies the grep_files command without any pre-configured scope."
+commands.deny = ["grep_files"]

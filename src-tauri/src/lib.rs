@@ -16,11 +16,14 @@ pub mod docker;
 pub mod drag;
 pub mod dropdown;
 pub mod env;
+pub mod file_editor;
+pub mod files_window;
 pub mod core_temps;
 pub mod fans;
 pub mod fan_control;
 pub mod git;
 pub mod github;
+pub mod grep;
 pub mod hooks;
 pub mod layout;
 pub mod lock;
@@ -28,6 +31,8 @@ pub mod lock;
 pub mod smc;
 #[cfg(target_os = "macos")]
 mod mac_keys;
+#[cfg(target_os = "linux")]
+mod linux_keys;
 pub mod native;
 pub mod new_project;
 #[cfg(target_os = "linux")]
@@ -46,6 +51,7 @@ pub mod tmux;
 pub mod wg_tunnel;
 mod window_place;
 pub mod update;
+pub mod upload;
 pub mod usage;
 pub mod usage_history;
 pub mod usage_sessions;
@@ -101,6 +107,8 @@ struct Bootstrap {
     sessions: Vec<tmux::SessionInfo>,
     states: Vec<hooks::SessionState>,
     home: String,
+    /// layout.json as it really is on this system (Options' footer shows it).
+    layout_path: String,
     /// Where "new project" suggests creating folders until one is chosen.
     projects_dir: String,
     /// Sessions outlive desk (tmux); false on Windows, where they end with it.
@@ -127,6 +135,7 @@ fn bootstrap(app: State<App>) -> Bootstrap {
         tmux_missing: app.sessions.tmux_missing(),
         states: state_watch::read_all(&app.hooks.state_dir),
         home: env::home().display().to_string(),
+        layout_path: app.layout_path.display().to_string(),
         projects_dir: new_project::default_parent(&env::home())
             .display()
             .to_string(),
@@ -244,6 +253,24 @@ fn open_session(
         // from a click confirmed in the Docker panel, whatever the UI believed.
         docker::may_start(&tile, start_deploy)?;
         docker::tile_command(&tile, &layout.docker_hosts, dir)?
+    } else if agent == upload::UPLOAD_AGENT {
+        // Like Docker: a command desk builds itself, never after a restart.
+        if restore {
+            return Err(tr!(
+                "kafelek wysyłki nie wraca po restarcie",
+                "an upload tile does not come back after a restart"
+            )
+            .into());
+        }
+        let tile: upload::UploadTile = serde_json::from_str(&command.unwrap_or_default())
+            .map_err(|e| {
+                tr!(
+                    format!("nieprawidłowy kafelek wysyłki: {e}"),
+                    format!("invalid upload tile: {e}")
+                )
+            })?;
+        upload::may_start(start_deploy)?;
+        upload::tile_command(&tile, &layout.upload_hosts, dir, &home)?
     } else if agent == RUN_AGENT {
         // Only a command the project itself defines (see project::run_targets).
         let command = command.unwrap_or_default();
@@ -376,7 +403,9 @@ fn pty_write(
     app.sessions.write(id, data.as_bytes())
 }
 
-#[tauri::command]
+/// Async: locking waits for the files window's turn (files_window.rs), which
+/// must never be on the main thread.
+#[tauri::command(async)]
 fn lock_desk(handle: AppHandle, lock: State<lock::Lock>) -> Result<(), String> {
     lock.lock(&handle)
 }
@@ -394,8 +423,13 @@ fn unlock_desk(
 
 /// Show a link in the side panel at `bounds`; returns what the address bar shows.
 #[tauri::command]
-fn open_preview(handle: AppHandle, url: String, bounds: preview::Bounds) -> Result<String, String> {
-    preview::open(&handle, &url, bounds)
+fn open_preview(
+    handle: AppHandle,
+    window: tauri::Window,
+    url: String,
+    bounds: preview::Bounds,
+) -> Result<String, String> {
+    preview::open(&handle, window.label(), &url, bounds)
 }
 
 #[tauri::command]
@@ -576,6 +610,14 @@ pub(crate) fn main_window<R: tauri::Runtime, M: Manager<R>>(app: &M) -> Option<t
     app.get_window("main")
 }
 
+/// Options: on Linux, desk's shortcuts on Start (Super); see linux_keys.rs.
+#[tauri::command]
+fn set_super_keys(on: bool) {
+    #[cfg(target_os = "linux")]
+    linux_keys::set(on);
+    let _ = on;
+}
+
 /// Options changed the dropdown (⌘`): register or drop the shortcut, refit the window.
 #[tauri::command]
 fn dropdown_apply(handle: AppHandle) -> Result<(), String> {
@@ -645,6 +687,28 @@ fn docker_restart(app: State<'_, App>, host: String, container: String) -> Resul
     docker::restart(&layout::load(&app.layout_path).docker_hosts, &host, &container)
 }
 
+#[tauri::command]
+fn upload_tools() -> upload::UploadTools {
+    upload::tools()
+}
+
+#[tauri::command(async)]
+fn upload_suggestions() -> Vec<String> {
+    upload::suggestions()
+}
+
+/// Size in bytes of a project file and its name on the server, refused when it leaves the project.
+#[tauri::command(async)]
+fn upload_file_size(path: String, file: String) -> Result<upload::UploadFile, String> {
+    upload::file_info(Path::new(&path), &file)
+}
+
+/// Whether the session still has a running rsync (closing it asks first).
+#[tauri::command(async)]
+fn upload_running(app: State<'_, App>, slug: String) -> bool {
+    app.sessions.runs(&slug, upload::is_transfer)
+}
+
 /// The folders (of open cards) that hold a compose file: a deploy may run there.
 #[tauri::command(async)]
 fn compose_dirs(paths: Vec<String>) -> Vec<String> {
@@ -664,6 +728,46 @@ async fn search_files(path: String, query: String) -> Vec<String> {
     tauri::async_runtime::spawn_blocking(move || project::search(Path::new(&path), &query))
         .await
         .unwrap_or_default()
+}
+
+/// Find in Files: matching lines of the project's files, matches marked.
+#[tauri::command]
+async fn grep_files(
+    path: String,
+    query: String,
+    case: bool,
+    word: bool,
+    regex: bool,
+) -> Result<grep::GrepResult, String> {
+    let opts = grep::GrepOptions { case, word, regex };
+    tauri::async_runtime::spawn_blocking(move || grep::grep(Path::new(&path), &query, opts))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Find in Files: the text of a project file for the read-only preview.
+#[tauri::command]
+async fn read_project_text(path: String, file: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || grep::read_project_text(Path::new(&path), &file))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Open a project file at a line in the editor chosen in Options, no shell.
+#[tauri::command]
+fn open_file_at(app: State<'_, App>, path: String, file: String, line: u32) -> Result<(), String> {
+    let cmd = layout::load(&app.layout_path).file_editor;
+    // The command first: an empty or refused one says so whatever the file.
+    file_editor::program(&cmd, &env::home())?;
+    let full = project::inside(Path::new(&path), &file)?;
+    file_editor::open(&cmd, &env::home(), &full, line)
+}
+
+/// Options: is this editor command safe and present? (checked before saving,
+/// by the same rules as opening a file)
+#[tauri::command]
+fn check_file_editor(cmd: String) -> Result<(), String> {
+    file_editor::program(&cmd, &env::home()).map(|_| ())
 }
 
 /// The browser web pages go to ("Brave", "Chrome"), or None for the system's.
@@ -717,19 +821,15 @@ fn reveal_path(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn open_file(path: String, file: String) -> Result<(), String> {
-    project::open_in_editor(Path::new(&path), &file)
-}
-
-#[tauri::command]
 fn preview_file(
     handle: AppHandle,
+    window: tauri::Window,
     path: String,
     file: String,
     bounds: preview::Bounds,
 ) -> Result<String, String> {
     let full = project::inside(Path::new(&path), &file)?;
-    preview::open(&handle, &full.display().to_string(), bounds)
+    preview::open(&handle, window.label(), &full.display().to_string(), bounds)
 }
 
 #[tauri::command]
@@ -973,6 +1073,11 @@ pub fn run() {
             mac_keys::install(app.handle());
             if let Some(w) = crate::main_window(app) {
                 window_place::restore(&w, &window_place::file(&support));
+                #[cfg(target_os = "linux")]
+                {
+                    linux_keys::set(saved.super_keys);
+                    linux_keys::install(&w);
+                }
             }
             app.manage(AppCoffee(coffee::Coffee::new(&support)));
             coffee::spawn_guard(app.handle().clone());
@@ -1018,6 +1123,7 @@ pub fn run() {
             bootstrap,
             prompt_ai_vpn,
             set_prompt_ai_vpn,
+            set_super_keys,
             prompt_ai_undo,
             open_session,
             kill_session,
@@ -1031,11 +1137,14 @@ pub fn run() {
             project_files,
             project_dir,
             search_files,
+            grep_files,
+            read_project_text,
+            open_file_at,
+            check_file_editor,
             reveal_path,
             browser_name,
             update_check,
             update_install,
-            open_file,
             preview_file,
             run_targets,
             git_switch,
@@ -1079,17 +1188,48 @@ pub fn run() {
             docker_overview,
             docker_image_rm,
             docker_restart,
+            upload_tools,
+            upload_suggestions,
+            upload_file_size,
+            upload_running,
             compose_dirs,
             quit_desk,
+            files_window::files_window_open,
+            files_window::files_window_hide,
+            files_window::files_window_destroy,
+            files_window::focus_main_window,
         ])
         .on_window_event(|window, event| {
+            if window.label() == files_window::LABEL {
+                match event {
+                    // Closing only hides it: its state and edits stay.
+                    tauri::WindowEvent::CloseRequested { api, .. } => {
+                        api.prevent_close();
+                        files_window::hide(window.app_handle());
+                    }
+                    tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) => window_place::save_soon(
+                        window.app_handle(),
+                        files_window::LABEL,
+                        window_place::files_file(&env::support_dir()),
+                    ),
+                    _ => {}
+                }
+                return;
+            }
             if window.label() != "main" {
                 return;
             }
             if matches!(event, tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)) {
-                window_place::save_soon(window.app_handle(), window_place::file(&env::support_dir()));
+                window_place::save_soon(window.app_handle(), "main", window_place::file(&env::support_dir()));
             }
             let locked = window.state::<lock::Lock>().is_locked();
+            // The main window goes: the files window (maybe hidden, which
+            // would keep desk running without a UI) goes with it. Off this
+            // thread: it waits for the files window's turn.
+            if !locked && matches!(event, tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed) {
+                let app = window.app_handle().clone();
+                std::thread::spawn(move || files_window::destroy(&app));
+            }
             if matches!(event, tauri::WindowEvent::Focused(false)) && !locked {
                 dropdown::blurred(window.app_handle());
             }
@@ -1159,13 +1299,18 @@ mod acl_tests {
 
     /// The side panel: a second webview inside the main window.
     fn call_panel(url: &str, cmd: &str) -> Result<String, String> {
+        call_child("main", url, cmd)
+    }
+
+    /// The preview webview as a child of the window `host` (main, or files).
+    fn call_child(host: &str, url: &str, cmd: &str) -> Result<String, String> {
         let app = mock_builder()
             .manage(super::lock::Lock::default())
             .invoke_handler(tauri::generate_handler![super::is_locked])
             .build(super::context())
             .unwrap();
         let main: url::Url = "tauri://localhost".parse().unwrap();
-        let w = WebviewWindowBuilder::new(&app, "main", WebviewUrl::External(main))
+        let w = WebviewWindowBuilder::new(&app, host, WebviewUrl::External(main))
             .build()
             .unwrap();
         let url: url::Url = url.parse().unwrap();
@@ -1277,13 +1422,78 @@ mod acl_tests {
         let src = include_str!("lib.rs");
         let start = src.find("generate_handler![").unwrap() + "generate_handler![".len();
         let list = &src[start..start + src[start..].find(']').unwrap()];
-        let cmds: Vec<&str> = list.split(',').map(str::trim).filter(|c| !c.is_empty()).collect();
+        let cmds: Vec<&str> = list
+            .split(',')
+            .map(str::trim)
+            .filter(|c| !c.is_empty())
+            .map(|c| c.rsplit("::").next().unwrap())
+            .collect();
         assert!(cmds.contains(&"bootstrap") && cmds.contains(&"quit_desk"), "{cmds:?}");
         for cmd in cmds {
             // Past the ACL: this mock app has only is_locked, the rest are
             // "Command x not found". The ACL refuses with "x not allowed".
             let main = call("main", LOCAL, cmd);
             assert!(!main.as_ref().is_err_and(|e| e.contains("not allowed")), "{cmd}: {main:?}");
+        }
+    }
+
+    /// How the ACL resolves the files webview, not just what the JSON lists:
+    /// the panel's commands pass, desk's do not, and the preview that is a
+    /// child of the files window (or an untrusted page there) gets nothing.
+    #[test]
+    fn the_files_webview_and_its_preview_resolve_as_granted() {
+        let denied = |r: &Result<String, String>| r.as_ref().is_err_and(|e| e.contains("not allowed"));
+        for cmd in ["pty_write", "quit_desk", "save_layout", "is_locked"] {
+            let r = call("files", LOCAL, cmd);
+            assert!(denied(&r), "files {cmd}: {r:?}");
+        }
+        // Past the ACL: this mock app has no handler for it, so "not found".
+        let r = call("files", LOCAL, "read_text");
+        assert!(!denied(&r), "files read_text: {r:?}");
+        // The page listens and emits: core:event:default is enough.
+        for cmd in ["plugin:event|listen", "plugin:event|emit_to"] {
+            let r = call("files", LOCAL, cmd);
+            assert!(!denied(&r), "files {cmd}: {r:?}");
+        }
+        for url in [LOCAL, UNTRUSTED[0], UNTRUSTED[1]] {
+            for cmd in ["is_locked", "plugin:event|emit", "plugin:event|emit_to", "plugin:event|listen"] {
+                let r = call_child("files", url, cmd);
+                assert!(denied(&r), "preview under files {url} {cmd}: {r:?}");
+            }
+        }
+    }
+
+    /// The files window shows the panel only: its capability lists registered
+    /// commands and none that type into a terminal, quit, or change the layout
+    /// or sessions.
+    #[test]
+    fn the_files_window_gets_only_panel_commands() {
+        let src = include_str!("lib.rs");
+        let start = src.find("generate_handler![").unwrap() + "generate_handler![".len();
+        let list = &src[start..start + src[start..].find(']').unwrap()];
+        let cmds: Vec<String> = list
+            .split(',')
+            .map(str::trim)
+            .filter(|c| !c.is_empty())
+            .map(|c| c.rsplit("::").next().unwrap().replace('_', "-"))
+            .collect();
+        let caps: serde_json::Value = serde_json::from_str(include_str!("../capabilities/files.json")).unwrap();
+        assert_eq!(caps["webviews"], serde_json::json!(["files"]));
+        let allowed: Vec<&str> = caps["permissions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|p| p.as_str())
+            .filter_map(|p| p.strip_prefix("allow-"))
+            .collect();
+        for p in &allowed {
+            assert!(cmds.iter().any(|c| c == p), "allow-{p} is not a registered command");
+        }
+        for must in ["files-window-hide", "preview-file", "read-text"] {
+            assert!(allowed.contains(&must), "missing allow-{must}");
+        }
+        for never in ["pty-write", "quit-desk", "save-layout", "open-session", "kill-session"] {
+            assert!(!allowed.contains(&never), "allow-{never} must not be granted");
         }
     }
 }

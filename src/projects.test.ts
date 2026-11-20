@@ -53,6 +53,10 @@ describe("formatting", () => {
   it("shortens home and formats age", () => {
     expect(shortPath("/Users/k/a", "/Users/k")).toBe("~/a");
     expect(shortPath("/Users/kx/a", "/Users/k")).toBe("/Users/kx/a");
+    // Options' footer: the settings file where it really is, on each system.
+    expect(shortPath("/home/u/.local/share/desk/layout.json", "/home/u")).toBe("~/.local/share/desk/layout.json");
+    expect(shortPath("/Users/k/Library/Application Support/desk/layout.json", "/Users/k")).toBe("~/Library/Application Support/desk/layout.json");
+    expect(shortPath("C:\\Users\\k\\AppData\\Roaming\\desk\\layout.json", "C:\\Users\\k")).toBe("~\\AppData\\Roaming\\desk\\layout.json");
     expect(ago(0)).toBe("");
     expect(ago(1000, 1000 + 2 * 3600_000)).toBe("2h");
     expect(ago(1000, 1000 + 3 * 86400_000)).toBe("3d");

@@ -2,7 +2,7 @@
 // hand-added folders.
 import { getVersion } from "@tauri-apps/api/app";
 import { DEFAULT_THEME, THEMES } from "./themes";
-import { UI_SCALES, uiScale } from "./ui-scale";
+import { TILE_ICON_SCALES, UI_SCALES, tileIconScale, uiScale } from "./ui-scale";
 import {
   api,
   type AccountInfo,
@@ -19,6 +19,8 @@ import {
   type ThermalMode,
   type ThermalStatus,
   type UsageLayout,
+  type UploadHost,
+  type UploadMethod,
   type UsageShare,
 } from "./api";
 import { accountColor, withAccount, withoutAccount } from "./accounts";
@@ -26,12 +28,14 @@ import type { LinkClick } from "./links";
 import { partsHtml, withPart } from "./cpu-parts";
 import { checkHosts, draftAdd, draftRemove, draftRows, draftSet } from "./docker-view";
 import { PLATFORM, shortcut } from "./platform";
+import { checkUploadHosts, methodOf, uploadDraftAdd, uploadDraftRemove, uploadDraftRows, uploadDraftSet } from "./upload-view";
 import { rows, shortPath } from "./projects";
 import { search, type SearchItem } from "./settings-search";
 import { escapeHtml } from "./tile";
+import { editorChoice } from "./find-view";
 import { acceleratorFor, DEFAULT_HOTKEY, hotkeyLabel } from "./hotkey";
 import { LANGUAGES, language, t, type Language, type MessageKey } from "./i18n";
-import { acceleratorsOf, bindingLabel, BINDINGS, clashWith, FIXED, groupLabel, GROUPS, keyText } from "./keys";
+import { bindingLabel, BINDINGS, clashWith, defaultsOf, FIXED, groupLabel, GROUPS, keyText } from "./keys";
 import {
   addStep,
   autoColors,
@@ -69,18 +73,28 @@ import { UPDATE_EVERY_MS, updateStatusHtml, type UpdateStatus } from "./updates"
 
 export interface SettingsContext {
   home: () => string;
+  /** Where layout.json is on this system, shown in the footer. */
+  layoutPath: () => string;
   layout: () => Layout;
   projects: () => Promise<Project[]>;
   setLaneCount: (n: number) => void;
   setAutoLayout: (on: boolean) => void;
+  /** The files panel at the side (false) or in a window of its own (true); switched at once. */
+  setFilesWindow: (on: boolean) => void;
+  /** The file tree on the left of the files panel instead of the right. */
+  setTreeLeft: (left: boolean) => void;
   setTheme: (id: string) => void;
   setBrowser: (id: string) => void;
   /** What a plain click on a terminal link does (links.ts). */
   setLinkClick: (mode: LinkClick) => void;
+  /** The program that opens files at a line ("" = the built-in editor); checked before it gets here. */
+  setFileEditor: (cmd: string) => void;
   /** The usage popover's layout (Options, AI stats). */
   setUsageLayout: (v: UsageLayout) => void;
   /** The size of the window's own text and bars (ui-scale.ts). */
   setUiScale: (v: number) => void;
+  /** The size of the buttons in a tile's header (ui-scale.ts). */
+  setTileIconScale: (v: number) => void;
   /** How a session's share of the 5-hour window is worked out. */
   setUsageShare: (v: UsageShare) => void;
   setFontSize: (px: number) => void;
@@ -88,8 +102,10 @@ export interface SettingsContext {
   setDropdown: (
     change: Partial<Pick<Layout, "dropdown" | "dropdownHeight" | "dropdownAutohide" | "dropdownHotkey" | "dropdownAnimation">>,
   ) => Promise<void>;
-  /** A desk shortcut set in Options, or back to its default (null). */
+  /** A desk shortcut set in Options, removed (""), or back to its default (null). */
   setKey: (id: string, accelerator: string | null) => void;
+  /** Linux: shortcuts on Start (Super) instead of Ctrl+Shift. */
+  setSuperKeys: (on: boolean) => void;
   /** Ask GitHub for a newer desk now. */
   checkUpdate: () => Promise<void>;
   /** A newer desk found, and how the last check went (updates.ts). */
@@ -126,10 +142,12 @@ export interface SettingsContext {
   setAccounts: (change: Pick<Layout, "claudeAccounts" | "tileAccounts" | "projectAccounts">) => Promise<void>;
   /** Docker servers changed in Options: saved at once, the 🐳 chip follows. Never contacts them. */
   setDockerHosts: (hosts: DockerHost[]) => Promise<void>;
+  /** Upload servers changed in Options: saved at once. Never contacts them. */
+  setUploadHosts: (hosts: UploadHost[]) => Promise<void>;
 }
 
 /** The groups of Options, in the sidebar's order. */
-export type Group = "general" | "look" | "window" | "terminal" | "projects" | "claude" | "stats" | "power" | "docker" | "keys";
+export type Group = "general" | "look" | "window" | "terminal" | "projects" | "claude" | "stats" | "power" | "docker" | "upload" | "keys";
 
 const GROUP_NAMES: Record<Group, MessageKey> = {
   general: "settings.general",
@@ -141,6 +159,7 @@ const GROUP_NAMES: Record<Group, MessageKey> = {
   stats: "settings.stats",
   power: "settings.power",
   docker: "settings.docker",
+  upload: "settings.upload",
   keys: "settings.keys",
 };
 
@@ -204,6 +223,76 @@ export class Settings {
         .then(() => {
           this.dockerDraft = null;
           toast(t("settings.dockerSaved"), { kind: "ok" });
+        })
+        .catch((err) => {
+          error.textContent = String(err);
+        });
+    });
+  }
+
+  /** Upload rows typed but not saved: they outlive a re-render; null once saved or untouched. */
+  private uploadDraft: UploadHost[] | null = null;
+  /** Known hosts for the datalist (/etc/hosts): asked once, the first time the group renders. */
+  private uploadSuggested: string[] | null = null;
+
+  private uploadRowHtml(h: UploadHost): string {
+    return `<div class="line upload-host"><input type="text" data-k="upload-host" list="upload-hosts" value="${escapeHtml(h.host)}" placeholder="${t("settings.uploadHost")}" spellcheck="false" /><input type="text" data-k="upload-user" value="${escapeHtml(h.user)}" placeholder="${t("settings.uploadUser")}" spellcheck="false" /><input type="text" data-k="upload-key" value="${escapeHtml(h.key)}" placeholder="${t("settings.uploadKey")}" spellcheck="false" /><select data-k="upload-method" title="${t("settings.uploadMethod")}">${(["rsync", "scp"] as const).map((m) => `<option value="${m}"${methodOf(h) === m ? " selected" : ""}>${m}</option>`).join("")}</select><button data-k="upload-rm" title="${t("settings.uploadRemove")}">✕</button></div>`;
+  }
+
+  private uploadOptionsHtml(): string {
+    return (this.uploadSuggested ?? []).map((h) => `<option value="${escapeHtml(h)}"></option>`).join("");
+  }
+
+  /** Upload servers: rows live in the DOM; Zapisz saves only what checkUploadHosts accepts. */
+  private bindUpload(box: HTMLElement): void {
+    const rows = box.querySelector<HTMLElement>('[data-k="upload-rows"]')!;
+    const error = box.querySelector<HTMLElement>('[data-k="upload-error"]')!;
+    const list = box.querySelector<HTMLElement>("#upload-hosts")!;
+    if (this.uploadSuggested === null) {
+      this.uploadSuggested = [];
+      void api
+        .uploadSuggestions()
+        .then((hosts) => {
+          this.uploadSuggested = hosts;
+          list.innerHTML = this.uploadOptionsHtml();
+        })
+        .catch(() => {});
+    }
+    const index = (row: Element) => [...rows.children].indexOf(row);
+    const current = () => uploadDraftRows(this.uploadDraft, this.ctx.layout().uploadHosts ?? []);
+    rows.addEventListener("click", (e) => {
+      const row = (e.target as HTMLElement).closest(".upload-host");
+      if (!row || !(e.target as HTMLElement).closest('[data-k="upload-rm"]')) return;
+      this.uploadDraft = uploadDraftRemove(current(), index(row));
+      row.remove();
+    });
+    rows.addEventListener("input", (e) => {
+      const input = e.target as HTMLInputElement | HTMLSelectElement;
+      const row = input.closest(".upload-host");
+      const fields = { "upload-host": "host", "upload-user": "user", "upload-key": "key", "upload-method": "method" } as const;
+      const field = fields[input.dataset.k as keyof typeof fields] ?? null;
+      if (row && field) this.uploadDraft = uploadDraftSet(current(), index(row), field, input.value);
+    });
+    box.querySelector('[data-k="upload-add"]')!.addEventListener("click", () => {
+      this.uploadDraft = uploadDraftAdd(current());
+      rows.insertAdjacentHTML("beforeend", this.uploadRowHtml({ host: "", user: "", key: "" }));
+      rows.querySelector<HTMLInputElement>(".upload-host:last-child [data-k=upload-host]")?.focus();
+    });
+    box.querySelector('[data-k="upload-save"]')!.addEventListener("click", () => {
+      const hosts = [...rows.querySelectorAll<HTMLElement>(".upload-host")].map((r) => ({
+        host: r.querySelector<HTMLInputElement>('[data-k="upload-host"]')!.value.trim(),
+        user: r.querySelector<HTMLInputElement>('[data-k="upload-user"]')!.value.trim(),
+        key: r.querySelector<HTMLInputElement>('[data-k="upload-key"]')!.value.trim(),
+        method: methodOf({ host: "", user: "", key: "", method: r.querySelector<HTMLSelectElement>('[data-k="upload-method"]')!.value as UploadMethod }),
+      }));
+      const problem = checkUploadHosts(hosts);
+      error.textContent = problem ?? "";
+      if (problem) return;
+      void this.ctx
+        .setUploadHosts(hosts)
+        .then(() => {
+          this.uploadDraft = null;
+          toast(t("settings.uploadSaved"), { kind: "ok" });
         })
         .catch((err) => {
           error.textContent = String(err);
@@ -571,6 +660,8 @@ export class Settings {
   private tab: Group = "general";
   /** What is typed in the search field; "" shows the chosen group. */
   private query = "";
+  /** "program" chosen for the file editor while no command is saved yet. */
+  private fileEditorProgram = false;
 
   constructor(private ctx: SettingsContext) {}
 
@@ -600,6 +691,27 @@ export class Settings {
     this.el.querySelector<HTMLInputElement>('[data-k="search"]')?.focus();
     this.projects = await this.ctx.projects();
     this.render();
+  }
+
+  /** Check the program first; save it only when it is found, else say why under the field. */
+  private async saveFileEditor(input: HTMLInputElement, box: HTMLElement): Promise<void> {
+    const cmd = input.value.trim();
+    const err = box.querySelector<HTMLElement>('[data-k="file-editor-err"]');
+    const show = (msg: string) => {
+      if (!err) return;
+      err.textContent = msg;
+      err.hidden = !msg;
+    };
+    if (cmd) {
+      try {
+        await api.checkFileEditor(cmd);
+      } catch (e) {
+        show(String(e));
+        return;
+      }
+    }
+    show("");
+    this.ctx.setFileEditor(cmd);
   }
 
   /** The line about a newer desk again, alone: a check every half hour must
@@ -703,7 +815,8 @@ export class Settings {
     }
     const b = BINDINGS.find((x) => x.id === id)!;
     // Its default again: nothing to keep in layout.keys.
-    this.ctx.setKey(id, acceleratorsOf(b).length === 1 && acceleratorsOf(b)[0] === accelerator ? null : accelerator);
+    const own = defaultsOf(b);
+    this.ctx.setKey(id, own.length === 1 && own[0] === accelerator ? null : accelerator);
     this.render();
   }
 
@@ -735,7 +848,9 @@ export class Settings {
     const hotkey = hotkeyLabel(layout.dropdownHotkey || DEFAULT_HOTKEY());
     const off = layout.dropdown ? "" : "disabled";
     const linkClick: LinkClick = layout.linkClick === "browser" || layout.linkClick === "none" ? layout.linkClick : "desk";
+    const program = this.fileEditorProgram || editorChoice(layout.fileEditor) === "program";
     const uiScaleNow = uiScale(layout.uiScale);
+    const tileIconNow = tileIconScale(layout.tileIconScale);
     const usageLayout: UsageLayout = layout.usageLayout === "all" ? "all" : "tabs";
     const usageShare: UsageShare = layout.usageShare === "transcripts" ? "transcripts" : "cost";
     const linkHint = t(
@@ -770,6 +885,12 @@ export class Settings {
           ).join("")}</span> <span class="dim">${t("settings.uiScaleHint")}</span></div>`,
         ) +
           section(
+            t("settings.tileIconScale"),
+            `<div class="line" data-row><span class="seg">${TILE_ICON_SCALES.map(
+              (v) => `<button class="${tileIconNow === v ? "sel" : ""}" data-tile-icon-scale="${v}">${Math.round(v * 100)}%</button>`,
+            ).join("")}</span> <span class="dim">${t("settings.tileIconScaleHint")}</span></div>`,
+          ) +
+          section(
           t("settings.theme"),
           `<div class="themes">${THEMES.map(
             (t) => `<button class="theme ${t.id === (layout.theme || DEFAULT_THEME) ? "sel" : ""}" data-theme="${t.id}" style="background:${t.bg};color:${t.fg}">
@@ -787,7 +908,23 @@ export class Settings {
         section(
           "",
           `<label class="line" data-row><input type="checkbox" data-k="auto-layout" ${layout.autoLayout ? "checked" : ""}/> ${t("settings.autoLayout")} <span class="dim">${t("settings.autoLayoutHint")}</span></label>
-      <label class="line" data-row>${t("settings.lanes")} <input type="number" min="1" max="8" value="${layout.lanes.length}" data-k="lanes" ${layout.autoLayout ? "disabled" : ""}/></label>`,
+      <label class="line" data-row>${t("settings.lanes")} <input type="number" min="1" max="8" value="${layout.lanes.length}" data-k="lanes" ${layout.autoLayout ? "disabled" : ""}/></label>
+      <div class="line" data-row><span>${t("settings.filesPanel")}</span><span class="seg">${(
+        [
+          ["side", t("settings.filesPanelSide")],
+          ["window", t("settings.filesPanelWindow")],
+        ] as const
+      )
+        .map(([v, label]) => `<button class="${(layout.filesWindow ? "window" : "side") === v ? "sel" : ""}" data-files-window="${v}">${label}</button>`)
+        .join("")}</span></div>
+      <div class="line" data-row><span>${t("settings.treeSide")}</span><span class="seg">${(
+        [
+          ["left", t("settings.treeSideLeft")],
+          ["right", t("settings.treeSideRight")],
+        ] as const
+      )
+        .map(([v, label]) => `<button class="${(layout.treeLeft ? "left" : "right") === v ? "sel" : ""}" data-tree-side="${v}">${label}</button>`)
+        .join("")}</span></div>`,
         ) +
           section(
             t("settings.dropdown"),
@@ -818,7 +955,19 @@ export class Settings {
         ["system", t("settings.browserSystem")],
       ]
         .map(([v, label]) => `<option value="${v}" ${(layout.browser || "auto") === v ? "selected" : ""}>${label}</option>`)
-        .join("")}</select></label>`,
+        .join("")}</select></label>
+      <div class="line wrap" data-row><span>${t("settings.fileEditor")}</span><span class="seg">${(
+        [
+          ["builtin", t("settings.fileEditorBuiltin")],
+          ["program", t("settings.fileEditorProgram")],
+        ] as const
+      )
+        .map(([v, label]) => `<button class="${program ? (v === "program" ? "sel" : "") : v === "builtin" ? "sel" : ""}" data-file-editor="${v}">${label}</button>`)
+        .join("")}</span>${
+        program
+          ? `<input type="text" data-k="file-editor" value="${escapeHtml(layout.fileEditor)}" placeholder="subl" spellcheck="false" />`
+          : ""
+      }<span class="dim">${t("settings.fileEditorHint")}</span><div class="field-err" data-k="file-editor-err" hidden></div></div>`,
         ) +
           section(
             t("settings.terminalSection"),
@@ -952,9 +1101,39 @@ export class Settings {
           "row",
         ),
       ],
+      ...(PLATFORM === "windows"
+        ? []
+        : [
+            [
+              "upload",
+              section(
+                "",
+                `<p class="dim small" data-row>${t("settings.uploadAbout")}</p>
+      <div class="docker-hosts upload-hosts">
+        <div data-k="upload-rows">${uploadDraftRows(this.uploadDraft, layout.uploadHosts ?? []).map((h) => this.uploadRowHtml(h)).join("")}</div>
+        <datalist id="upload-hosts">${this.uploadOptionsHtml()}</datalist>
+        <div class="line"><button data-k="upload-add">${t("settings.uploadAdd")}</button><button data-k="upload-save">${t("settings.uploadSave")}</button><span class="vpn-error" data-k="upload-error"></span></div>
+      </div>`,
+                "row",
+              ),
+            ] as [Group, string],
+          ]),
       [
         "keys",
         section("", `<p class="dim small" data-row>${t("settings.keysAbout")}</p>`) +
+          (PLATFORM === "linux"
+            ? section(
+                "",
+                `<div class="line" data-row><span>${t("settings.superKeys")}</span><span class="seg">${(
+                  [
+                    [false, "Ctrl+Shift"],
+                    [true, t("settings.superKeysStart")],
+                  ] as const
+                )
+                  .map(([on, label]) => `<button class="${layout.superKeys === on ? "sel" : ""}" data-super-keys="${on}">${label}</button>`)
+                  .join("")}</span><span class="dim">${t("settings.superKeysHint")}</span></div>`,
+              )
+            : "") +
           `<div class="shortcut-list">${section(
             "Dropdown",
             `<div class="shortcut" data-row>${this.keyButton("dropdown", hotkey, off)}<span>${t("settings.dropdownKey")}${
@@ -967,11 +1146,13 @@ export class Settings {
           )}${GROUPS.map((group) =>
             section(
               escapeHtml(groupLabel(group)),
-              BINDINGS.filter((b) => b.group === group)
+              BINDINGS.filter((b) => b.group === group && !(b.id === "upload" && PLATFORM === "windows"))
                 .map(
                   (b) =>
                     `<div class="shortcut" data-row>${this.keyButton(b.id, keyText(b.id) || t("settings.noKey"))}<span>${escapeHtml(bindingLabel(b.id))}${
-                      layout.keys[b.id] ? ` <button class="reset" data-unbind="${b.id}" title="${t("settings.default")}">↺</button>` : ""
+                      keyText(b.id) ? ` <button class="reset" data-remove="${b.id}" title="${t("settings.removeKey")}">×</button>` : ""
+                    }${
+                      b.id in layout.keys ? ` <button class="reset" data-unbind="${b.id}" title="${t("settings.default")}">↺</button>` : ""
                     }</span></div>`,
                 )
                 .join("") +
@@ -1005,7 +1186,7 @@ export class Settings {
         )
         .join("")}</div>
       </div>
-      <p class="dim small settings-foot">${t("settings.where", { path: "~/Library/Application Support/desk/layout.json", sessions: "tmux -L desk ls" })}</p>`;
+      <p class="dim small settings-foot">${t("settings.where", { path: escapeHtml(shortPath(this.ctx.layoutPath(), this.ctx.home())), sessions: "tmux -L desk ls" })}</p>`;
 
     box.querySelectorAll<HTMLButtonElement>("[data-tab]").forEach((b) =>
       b.addEventListener("click", () => {
@@ -1081,6 +1262,13 @@ export class Settings {
         this.render();
       }),
     );
+    box.querySelectorAll<HTMLButtonElement>("[data-remove]").forEach((b) =>
+      b.addEventListener("click", () => {
+        this.recording = null;
+        this.ctx.setKey(b.dataset.remove!, ""); // no key at all, until ↺ or a new one
+        this.render();
+      }),
+    );
     box.querySelectorAll<HTMLButtonElement>("[data-unbind]").forEach((b) =>
       b.addEventListener("click", async () => {
         this.recording = null;
@@ -1101,6 +1289,12 @@ export class Settings {
       this.ctx.setLanguage((e.target as HTMLSelectElement).value as Language);
       this.render();
     });
+    box.querySelectorAll<HTMLButtonElement>("[data-tile-icon-scale]").forEach((b) =>
+      b.addEventListener("click", () => {
+        this.ctx.setTileIconScale(tileIconScale(Number(b.dataset.tileIconScale)));
+        this.render();
+      }),
+    );
     box.querySelectorAll<HTMLButtonElement>("[data-ui-scale]").forEach((b) =>
       b.addEventListener("click", () => {
         this.ctx.setUiScale(uiScale(Number(b.dataset.uiScale)));
@@ -1119,6 +1313,12 @@ export class Settings {
         this.render();
       }),
     );
+    box.querySelectorAll<HTMLButtonElement>("[data-super-keys]").forEach((b) =>
+      b.addEventListener("click", () => {
+        this.ctx.setSuperKeys(b.dataset.superKeys === "true");
+        this.render();
+      }),
+    );
     box.querySelectorAll<HTMLButtonElement>("[data-link-click]").forEach((b) =>
       b.addEventListener("click", () => {
         this.ctx.setLinkClick(b.dataset.linkClick as LinkClick);
@@ -1128,6 +1328,25 @@ export class Settings {
     box.querySelector<HTMLSelectElement>('[data-k="browser"]')!.addEventListener("change", (e) => {
       this.ctx.setBrowser((e.target as HTMLSelectElement).value);
     });
+    box.querySelectorAll<HTMLButtonElement>("[data-file-editor]").forEach((b) =>
+      b.addEventListener("click", () => {
+        this.fileEditorProgram = b.dataset.fileEditor === "program";
+        if (!this.fileEditorProgram) this.ctx.setFileEditor("");
+        this.render();
+      }),
+    );
+    const fileEditor = box.querySelector<HTMLInputElement>('[data-k="file-editor"]');
+    fileEditor?.addEventListener("change", () => void this.saveFileEditor(fileEditor, box));
+    // desk redraws Options once the switch is done (a file that does not save keeps the old place).
+    box.querySelectorAll<HTMLButtonElement>("[data-files-window]").forEach((b) =>
+      b.addEventListener("click", () => this.ctx.setFilesWindow(b.dataset.filesWindow === "window")),
+    );
+    box.querySelectorAll<HTMLButtonElement>("[data-tree-side]").forEach((b) =>
+      b.addEventListener("click", () => {
+        this.ctx.setTreeLeft(b.dataset.treeSide === "left");
+        this.render();
+      }),
+    );
     box.querySelector<HTMLInputElement>('[data-k="auto-layout"]')!.addEventListener("change", (e) => {
       this.ctx.setAutoLayout((e.target as HTMLInputElement).checked);
       this.render();
@@ -1153,6 +1372,7 @@ export class Settings {
     }
     this.bindVpn(box);
     this.bindDocker(box);
+    if (box.querySelector('[data-k="upload-rows"]')) this.bindUpload(box);
     box.querySelectorAll<HTMLInputElement>("[data-auto]").forEach((cb) =>
       cb.addEventListener("change", () => this.ctx.toggleAutostart(cb.dataset.auto!)),
     );
