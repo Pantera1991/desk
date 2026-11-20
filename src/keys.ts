@@ -23,6 +23,7 @@ export type Action =
   | { type: "terminal" }
   | { type: "files" }
   | { type: "docker" }
+  | { type: "upload" }
   | { type: "run" }
   | { type: "focus"; index: number }
   | { type: "fullscreen" }
@@ -65,6 +66,7 @@ export const BINDINGS: Binding[] = [
   { id: "files", group: "window", action: { type: "files" }, mac: ["Super+KeyF"] },
   // ⌘G on macOS (Ctrl+G elsewhere) is the prompt rewrite (tile.ts): ⇧ here.
   { id: "docker", group: "window", action: { type: "docker" }, mac: ["Super+Shift+KeyG"], other: ["Control+Shift+KeyG"] },
+  { id: "upload", group: "window", action: { type: "upload" }, mac: ["Super+Shift+KeyU"], other: ["Control+Alt+Shift+KeyU"] },
   { id: "run", group: "window", action: { type: "run" }, mac: ["Super+KeyU"] },
   { id: "chat", group: "window", action: { type: "chat" }, mac: ["Super+KeyR"] },
   { id: "sessions", group: "window", action: { type: "sessions" }, mac: ["Super+KeyS"] },

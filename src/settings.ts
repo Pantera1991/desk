@@ -19,6 +19,8 @@ import {
   type ThermalMode,
   type ThermalStatus,
   type UsageLayout,
+  type UploadHost,
+  type UploadMethod,
   type UsageShare,
 } from "./api";
 import { accountColor, withAccount, withoutAccount } from "./accounts";
@@ -26,6 +28,7 @@ import type { LinkClick } from "./links";
 import { partsHtml, withPart } from "./cpu-parts";
 import { checkHosts, draftAdd, draftRemove, draftRows, draftSet } from "./docker-view";
 import { PLATFORM, shortcut } from "./platform";
+import { checkUploadHosts, methodOf, uploadDraftAdd, uploadDraftRemove, uploadDraftRows, uploadDraftSet } from "./upload-view";
 import { rows, shortPath } from "./projects";
 import { search, type SearchItem } from "./settings-search";
 import { escapeHtml } from "./tile";
@@ -126,10 +129,12 @@ export interface SettingsContext {
   setAccounts: (change: Pick<Layout, "claudeAccounts" | "tileAccounts" | "projectAccounts">) => Promise<void>;
   /** Docker servers changed in Options: saved at once, the 🐳 chip follows. Never contacts them. */
   setDockerHosts: (hosts: DockerHost[]) => Promise<void>;
+  /** Upload servers changed in Options: saved at once. Never contacts them. */
+  setUploadHosts: (hosts: UploadHost[]) => Promise<void>;
 }
 
 /** The groups of Options, in the sidebar's order. */
-export type Group = "general" | "look" | "window" | "terminal" | "projects" | "claude" | "stats" | "power" | "docker" | "keys";
+export type Group = "general" | "look" | "window" | "terminal" | "projects" | "claude" | "stats" | "power" | "docker" | "upload" | "keys";
 
 const GROUP_NAMES: Record<Group, MessageKey> = {
   general: "settings.general",
@@ -141,6 +146,7 @@ const GROUP_NAMES: Record<Group, MessageKey> = {
   stats: "settings.stats",
   power: "settings.power",
   docker: "settings.docker",
+  upload: "settings.upload",
   keys: "settings.keys",
 };
 
@@ -204,6 +210,76 @@ export class Settings {
         .then(() => {
           this.dockerDraft = null;
           toast(t("settings.dockerSaved"), { kind: "ok" });
+        })
+        .catch((err) => {
+          error.textContent = String(err);
+        });
+    });
+  }
+
+  /** Upload rows typed but not saved: they outlive a re-render; null once saved or untouched. */
+  private uploadDraft: UploadHost[] | null = null;
+  /** Known hosts for the datalist (/etc/hosts): asked once, the first time the group renders. */
+  private uploadSuggested: string[] | null = null;
+
+  private uploadRowHtml(h: UploadHost): string {
+    return `<div class="line upload-host"><input type="text" data-k="upload-host" list="upload-hosts" value="${escapeHtml(h.host)}" placeholder="${t("settings.uploadHost")}" spellcheck="false" /><input type="text" data-k="upload-user" value="${escapeHtml(h.user)}" placeholder="${t("settings.uploadUser")}" spellcheck="false" /><input type="text" data-k="upload-key" value="${escapeHtml(h.key)}" placeholder="${t("settings.uploadKey")}" spellcheck="false" /><select data-k="upload-method" title="${t("settings.uploadMethod")}">${(["rsync", "scp"] as const).map((m) => `<option value="${m}"${methodOf(h) === m ? " selected" : ""}>${m}</option>`).join("")}</select><button data-k="upload-rm" title="${t("settings.uploadRemove")}">✕</button></div>`;
+  }
+
+  private uploadOptionsHtml(): string {
+    return (this.uploadSuggested ?? []).map((h) => `<option value="${escapeHtml(h)}"></option>`).join("");
+  }
+
+  /** Upload servers: rows live in the DOM; Zapisz saves only what checkUploadHosts accepts. */
+  private bindUpload(box: HTMLElement): void {
+    const rows = box.querySelector<HTMLElement>('[data-k="upload-rows"]')!;
+    const error = box.querySelector<HTMLElement>('[data-k="upload-error"]')!;
+    const list = box.querySelector<HTMLElement>("#upload-hosts")!;
+    if (this.uploadSuggested === null) {
+      this.uploadSuggested = [];
+      void api
+        .uploadSuggestions()
+        .then((hosts) => {
+          this.uploadSuggested = hosts;
+          list.innerHTML = this.uploadOptionsHtml();
+        })
+        .catch(() => {});
+    }
+    const index = (row: Element) => [...rows.children].indexOf(row);
+    const current = () => uploadDraftRows(this.uploadDraft, this.ctx.layout().uploadHosts ?? []);
+    rows.addEventListener("click", (e) => {
+      const row = (e.target as HTMLElement).closest(".upload-host");
+      if (!row || !(e.target as HTMLElement).closest('[data-k="upload-rm"]')) return;
+      this.uploadDraft = uploadDraftRemove(current(), index(row));
+      row.remove();
+    });
+    rows.addEventListener("input", (e) => {
+      const input = e.target as HTMLInputElement | HTMLSelectElement;
+      const row = input.closest(".upload-host");
+      const fields = { "upload-host": "host", "upload-user": "user", "upload-key": "key", "upload-method": "method" } as const;
+      const field = fields[input.dataset.k as keyof typeof fields] ?? null;
+      if (row && field) this.uploadDraft = uploadDraftSet(current(), index(row), field, input.value);
+    });
+    box.querySelector('[data-k="upload-add"]')!.addEventListener("click", () => {
+      this.uploadDraft = uploadDraftAdd(current());
+      rows.insertAdjacentHTML("beforeend", this.uploadRowHtml({ host: "", user: "", key: "" }));
+      rows.querySelector<HTMLInputElement>(".upload-host:last-child [data-k=upload-host]")?.focus();
+    });
+    box.querySelector('[data-k="upload-save"]')!.addEventListener("click", () => {
+      const hosts = [...rows.querySelectorAll<HTMLElement>(".upload-host")].map((r) => ({
+        host: r.querySelector<HTMLInputElement>('[data-k="upload-host"]')!.value.trim(),
+        user: r.querySelector<HTMLInputElement>('[data-k="upload-user"]')!.value.trim(),
+        key: r.querySelector<HTMLInputElement>('[data-k="upload-key"]')!.value.trim(),
+        method: methodOf({ host: "", user: "", key: "", method: r.querySelector<HTMLSelectElement>('[data-k="upload-method"]')!.value as UploadMethod }),
+      }));
+      const problem = checkUploadHosts(hosts);
+      error.textContent = problem ?? "";
+      if (problem) return;
+      void this.ctx
+        .setUploadHosts(hosts)
+        .then(() => {
+          this.uploadDraft = null;
+          toast(t("settings.uploadSaved"), { kind: "ok" });
         })
         .catch((err) => {
           error.textContent = String(err);
@@ -952,6 +1028,23 @@ export class Settings {
           "row",
         ),
       ],
+      ...(PLATFORM === "windows"
+        ? []
+        : [
+            [
+              "upload",
+              section(
+                "",
+                `<p class="dim small" data-row>${t("settings.uploadAbout")}</p>
+      <div class="docker-hosts upload-hosts">
+        <div data-k="upload-rows">${uploadDraftRows(this.uploadDraft, layout.uploadHosts ?? []).map((h) => this.uploadRowHtml(h)).join("")}</div>
+        <datalist id="upload-hosts">${this.uploadOptionsHtml()}</datalist>
+        <div class="line"><button data-k="upload-add">${t("settings.uploadAdd")}</button><button data-k="upload-save">${t("settings.uploadSave")}</button><span class="vpn-error" data-k="upload-error"></span></div>
+      </div>`,
+                "row",
+              ),
+            ] as [Group, string],
+          ]),
       [
         "keys",
         section("", `<p class="dim small" data-row>${t("settings.keysAbout")}</p>`) +
@@ -967,7 +1060,7 @@ export class Settings {
           )}${GROUPS.map((group) =>
             section(
               escapeHtml(groupLabel(group)),
-              BINDINGS.filter((b) => b.group === group)
+              BINDINGS.filter((b) => b.group === group && !(b.id === "upload" && PLATFORM === "windows"))
                 .map(
                   (b) =>
                     `<div class="shortcut" data-row>${this.keyButton(b.id, keyText(b.id) || t("settings.noKey"))}<span>${escapeHtml(bindingLabel(b.id))}${
@@ -1153,6 +1246,7 @@ export class Settings {
     }
     this.bindVpn(box);
     this.bindDocker(box);
+    if (box.querySelector('[data-k="upload-rows"]')) this.bindUpload(box);
     box.querySelectorAll<HTMLInputElement>("[data-auto]").forEach((cb) =>
       cb.addEventListener("change", () => this.ctx.toggleAutostart(cb.dataset.auto!)),
     );
