@@ -34,7 +34,7 @@ import { search, type SearchItem } from "./settings-search";
 import { escapeHtml } from "./tile";
 import { acceleratorFor, DEFAULT_HOTKEY, hotkeyLabel } from "./hotkey";
 import { LANGUAGES, language, t, type Language, type MessageKey } from "./i18n";
-import { acceleratorsOf, bindingLabel, BINDINGS, clashWith, FIXED, groupLabel, GROUPS, keyText } from "./keys";
+import { bindingLabel, BINDINGS, clashWith, defaultsOf, FIXED, groupLabel, GROUPS, keyText } from "./keys";
 import {
   addStep,
   autoColors,
@@ -95,7 +95,7 @@ export interface SettingsContext {
   setDropdown: (
     change: Partial<Pick<Layout, "dropdown" | "dropdownHeight" | "dropdownAutohide" | "dropdownHotkey" | "dropdownAnimation">>,
   ) => Promise<void>;
-  /** A desk shortcut set in Options, or back to its default (null). */
+  /** A desk shortcut set in Options, removed (""), or back to its default (null). */
   setKey: (id: string, accelerator: string | null) => void;
   /** Ask GitHub for a newer desk now. */
   checkUpdate: () => Promise<void>;
@@ -783,7 +783,8 @@ export class Settings {
     }
     const b = BINDINGS.find((x) => x.id === id)!;
     // Its default again: nothing to keep in layout.keys.
-    this.ctx.setKey(id, acceleratorsOf(b).length === 1 && acceleratorsOf(b)[0] === accelerator ? null : accelerator);
+    const own = defaultsOf(b);
+    this.ctx.setKey(id, own.length === 1 && own[0] === accelerator ? null : accelerator);
     this.render();
   }
 
@@ -1075,7 +1076,9 @@ export class Settings {
                 .map(
                   (b) =>
                     `<div class="shortcut" data-row>${this.keyButton(b.id, keyText(b.id) || t("settings.noKey"))}<span>${escapeHtml(bindingLabel(b.id))}${
-                      layout.keys[b.id] ? ` <button class="reset" data-unbind="${b.id}" title="${t("settings.default")}">↺</button>` : ""
+                      keyText(b.id) ? ` <button class="reset" data-remove="${b.id}" title="${t("settings.removeKey")}">×</button>` : ""
+                    }${
+                      b.id in layout.keys ? ` <button class="reset" data-unbind="${b.id}" title="${t("settings.default")}">↺</button>` : ""
                     }</span></div>`,
                 )
                 .join("") +
@@ -1182,6 +1185,13 @@ export class Settings {
     box.querySelectorAll<HTMLButtonElement>("[data-record]").forEach((b) =>
       b.addEventListener("click", () => {
         this.recording = this.recording === b.dataset.record ? null : b.dataset.record!;
+        this.render();
+      }),
+    );
+    box.querySelectorAll<HTMLButtonElement>("[data-remove]").forEach((b) =>
+      b.addEventListener("click", () => {
+        this.recording = null;
+        this.ctx.setKey(b.dataset.remove!, ""); // no key at all, until ↺ or a new one
         this.render();
       }),
     );

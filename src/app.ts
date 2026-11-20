@@ -357,8 +357,8 @@ export class App {
       setDropdown: (change) => this.setDropdown(change),
       setKey: (id, accelerator) => {
         const keys = { ...this.layout.keys };
-        if (accelerator) keys[id] = accelerator;
-        else delete keys[id];
+        if (accelerator === null) delete keys[id]; // the default again
+        else keys[id] = accelerator; // "" = removed, no key at all
         this.layout.keys = keys;
         setCustomKeys(keys);
         this.save();
