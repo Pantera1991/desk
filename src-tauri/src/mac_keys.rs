@@ -6,6 +6,7 @@
 
 use block2::RcBlock;
 use objc2::rc::Retained;
+use objc2::MainThreadMarker;
 use objc2_app_kit::{NSEvent, NSEventMask, NSEventModifierFlags as M};
 use std::ffi::c_void;
 use std::ptr::NonNull;
@@ -27,7 +28,8 @@ pub fn install(app: &AppHandle) {
             // The monitor sees every window of the app. Only the main window's
             // key-downs reach its tiles; in the files window ⌘Q does nothing
             // (still swallowed below, so the menu does not quit).
-            let in_main = e.window().is_some_and(|w| {
+            // A local monitor runs on the main thread, so the marker is there.
+            let in_main = MainThreadMarker::new().and_then(|mtm| e.window(mtm)).is_some_and(|w| {
                 handle
                     .get_webview_window("main")
                     .and_then(|main| main.ns_window().ok())
