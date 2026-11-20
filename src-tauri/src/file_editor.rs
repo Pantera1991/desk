@@ -13,6 +13,13 @@ const DENIED: &[&str] = &[
     "bun", "ruby", "perl", "lua", "tclsh", "env", "exec", "xargs", "nohup", "nice", "timeout", "sudo", "doas",
     "pkexec", "su", "rm", "unlink", "shred", "truncate", "dd", "cmd", "powershell", "pwsh", "wscript", "cscript",
     "osascript",
+    // System openers: they hand the file to whatever runs its type (`open x.command`
+    // runs it in Terminal, `xdg-open` a .desktop file, `start` an .exe).
+    "open", "xdg-open", "gio", "gnome-open", "kde-open", "kioclient", "exo-open", "start", "explorer", "rundll",
+    "mshta",
+    // More that run the file they get, or start another program.
+    "java", "swift", "rscript", "julia", "groovy", "expect", "wish", "busybox", "toybox", "npx", "bunx", "setsid",
+    "systemd-run", "flatpak-spawn",
 ];
 
 /// Non-empty, only `[A-Za-z0-9/._~-]`, not starting with `-`.
@@ -183,6 +190,21 @@ mod tests {
     fn program_refuses_what_would_run_or_delete_the_file() {
         let home = tempfile::tempdir().unwrap();
         for bad in ["php", "php8.2", "PHP", "python3", "python3.12", "/bin/sh", "rm", "node.exe", "env", "~/bin/bash"] {
+            let e = program(bad, home.path()).unwrap_err();
+            assert!(e.contains("uruchomiłby plik"), "{bad}: {e}");
+        }
+    }
+
+    #[test]
+    fn program_refuses_system_openers_and_more_interpreters() {
+        // `open evil.command` runs the script in Terminal, `xdg-open` a .desktop file:
+        // a project file opened from Find in Files must never run.
+        let home = tempfile::tempdir().unwrap();
+        for bad in [
+            "open", "/usr/bin/open", "xdg-open", "gio", "gnome-open", "kde-open5", "kioclient5", "exo-open",
+            "start", "explorer.exe", "rundll32", "mshta", "java", "swift", "Rscript", "julia", "groovy",
+            "expect", "wish", "busybox", "npx", "setsid", "systemd-run", "flatpak-spawn",
+        ] {
             let e = program(bad, home.path()).unwrap_err();
             assert!(e.contains("uruchomiłby plik"), "{bad}: {e}");
         }
