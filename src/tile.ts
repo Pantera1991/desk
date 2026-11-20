@@ -21,6 +21,7 @@ import { actionFor } from "./keys";
 import { linkTarget, rowLinks, webLink, type Row } from "./links";
 import { agentLabel, keyOf, type Spec } from "./sessions";
 import { PromptPill, ScreenHold, hasDraft, pillSpot, promptAiOn, readPrompt, type PromptAiStatus } from "./prompt-pill";
+import { isShiftEnter, NEWLINE } from "./newline";
 
 /** Rows looked at above and below a hovered one for a wrapped path. */
 const LINK_ROWS = 4;
@@ -329,9 +330,13 @@ export class Tile {
         if (e.type === "keydown") this.rewritePrompt();
         return false;
       }
-      if (e.type === "keydown" && e.key === "Enter" && e.shiftKey && !e.metaKey && !e.ctrlKey) {
-        // Shift+Enter = newline in Claude Code (sent as Meta+Enter).
-        if (this.ptyId !== null) void api.ptyWrite(this.ptyId, "\x1b\r");
+      if (isShiftEnter(e)) {
+        // Shift+Enter = newline in Claude Code (sent as Meta+Enter). Its keypress is
+        // swallowed too: xterm would turn it into a plain Enter and send the prompt.
+        if (e.type === "keydown") {
+          e.preventDefault();
+          if (this.ptyId !== null) void api.ptyWrite(this.ptyId, NEWLINE);
+        }
         return false;
       }
       return true;

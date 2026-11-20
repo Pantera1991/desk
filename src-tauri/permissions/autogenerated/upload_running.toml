@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-upload-running"
+description = "Enables the upload_running command without any pre-configured scope."
+commands.allow = ["upload_running"]
+
+[[permission]]
+identifier = "deny-upload-running"
+description = "Denies the upload_running command without any pre-configured scope."
+commands.deny = ["upload_running"]
