@@ -1,5 +1,42 @@
 # Zmiany
 
+## 0.2.10 (2026-11-20)
+
+- **Szukaj w plikach.** ⇧⌘F na macOS (Ctrl+Alt+Shift+F na Linuksie i Windows) otwiera okienko
+  jak w PhpStorm. Szuka w treści plików aktywnego projektu, z przełącznikami Aa (wielkość liter),
+  W (całe słowo) i .\* (wyrażenie regularne). Trafienia mają podświetlony fragment, a obok jest
+  podgląd pliku przewinięty do tej linii. Enter albo dwuklik otwiera plik na tej linii, a tekst
+  zaznaczony w terminalu lub edytorze od razu trafia do pola. Opcje → Terminal i linki →
+  „Edytor plików” wybiera, czym otwierać: edytorem wbudowanym (domyślnie) albo programem, np.
+  `code`, `subl` czy `phpstorm`, który dostaje też numer linii. Dwuklik w drzewie plików
+  otwiera plik tak samo. W górnym pasku jest też przycisk z folderem, który pokazuje i chowa
+  pliki projektu.
+- **Panel plików w osobnym oknie.** Opcje → Okno i układ → „Panel plików: z boku | w osobnym
+  oknie”. Okno „desk — pliki” idzie za aktywnym kafelkiem, chowa się przy blokadzie desk
+  i otwiera tam, gdzie stało ostatnio. Zamknięcie tylko je chowa, więc niezapisane zmiany
+  zostają. W tej samej grupie jest „Drzewo plików: z lewej | z prawej”, w obu trybach.
+- **Wysyłka pliku na serwer.** ⇧⌘U (Ctrl+Alt+Shift+U na Linuksie i Windows) albo strzałki
+  w górnym pasku otwierają panel Wysyłka z drzewem plików projektu. W drzewie są także pliki
+  z .gitignore, np. zrzuty bazy. Wybierasz serwer i plik, a „Wyślij” najpierw pyta i pokazuje
+  rozmiar i miejsce docelowe (`użytkownik@serwer:~/nazwa`). Serwer z „prod” w nazwie dostaje
+  czerwone ostrzeżenie. Plik idzie w kafelku przez rsync po SSH, tylko z kluczem, bez hasła,
+  a przerwaną wysyłkę można dokończyć. Dla serwera bez rsync jest metoda scp. Serwery dodajesz
+  w Opcje → Wysyłka rsync, a przycisk i skrót pojawiają się dopiero wtedy.
+- **Shift+Enter robi nową linię.** W kafelku Claude Shift+Enter dodawał nową linię i od razu
+  wysyłał prompt. Teraz tylko dodaje linię.
+- **Ikony w kafelkach.** Opcje → Wygląd → „Ikony w kafelkach” (100–175%) powiększa same
+  przyciski w nagłówku kafelka (+, ▶, ✎, ×, ⏻…). Reszta interfejsu zostaje bez zmian.
+- **Skrót można usunąć.** W Opcje → Skróty każdy skrót ma ×. Usuwa ono klawisz, a kombinacja
+  zwalnia się dla innego skrótu. ↺ przywraca domyślny, także po usunięciu.
+- **Linux: skróty na klawiszu Start.** Opcje → Skróty → „Klawisz skrótów: Ctrl+Shift | Start
+  (Win)”. Ze Start skróty działają jak ⌘ na Macu, np. Start+F to pliki, a Start+W podgląd. P, L,
+  S, N, D i O oraz przejście do kafelka zostają na Ctrl+Shift, bo GNOME zajmuje je ze Start.
+  Domyślnie nic się nie zmienia.
+- **Zębatka Opcji na końcu górnego paska.** Otwiera i zamyka Opcje, a w podpowiedzi ma skrót.
+- **Stopka Opcji podaje prawdziwą ścieżkę ustawień.** Na Linuksie i Windows pokazywała ścieżkę
+  z macOS. Teraz to `~/.local/share/desk/layout.json` na Linuksie
+  i `~\AppData\Roaming\desk\layout.json` na Windows.
+
 ## 0.2.9 (2026-11-19)
 
 - **Panel Dockera.** Serwery Dockera z sieci (np. `tcp://serwer:2375`) widać teraz w bocznym
