@@ -508,6 +508,8 @@ export const pl = {
   "settings.promptAiVpnNone": "brak zapisanej konfiguracji",
   "settings.promptAiVpnEmpty": "Najpierw wklej konfigurację tunelu (.conf).",
   "settings.uiScale": "Wielkość interfejsu",
+  "settings.tileIconScale": "Ikony w kafelkach",
+  "settings.tileIconScaleHint": "przyciski w nagłówku kafelka (+, ▶, ✎, ⏻…); mnożone przez wielkość interfejsu",
   "settings.uiScaleHint": "pasek górny i dolny, panele, Opcje; terminale mają własną czcionkę",
   "settings.theme": "Motyw",
   "settings.autostart": "Start z aplikacją",
