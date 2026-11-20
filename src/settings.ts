@@ -72,6 +72,8 @@ import { UPDATE_EVERY_MS, updateStatusHtml, type UpdateStatus } from "./updates"
 
 export interface SettingsContext {
   home: () => string;
+  /** Where layout.json is on this system, shown in the footer. */
+  layoutPath: () => string;
   layout: () => Layout;
   projects: () => Promise<Project[]>;
   setLaneCount: (n: number) => void;
@@ -1107,7 +1109,7 @@ export class Settings {
         )
         .join("")}</div>
       </div>
-      <p class="dim small settings-foot">${t("settings.where", { path: "~/Library/Application Support/desk/layout.json", sessions: "tmux -L desk ls" })}</p>`;
+      <p class="dim small settings-foot">${t("settings.where", { path: escapeHtml(shortPath(this.ctx.layoutPath(), this.ctx.home())), sessions: "tmux -L desk ls" })}</p>`;
 
     box.querySelectorAll<HTMLButtonElement>("[data-tab]").forEach((b) =>
       b.addEventListener("click", () => {

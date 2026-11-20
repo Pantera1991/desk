@@ -314,6 +314,8 @@ export interface Bootstrap {
   sessions: SessionInfo[];
   states: SessionState[];
   home: string;
+  /** layout.json as it really is on this system (Options' footer). */
+  layoutPath: string;
   /** Where "new project" suggests creating folders until one is chosen. */
   projectsDir: string;
   /** macOS or Linux without tmux: sessions end when desk closes. */
