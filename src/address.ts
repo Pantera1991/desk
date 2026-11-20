@@ -43,6 +43,16 @@ export function staleView(project: string, view: { folder: string | null; shown:
 }
 
 /**
+ * What the panel shows, for the other window to show it again: the file
+ * being edited, else the page's address; null for nothing opened, and for a
+ * folder card (no file to open: the other side opens on the project).
+ */
+export function shownView(view: { editing: string | null; folder: string | null; created: boolean; address: string }): string | null {
+  if (view.folder) return null;
+  return view.editing ?? (view.created && view.address ? view.address : null);
+}
+
+/**
  * `@path` for Claude Code: relative to the project when inside it, quoted when
  * it has spaces. "" for a name with control characters or quotes: it is typed
  * into a terminal, where those could end the line or run something.

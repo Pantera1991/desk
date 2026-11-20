@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dropped, inProject, isLocal, mention, normalize, rendered, staleView } from "./address";
+import { dropped, inProject, isLocal, mention, normalize, rendered, shownView, staleView } from "./address";
 
 describe("address bar", () => {
   it("turns what was typed into a link", () => {
@@ -65,5 +65,16 @@ describe("address bar", () => {
     expect(staleView("/p/b", view(null, "/p/b/.env"), true)).toBe(false);
     // A web page stays.
     expect(staleView("/p/b", view(null, "https://example.com"), true)).toBe(false);
+  });
+
+  it("names what the panel shows for a switch to the other window", () => {
+    const v = (over: Partial<Parameters<typeof shownView>[0]>) => ({ editing: null, folder: null, created: true, address: "/p/a.md", ...over });
+    expect(shownView(v({}))).toBe("/p/a.md");
+    expect(shownView(v({ editing: "/p/b.ts" }))).toBe("/p/b.ts");
+    // A folder card is no file to open: the other side opens on the project instead.
+    expect(shownView(v({ folder: "/p/src", address: "/p/src" }))).toBeNull();
+    // Nothing opened yet, or an empty address bar.
+    expect(shownView(v({ created: false }))).toBeNull();
+    expect(shownView(v({ address: "" }))).toBeNull();
   });
 });

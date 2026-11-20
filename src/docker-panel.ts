@@ -4,6 +4,7 @@
 // Content: docker-view.ts; data: docker.rs.
 import { api, type DockerOverview, DockerTile } from "./api";
 import { deployFolder, deployQuestion, flipOpen, renderDocker, restartQuestion, rmErrorMessage } from "./docker-view";
+import { dockSplitter, recall, remember } from "./dock-frame";
 import { t } from "./i18n";
 import { escapeHtml } from "./notices";
 import { confirmBox, toast } from "./ui";
@@ -42,22 +43,6 @@ function saveOpen(open: ReadonlySet<string>): void {
     localStorage.setItem(STORE, JSON.stringify([...open]));
   } catch {
     // Not remembered; the branches simply start folded next time.
-  }
-}
-
-function remember(key: string, value: string): void {
-  try {
-    localStorage.setItem(key, value);
-  } catch {
-    // Not remembered.
-  }
-}
-
-function recall(key: string): string | null {
-  try {
-    return localStorage.getItem(key);
-  } catch {
-    return null;
   }
 }
 
@@ -103,7 +88,7 @@ export class DockerPanel {
     const w = Number(recall(WIDTH_KEY));
     this.el.style.width = `${w > 0 ? Math.max(MIN_WIDTH, w) : DEFAULT_WIDTH}px`;
     this.el.addEventListener("click", (e) => void this.click(e.target as HTMLElement));
-    this.splitter();
+    dockSplitter(this.el, MIN_WIDTH, WIDTH_KEY, this.onLayout);
     document.addEventListener("visibilitychange", () => {
       if (this.shown && !document.hidden) this.fetch();
     });
@@ -343,29 +328,5 @@ export class DockerPanel {
         }
         this.again = false;
       });
-  }
-
-  private splitter(): void {
-    const bar = this.el.querySelector<HTMLElement>(".splitter");
-    if (!bar) return;
-    bar.addEventListener("pointerdown", (e) => {
-      e.preventDefault();
-      bar.setPointerCapture(e.pointerId);
-      const startX = e.clientX;
-      const startW = this.el.getBoundingClientRect().width;
-      const move = (ev: PointerEvent) => {
-        const max = window.innerWidth - 320;
-        const w = Math.min(max, Math.max(MIN_WIDTH, startW + startX - ev.clientX));
-        this.el.style.width = `${w}px`;
-      };
-      const up = () => {
-        bar.removeEventListener("pointermove", move);
-        bar.removeEventListener("pointerup", up);
-        remember(WIDTH_KEY, String(Math.round(this.el.getBoundingClientRect().width)));
-        this.onLayout();
-      };
-      bar.addEventListener("pointermove", move);
-      bar.addEventListener("pointerup", up);
-    });
   }
 }

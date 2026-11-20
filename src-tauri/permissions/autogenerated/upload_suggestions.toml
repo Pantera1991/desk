@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-upload-suggestions"
+description = "Enables the upload_suggestions command without any pre-configured scope."
+commands.allow = ["upload_suggestions"]
+
+[[permission]]
+identifier = "deny-upload-suggestions"
+description = "Denies the upload_suggestions command without any pre-configured scope."
+commands.deny = ["upload_suggestions"]

@@ -13,6 +13,29 @@ export interface Project {
 /** Sessions of a card one under another, side by side, or one at a time. */
 export type CardMode = "stack" | "row" | "tabs";
 
+export interface GrepHit {
+  file: string;
+  line: number;
+  text: string;
+  /** Matches in `text` as [start, end) UTF-16 ranges. */
+  marks: [number, number][];
+  /** UTF-16 units of the line cut off before `text` (0 when not cut; else `text` starts with "…"). */
+  cut: number;
+}
+
+export interface GrepResult {
+  hits: GrepHit[];
+  files: number;
+  /** The search stopped at the cap. */
+  more: boolean;
+}
+
+export interface GrepOptions {
+  case: boolean;
+  word: boolean;
+  regex: boolean;
+}
+
 export interface Layout {
   version: number;
   lanes: string[][];
@@ -48,6 +71,8 @@ export interface Layout {
   fontSize: number;
   /** Size of the window's own text and bars, not terminals (ui-scale.ts). */
   uiScale: number;
+  /** Size of the tile header buttons (ui-scale.ts). */
+  tileIconScale: number;
   /** Session keys whose tiles are folded to their header. */
   minimized: string[];
   /** Names given to tiles by hand, by session key. */
@@ -72,6 +97,12 @@ export interface Layout {
   tmuxMenu: boolean;
   /** Interface language, "pl" or "en" (i18n.ts); "" until the first launch picks one. */
   language: string;
+  /** Program that opens a Find in Files result at its line; "" is the built-in editor. */
+  fileEditor: string;
+  /** The files panel lives in a window of its own instead of at the side (files-window-panel.ts). */
+  filesWindow: boolean;
+  /** The file tree on the left of the files panel instead of the right. */
+  treeLeft: boolean;
   /** Ctrl+G in Claude rewrites the prompt with the company LLM (prompt_ai.rs). */
   promptAi: PromptAi;
   /** Claude accounts (accounts.ts); the first one is the default. */
@@ -107,6 +138,29 @@ export interface Layout {
   dockerHosts: DockerHost[];
   /** What each Docker tile shows, by session key; Rust builds the command. */
   docker: Record<string, DockerTile>;
+  /** Servers the Upload panel sends to (upload.rs). */
+  uploadHosts: UploadHost[];
+  /** What each Upload tile sends, by session key; Rust builds the command. */
+  uploads: Record<string, UploadTile>;
+}
+
+/** A server added in Options → Upload; `key` is an optional ssh key path. */
+export interface UploadHost {
+  host: string;
+  user: string;
+  key: string;
+  /** How files go to this server; missing in older layouts means rsync. */
+  method?: UploadMethod;
+}
+
+/** rsync (resumable, needs rsync on the server) or scp (for servers without it). */
+export type UploadMethod = "rsync" | "scp";
+
+/** An Upload tile: one file of the project sent to `user@host`. */
+export interface UploadTile {
+  host: string;
+  user: string;
+  file: string;
 }
 
 /** A Docker server added in Options: a name and its `-H` address. */
@@ -291,6 +345,8 @@ export interface Bootstrap {
   sessions: SessionInfo[];
   states: SessionState[];
   home: string;
+  /** layout.json as it really is on this system (Options' footer). */
+  layoutPath: string;
   /** Where "new project" suggests creating folders until one is chosen. */
   projectsDir: string;
   /** macOS or Linux without tmux: sessions end when desk closes. */
@@ -544,6 +600,15 @@ export interface PtyExit {
 
 export const api = {
   bootstrap: () => invoke<Bootstrap>("bootstrap"),
+  /** Which of rsync and ssh are installed. */
+  uploadTools: () => invoke<{ rsync: boolean; scp: boolean; ssh: boolean }>("upload_tools"),
+  /** Host names from /etc/hosts, to suggest in Options (none on Windows). */
+  uploadSuggestions: () => invoke<string[]>("upload_suggestions"),
+  /** Size in bytes of a project file and the name it gets on the server (the
+   *  canonical file's: a symlink's target); rejects when it is refused (outside the project, not a file). */
+  uploadFileSize: (path: string, file: string) => invoke<{ size: number; name: string }>("upload_file_size", { path, file }),
+  /** Whether rsync still runs in the session `slug` (tmux or native). */
+  uploadRunning: (slug: string) => invoke<boolean>("upload_running", { slug }),
   dockerOverview: () => invoke<DockerOverview>("docker_overview"),
   /** `docker image rm` of a tag or id on one server; never --force. Rejects with Docker's error. */
   dockerImageRm: (host: string, image: string) => invoke<void>("docker_image_rm", { host, image }),
@@ -551,6 +616,15 @@ export const api = {
   dockerRestart: (host: string, container: string) => invoke<void>("docker_restart", { host, container }),
   /** Branch and dirty count of a local folder; null when it is not a git repository (or git timed out). */
   gitStatusSummary: (path: string) => invoke<GitSummary | null>("git_status_summary", { path }),
+  /** Text search in a project's files (max 500 hits); `marks` are UTF-16 ranges. Rejects with a message (bad regex, may span lines). */
+  grepFiles: (path: string, query: string, o: GrepOptions) =>
+    invoke<GrepResult>("grep_files", { path, query, case: o.case, word: o.word, regex: o.regex }),
+  /** Text of `file` (relative to the project) for the read-only Find preview. Rejects with a message. */
+  readProjectText: (path: string, file: string) => invoke<string>("read_project_text", { path, file }),
+  /** Open `file` (relative to the project) at `line` in the configured file editor. Rejects with a message. */
+  openFileAt: (path: string, file: string, line: number) => invoke<void>("open_file_at", { path, file, line }),
+  /** Check that a file-editor command can be run. Rejects with a message. */
+  checkFileEditor: (cmd: string) => invoke<void>("check_file_editor", { cmd }),
   /** Of the given folders, those holding a compose file (where a deploy may run). */
   composeDirs: (paths: string[]) => invoke<string[]>("compose_dirs", { paths }),
   /** Server of the saved prompt-rewriting VPN config, null when none (the key never leaves Rust). */
@@ -566,7 +640,7 @@ export const api = {
   /** `resume`: a Claude conversation's id, to pick it up again (⌘S). */
   /** `restore`: a tile of the saved layout at startup; Claude resumes its last conversation if the session is gone. */
   /** `account`: the Claude account (accounts.ts) a new Claude session starts on. */
-  /** `startDeploy`: a deploy confirmed in the Docker panel this very click; else Rust refuses to start `compose up` (a live session still attaches). */
+  /** `startDeploy`: a start confirmed by a click: a deploy or an upload; else Rust refuses to start `compose up` / `rsync` (a live session still attaches). */
   openSession: (
     path: string,
     agent: string,
@@ -593,7 +667,6 @@ export const api = {
   projectFiles: (path: string) => invoke<string[]>("project_files", { path }),
   /** One folder of a project: files, and folders as `rel/name/`. */
   projectDir: (path: string, rel: string) => invoke<string[]>("project_dir", { path, rel }),
-  openFile: (path: string, file: string) => invoke<void>("open_file", { path, file }),
   previewFile: (path: string, file: string, bounds: PreviewBounds) =>
     invoke<string>("preview_file", { path, file, bounds }),
   runTargets: (path: string) => invoke<RunTarget[]>("run_targets", { path }),
@@ -631,6 +704,14 @@ export const api = {
   /** `password`: the account password typed on the lock screen (Linux). */
   unlockDesk: (password?: string) => invoke<void>("unlock_desk", { password: password ?? null }),
   isLocked: () => invoke<boolean>("is_locked"),
+  /** The files window: make it or show and focus it; refused while desk is locked. */
+  filesWindowOpen: () => invoke<void>("files_window_open"),
+  /** The files window: hide it (its state is kept). */
+  filesWindowHide: () => invoke<void>("files_window_hide"),
+  /** The files window: close it for good (the mode was switched off). */
+  filesWindowDestroy: () => invoke<void>("files_window_destroy"),
+  /** The files window: bring the main window to the front. */
+  focusMainWindow: () => invoke<void>("focus_main_window"),
   /** Quit desk (the page asks first); refused while locked. */
   quitDesk: () => invoke<void>("quit_desk"),
   /** Register or drop ⌘` and refit the dropped-down window, as layout.json says. */

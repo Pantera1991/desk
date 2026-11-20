@@ -15,6 +15,10 @@ export interface ChoiceOptions {
   altLabel?: string;
   /** Lines listed under the message. */
   details?: string[];
+  /** Replaces "Cancel" on the first button. */
+  cancelLabel?: string;
+  /** A red line under the message. */
+  warning?: string;
 }
 
 /** A confirm dialog that may offer a second answer ("alt"); null on Esc. */
@@ -23,11 +27,13 @@ export function choiceBox(message: string, okLabel: string, opts: ChoiceOptions 
     const overlay = document.createElement("div");
     overlay.className = "overlay";
     const details = opts.details?.length ? `<ul class="details">${opts.details.map((d) => `<li>${escapeHtml(d)}</li>`).join("")}</ul>` : "";
+    const warning = opts.warning ? `<p class="choice-warning">${escapeHtml(opts.warning)}</p>` : "";
+    const cancel = opts.cancelLabel ? escapeHtml(opts.cancelLabel) : t("common.cancel");
     const alt = opts.altLabel ? `<button data-v="alt" class="danger">${escapeHtml(opts.altLabel)}</button>` : "";
     overlay.innerHTML = `
       <div class="dialog confirm${alt ? " wide" : ""}">
-        <p>${escapeHtml(message)}</p>${details}
-        <div class="buttons"><button data-v="">${t("common.cancel")} <kbd>esc</kbd></button>${alt}<button data-v="ok" class="danger">${escapeHtml(okLabel)} <kbd>↵</kbd></button></div>
+        <p>${escapeHtml(message)}</p>${warning}${details}
+        <div class="buttons"><button data-v="">${cancel} <kbd>esc</kbd></button>${alt}<button data-v="ok" class="danger">${escapeHtml(okLabel)} <kbd>↵</kbd></button></div>
       </div>`;
     const done = (v: "ok" | "alt" | null) => {
       window.removeEventListener("keydown", onKey, true);
