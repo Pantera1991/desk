@@ -24,6 +24,7 @@ export type Action =
   | { type: "files" }
   | { type: "docker" }
   | { type: "findInFiles" }
+  | { type: "upload" }
   | { type: "run" }
   | { type: "focus"; index: number }
   | { type: "fullscreen" }
@@ -68,6 +69,7 @@ export const BINDINGS: Binding[] = [
   { id: "findInFiles", group: "window", action: { type: "findInFiles" }, mac: ["Super+Shift+KeyF"], other: ["Control+Alt+Shift+KeyF"] },
   // ⌘G on macOS (Ctrl+G elsewhere) is the prompt rewrite (tile.ts): ⇧ here.
   { id: "docker", group: "window", action: { type: "docker" }, mac: ["Super+Shift+KeyG"], other: ["Control+Shift+KeyG"] },
+  { id: "upload", group: "window", action: { type: "upload" }, mac: ["Super+Shift+KeyU"], other: ["Control+Alt+Shift+KeyU"] },
   { id: "run", group: "window", action: { type: "run" }, mac: ["Super+KeyU"] },
   { id: "chat", group: "window", action: { type: "chat" }, mac: ["Super+KeyR"] },
   { id: "sessions", group: "window", action: { type: "sessions" }, mac: ["Super+KeyS"] },
@@ -143,9 +145,15 @@ function defaults(b: Binding, platform: Platform): string[] {
   return b.other ?? b.mac.map((a) => a.replace("Super", "Control+Shift"));
 }
 
-/** What triggers a binding now: the one set in Options, else its defaults. */
+/** A binding's own keys, whatever Options set. */
+export function defaultsOf(b: Binding, platform: Platform = PLATFORM): string[] {
+  return defaults(b, platform);
+}
+
+/** What triggers a binding now: the one set in Options ("" = removed, none), else its defaults. */
 export function acceleratorsOf(b: Binding, platform: Platform = PLATFORM): string[] {
-  return custom[b.id] ? [custom[b.id]] : defaults(b, platform);
+  if (b.id in custom) return custom[b.id] ? [custom[b.id]] : [];
+  return defaults(b, platform);
 }
 
 /** "⌘P", or "Ctrl⇧P" off macOS; both defaults joined ("⌘E / ⌘↵"). */
@@ -208,11 +216,12 @@ const HINTS = ["palette", "new", "sub", "terminal", "files", "run", "chat", "ses
 
 /** Footer hints for the user's platform and shortcuts (the first key of each). */
 export function hints(platform: Platform = PLATFORM): [string, string][] {
-  return HINTS.map((id) => {
+  return HINTS.flatMap((id): [string, string][] => {
     const label = t(`hint.${id}` as MessageKey);
-    if (id === "focus") return [shortcut("⌘1-9", platform), label];
+    if (id === "focus") return [[shortcut("⌘1-9", platform), label]];
     const b = BINDINGS.find((x) => x.id === id)!;
-    return [hotkeyLabel(acceleratorsOf(b, platform)[0], platform), label];
+    const first = acceleratorsOf(b, platform)[0];
+    return first ? [[hotkeyLabel(first, platform), label]] : []; // removed in Options
   });
 }
 
@@ -229,7 +238,9 @@ export function keysIn(text: string, platform: Platform = PLATFORM): string {
   return clicks.replace(/⌘⇧Q|⌘⌫|⌘↵|⌘[^\s)]*/g, (token) => {
     const mac = token.replace("⌘⇧", "⇧⌘"); // macOS writes ⇧ first
     const b = BINDINGS.find((x) => x.mac.some((a) => hotkeyLabel(a, "mac") === mac));
-    return b ? hotkeyLabel(acceleratorsOf(b, platform)[0], platform) : shortcut(token, platform);
+    if (!b) return shortcut(token, platform);
+    const first = acceleratorsOf(b, platform)[0];
+    return first ? hotkeyLabel(first, platform) : "—"; // removed in Options
   });
 }
 

@@ -2,7 +2,7 @@
 // hand-added folders.
 import { getVersion } from "@tauri-apps/api/app";
 import { DEFAULT_THEME, THEMES } from "./themes";
-import { UI_SCALES, uiScale } from "./ui-scale";
+import { TILE_ICON_SCALES, UI_SCALES, tileIconScale, uiScale } from "./ui-scale";
 import {
   api,
   type AccountInfo,
@@ -19,6 +19,8 @@ import {
   type ThermalMode,
   type ThermalStatus,
   type UsageLayout,
+  type UploadHost,
+  type UploadMethod,
   type UsageShare,
 } from "./api";
 import { accountColor, withAccount, withoutAccount } from "./accounts";
@@ -26,13 +28,14 @@ import type { LinkClick } from "./links";
 import { partsHtml, withPart } from "./cpu-parts";
 import { checkHosts, draftAdd, draftRemove, draftRows, draftSet } from "./docker-view";
 import { PLATFORM, shortcut } from "./platform";
+import { checkUploadHosts, methodOf, uploadDraftAdd, uploadDraftRemove, uploadDraftRows, uploadDraftSet } from "./upload-view";
 import { rows, shortPath } from "./projects";
 import { search, type SearchItem } from "./settings-search";
 import { escapeHtml } from "./tile";
 import { editorChoice } from "./find-view";
 import { acceleratorFor, DEFAULT_HOTKEY, hotkeyLabel } from "./hotkey";
 import { LANGUAGES, language, t, type Language, type MessageKey } from "./i18n";
-import { acceleratorsOf, bindingLabel, BINDINGS, clashWith, FIXED, groupLabel, GROUPS, keyText } from "./keys";
+import { bindingLabel, BINDINGS, clashWith, defaultsOf, FIXED, groupLabel, GROUPS, keyText } from "./keys";
 import {
   addStep,
   autoColors,
@@ -70,6 +73,8 @@ import { UPDATE_EVERY_MS, updateStatusHtml, type UpdateStatus } from "./updates"
 
 export interface SettingsContext {
   home: () => string;
+  /** Where layout.json is on this system, shown in the footer. */
+  layoutPath: () => string;
   layout: () => Layout;
   projects: () => Promise<Project[]>;
   setLaneCount: (n: number) => void;
@@ -84,6 +89,8 @@ export interface SettingsContext {
   setUsageLayout: (v: UsageLayout) => void;
   /** The size of the window's own text and bars (ui-scale.ts). */
   setUiScale: (v: number) => void;
+  /** The size of the buttons in a tile's header (ui-scale.ts). */
+  setTileIconScale: (v: number) => void;
   /** How a session's share of the 5-hour window is worked out. */
   setUsageShare: (v: UsageShare) => void;
   setFontSize: (px: number) => void;
@@ -91,7 +98,7 @@ export interface SettingsContext {
   setDropdown: (
     change: Partial<Pick<Layout, "dropdown" | "dropdownHeight" | "dropdownAutohide" | "dropdownHotkey" | "dropdownAnimation">>,
   ) => Promise<void>;
-  /** A desk shortcut set in Options, or back to its default (null). */
+  /** A desk shortcut set in Options, removed (""), or back to its default (null). */
   setKey: (id: string, accelerator: string | null) => void;
   /** Ask GitHub for a newer desk now. */
   checkUpdate: () => Promise<void>;
@@ -129,10 +136,12 @@ export interface SettingsContext {
   setAccounts: (change: Pick<Layout, "claudeAccounts" | "tileAccounts" | "projectAccounts">) => Promise<void>;
   /** Docker servers changed in Options: saved at once, the 🐳 chip follows. Never contacts them. */
   setDockerHosts: (hosts: DockerHost[]) => Promise<void>;
+  /** Upload servers changed in Options: saved at once. Never contacts them. */
+  setUploadHosts: (hosts: UploadHost[]) => Promise<void>;
 }
 
 /** The groups of Options, in the sidebar's order. */
-export type Group = "general" | "look" | "window" | "terminal" | "projects" | "claude" | "stats" | "power" | "docker" | "keys";
+export type Group = "general" | "look" | "window" | "terminal" | "projects" | "claude" | "stats" | "power" | "docker" | "upload" | "keys";
 
 const GROUP_NAMES: Record<Group, MessageKey> = {
   general: "settings.general",
@@ -144,6 +153,7 @@ const GROUP_NAMES: Record<Group, MessageKey> = {
   stats: "settings.stats",
   power: "settings.power",
   docker: "settings.docker",
+  upload: "settings.upload",
   keys: "settings.keys",
 };
 
@@ -207,6 +217,76 @@ export class Settings {
         .then(() => {
           this.dockerDraft = null;
           toast(t("settings.dockerSaved"), { kind: "ok" });
+        })
+        .catch((err) => {
+          error.textContent = String(err);
+        });
+    });
+  }
+
+  /** Upload rows typed but not saved: they outlive a re-render; null once saved or untouched. */
+  private uploadDraft: UploadHost[] | null = null;
+  /** Known hosts for the datalist (/etc/hosts): asked once, the first time the group renders. */
+  private uploadSuggested: string[] | null = null;
+
+  private uploadRowHtml(h: UploadHost): string {
+    return `<div class="line upload-host"><input type="text" data-k="upload-host" list="upload-hosts" value="${escapeHtml(h.host)}" placeholder="${t("settings.uploadHost")}" spellcheck="false" /><input type="text" data-k="upload-user" value="${escapeHtml(h.user)}" placeholder="${t("settings.uploadUser")}" spellcheck="false" /><input type="text" data-k="upload-key" value="${escapeHtml(h.key)}" placeholder="${t("settings.uploadKey")}" spellcheck="false" /><select data-k="upload-method" title="${t("settings.uploadMethod")}">${(["rsync", "scp"] as const).map((m) => `<option value="${m}"${methodOf(h) === m ? " selected" : ""}>${m}</option>`).join("")}</select><button data-k="upload-rm" title="${t("settings.uploadRemove")}">✕</button></div>`;
+  }
+
+  private uploadOptionsHtml(): string {
+    return (this.uploadSuggested ?? []).map((h) => `<option value="${escapeHtml(h)}"></option>`).join("");
+  }
+
+  /** Upload servers: rows live in the DOM; Zapisz saves only what checkUploadHosts accepts. */
+  private bindUpload(box: HTMLElement): void {
+    const rows = box.querySelector<HTMLElement>('[data-k="upload-rows"]')!;
+    const error = box.querySelector<HTMLElement>('[data-k="upload-error"]')!;
+    const list = box.querySelector<HTMLElement>("#upload-hosts")!;
+    if (this.uploadSuggested === null) {
+      this.uploadSuggested = [];
+      void api
+        .uploadSuggestions()
+        .then((hosts) => {
+          this.uploadSuggested = hosts;
+          list.innerHTML = this.uploadOptionsHtml();
+        })
+        .catch(() => {});
+    }
+    const index = (row: Element) => [...rows.children].indexOf(row);
+    const current = () => uploadDraftRows(this.uploadDraft, this.ctx.layout().uploadHosts ?? []);
+    rows.addEventListener("click", (e) => {
+      const row = (e.target as HTMLElement).closest(".upload-host");
+      if (!row || !(e.target as HTMLElement).closest('[data-k="upload-rm"]')) return;
+      this.uploadDraft = uploadDraftRemove(current(), index(row));
+      row.remove();
+    });
+    rows.addEventListener("input", (e) => {
+      const input = e.target as HTMLInputElement | HTMLSelectElement;
+      const row = input.closest(".upload-host");
+      const fields = { "upload-host": "host", "upload-user": "user", "upload-key": "key", "upload-method": "method" } as const;
+      const field = fields[input.dataset.k as keyof typeof fields] ?? null;
+      if (row && field) this.uploadDraft = uploadDraftSet(current(), index(row), field, input.value);
+    });
+    box.querySelector('[data-k="upload-add"]')!.addEventListener("click", () => {
+      this.uploadDraft = uploadDraftAdd(current());
+      rows.insertAdjacentHTML("beforeend", this.uploadRowHtml({ host: "", user: "", key: "" }));
+      rows.querySelector<HTMLInputElement>(".upload-host:last-child [data-k=upload-host]")?.focus();
+    });
+    box.querySelector('[data-k="upload-save"]')!.addEventListener("click", () => {
+      const hosts = [...rows.querySelectorAll<HTMLElement>(".upload-host")].map((r) => ({
+        host: r.querySelector<HTMLInputElement>('[data-k="upload-host"]')!.value.trim(),
+        user: r.querySelector<HTMLInputElement>('[data-k="upload-user"]')!.value.trim(),
+        key: r.querySelector<HTMLInputElement>('[data-k="upload-key"]')!.value.trim(),
+        method: methodOf({ host: "", user: "", key: "", method: r.querySelector<HTMLSelectElement>('[data-k="upload-method"]')!.value as UploadMethod }),
+      }));
+      const problem = checkUploadHosts(hosts);
+      error.textContent = problem ?? "";
+      if (problem) return;
+      void this.ctx
+        .setUploadHosts(hosts)
+        .then(() => {
+          this.uploadDraft = null;
+          toast(t("settings.uploadSaved"), { kind: "ok" });
         })
         .catch((err) => {
           error.textContent = String(err);
@@ -729,7 +809,8 @@ export class Settings {
     }
     const b = BINDINGS.find((x) => x.id === id)!;
     // Its default again: nothing to keep in layout.keys.
-    this.ctx.setKey(id, acceleratorsOf(b).length === 1 && acceleratorsOf(b)[0] === accelerator ? null : accelerator);
+    const own = defaultsOf(b);
+    this.ctx.setKey(id, own.length === 1 && own[0] === accelerator ? null : accelerator);
     this.render();
   }
 
@@ -763,6 +844,7 @@ export class Settings {
     const linkClick: LinkClick = layout.linkClick === "browser" || layout.linkClick === "none" ? layout.linkClick : "desk";
     const program = this.fileEditorProgram || editorChoice(layout.fileEditor) === "program";
     const uiScaleNow = uiScale(layout.uiScale);
+    const tileIconNow = tileIconScale(layout.tileIconScale);
     const usageLayout: UsageLayout = layout.usageLayout === "all" ? "all" : "tabs";
     const usageShare: UsageShare = layout.usageShare === "transcripts" ? "transcripts" : "cost";
     const linkHint = t(
@@ -796,6 +878,12 @@ export class Settings {
             (v) => `<button class="${uiScaleNow === v ? "sel" : ""}" data-ui-scale="${v}">${Math.round(v * 100)}%</button>`,
           ).join("")}</span> <span class="dim">${t("settings.uiScaleHint")}</span></div>`,
         ) +
+          section(
+            t("settings.tileIconScale"),
+            `<div class="line" data-row><span class="seg">${TILE_ICON_SCALES.map(
+              (v) => `<button class="${tileIconNow === v ? "sel" : ""}" data-tile-icon-scale="${v}">${Math.round(v * 100)}%</button>`,
+            ).join("")}</span> <span class="dim">${t("settings.tileIconScaleHint")}</span></div>`,
+          ) +
           section(
           t("settings.theme"),
           `<div class="themes">${THEMES.map(
@@ -991,6 +1079,23 @@ export class Settings {
           "row",
         ),
       ],
+      ...(PLATFORM === "windows"
+        ? []
+        : [
+            [
+              "upload",
+              section(
+                "",
+                `<p class="dim small" data-row>${t("settings.uploadAbout")}</p>
+      <div class="docker-hosts upload-hosts">
+        <div data-k="upload-rows">${uploadDraftRows(this.uploadDraft, layout.uploadHosts ?? []).map((h) => this.uploadRowHtml(h)).join("")}</div>
+        <datalist id="upload-hosts">${this.uploadOptionsHtml()}</datalist>
+        <div class="line"><button data-k="upload-add">${t("settings.uploadAdd")}</button><button data-k="upload-save">${t("settings.uploadSave")}</button><span class="vpn-error" data-k="upload-error"></span></div>
+      </div>`,
+                "row",
+              ),
+            ] as [Group, string],
+          ]),
       [
         "keys",
         section("", `<p class="dim small" data-row>${t("settings.keysAbout")}</p>`) +
@@ -1006,11 +1111,13 @@ export class Settings {
           )}${GROUPS.map((group) =>
             section(
               escapeHtml(groupLabel(group)),
-              BINDINGS.filter((b) => b.group === group)
+              BINDINGS.filter((b) => b.group === group && !(b.id === "upload" && PLATFORM === "windows"))
                 .map(
                   (b) =>
                     `<div class="shortcut" data-row>${this.keyButton(b.id, keyText(b.id) || t("settings.noKey"))}<span>${escapeHtml(bindingLabel(b.id))}${
-                      layout.keys[b.id] ? ` <button class="reset" data-unbind="${b.id}" title="${t("settings.default")}">↺</button>` : ""
+                      keyText(b.id) ? ` <button class="reset" data-remove="${b.id}" title="${t("settings.removeKey")}">×</button>` : ""
+                    }${
+                      b.id in layout.keys ? ` <button class="reset" data-unbind="${b.id}" title="${t("settings.default")}">↺</button>` : ""
                     }</span></div>`,
                 )
                 .join("") +
@@ -1044,7 +1151,7 @@ export class Settings {
         )
         .join("")}</div>
       </div>
-      <p class="dim small settings-foot">${t("settings.where", { path: "~/Library/Application Support/desk/layout.json", sessions: "tmux -L desk ls" })}</p>`;
+      <p class="dim small settings-foot">${t("settings.where", { path: escapeHtml(shortPath(this.ctx.layoutPath(), this.ctx.home())), sessions: "tmux -L desk ls" })}</p>`;
 
     box.querySelectorAll<HTMLButtonElement>("[data-tab]").forEach((b) =>
       b.addEventListener("click", () => {
@@ -1120,6 +1227,13 @@ export class Settings {
         this.render();
       }),
     );
+    box.querySelectorAll<HTMLButtonElement>("[data-remove]").forEach((b) =>
+      b.addEventListener("click", () => {
+        this.recording = null;
+        this.ctx.setKey(b.dataset.remove!, ""); // no key at all, until ↺ or a new one
+        this.render();
+      }),
+    );
     box.querySelectorAll<HTMLButtonElement>("[data-unbind]").forEach((b) =>
       b.addEventListener("click", async () => {
         this.recording = null;
@@ -1140,6 +1254,12 @@ export class Settings {
       this.ctx.setLanguage((e.target as HTMLSelectElement).value as Language);
       this.render();
     });
+    box.querySelectorAll<HTMLButtonElement>("[data-tile-icon-scale]").forEach((b) =>
+      b.addEventListener("click", () => {
+        this.ctx.setTileIconScale(tileIconScale(Number(b.dataset.tileIconScale)));
+        this.render();
+      }),
+    );
     box.querySelectorAll<HTMLButtonElement>("[data-ui-scale]").forEach((b) =>
       b.addEventListener("click", () => {
         this.ctx.setUiScale(uiScale(Number(b.dataset.uiScale)));
@@ -1201,6 +1321,7 @@ export class Settings {
     }
     this.bindVpn(box);
     this.bindDocker(box);
+    if (box.querySelector('[data-k="upload-rows"]')) this.bindUpload(box);
     box.querySelectorAll<HTMLInputElement>("[data-auto]").forEach((cb) =>
       cb.addEventListener("change", () => this.ctx.toggleAutostart(cb.dataset.auto!)),
     );

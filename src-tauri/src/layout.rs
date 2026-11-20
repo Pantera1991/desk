@@ -62,6 +62,9 @@ pub struct Layout {
     /// Command of the editor that opens files from Find in Files and the
     /// tree; "" is the built-in editor (see file_editor.rs).
     pub file_editor: String,
+    /// Size of the buttons in a tile's header, on top of `ui_scale`: one of
+    /// 1, 1.25, 1.5, 1.75; see tileIconScale in src/ui-scale.ts.
+    pub tile_icon_scale: f64,
     /// Session keys whose tiles are folded to their header (⌘J).
     pub minimized: Vec<String>,
     /// Names given to tiles by hand, by session key.
@@ -140,6 +143,10 @@ pub struct Layout {
     pub docker_hosts: Vec<crate::docker::DockerHost>,
     /// Docker tiles (logs, shell), by session key.
     pub docker: std::collections::BTreeMap<String, crate::docker::DockerTile>,
+    /// Servers of the upload panel (upload.rs).
+    pub upload_hosts: Vec<crate::upload::UploadHost>,
+    /// Upload tiles (one file to one server), by session key.
+    pub uploads: std::collections::BTreeMap<String, crate::upload::UploadTile>,
 }
 
 /// The temperature chip is yellow from `warm` and red from `hot`, °C.
@@ -185,6 +192,7 @@ impl Default for Layout {
             font_size: 11.5,
             ui_scale: 1.0,
             file_editor: String::new(),
+            tile_icon_scale: 1.0,
             minimized: Vec::new(),
             titles: Default::default(),
             saved: Default::default(),
@@ -216,6 +224,8 @@ impl Default for Layout {
             usage_share: "cost".into(),
             docker_hosts: Vec::new(),
             docker: Default::default(),
+            upload_hosts: Vec::new(),
+            uploads: Default::default(),
         }
     }
 }
@@ -337,6 +347,27 @@ mod tests {
     }
 
     #[test]
+    fn upload_fields_default_empty_and_round_trip() {
+        use crate::upload::{UploadHost, UploadTile};
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("layout.json");
+        std::fs::write(&p, r#"{"version":1}"#).unwrap();
+        let old = load(&p);
+        assert!(old.upload_hosts.is_empty() && old.uploads.is_empty());
+        let l = Layout {
+            upload_hosts: vec![UploadHost { host: "example-dev".into(), user: "deploy".into(), key: "~/.ssh/server.key".into(), ..Default::default() }],
+            uploads: [("upload:1".to_string(), UploadTile { host: "example-dev".into(), user: "deploy".into(), file: "dump.sql".into() })].into(),
+            ..Layout::default()
+        };
+        save(&p, &l).unwrap();
+        let back = load(&p);
+        assert_eq!(back.upload_hosts, l.upload_hosts);
+        assert_eq!(back.uploads, l.uploads);
+        let json = std::fs::read_to_string(&p).unwrap();
+        assert!(json.contains("\"uploadHosts\"") && json.contains("\"uploads\""));
+    }
+
+    #[test]
     fn round_trip() {
         let tmp = tempfile::tempdir().unwrap();
         let p = tmp.path().join("sub/layout.json");
@@ -409,6 +440,17 @@ mod tests {
         assert_eq!(load(&p).link_click, "desk");
         std::fs::write(&p, r#"{"version":1,"linkClick":"none"}"#).unwrap();
         assert_eq!(load(&p).link_click, "none");
+    }
+
+    #[test]
+    fn tile_icon_scale_is_one_in_old_files_and_round_trips() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("layout.json");
+        std::fs::write(&p, r#"{"version":1}"#).unwrap();
+        assert_eq!(load(&p).tile_icon_scale, 1.0);
+        let l = Layout { tile_icon_scale: 1.5, ..Layout::default() };
+        save(&p, &l).unwrap();
+        assert_eq!(load(&p).tile_icon_scale, 1.5);
     }
 
     #[test]
